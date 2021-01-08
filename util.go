@@ -1,5 +1,5 @@
 /*
-   Copyright 2020 Joseph Cumines
+   Copyright 2021 Joseph Cumines
 
    Licensed under the Apache License, Version 2.0 (the "License");
    you may not use this file except in compliance with the License.
@@ -102,9 +102,7 @@ func (n *node) generateOr(goal []Conditions) (or []*preconditions, err error) {
 	return
 }
 func (n *node) generateAnd(conditions Conditions) (and map[interface{}]*precondition, err error) {
-	// handle not comparable as error although this is less than ideal since it might swallow a condition panic
 	err = fmt.Errorf(`pabt: invalid conditions`)
-	defer func() { _ = recover() }()
 	if len(conditions) == 0 {
 		return
 	}
@@ -112,7 +110,13 @@ func (n *node) generateAnd(conditions Conditions) (and map[interface{}]*precondi
 	and = make(map[interface{}]*precondition, len(conditions))
 	for _, condition := range conditions {
 		key := condition.Key()
-		if _, ok := and[key]; ok {
+		if !func() bool {
+			defer func() { _ = recover() }()
+			if _, ok := and[key]; ok {
+				return false
+			}
+			return true
+		}() {
 			return
 		}
 		node := &node{
@@ -216,7 +220,7 @@ func (p *precondition) expand() (err error) {
 
 	// need to build all actions as their own trees first
 	for _, act := range acts {
-		err = p.root.generateAction(p.condition, act)
+		_, err = p.root.generateAction(p.condition, act)
 		if err != nil {
 			return
 		}
@@ -240,9 +244,8 @@ func (p *precondition) expand() (err error) {
 	}
 	return
 }
-func (n *node) generateAction(post Condition, act Action) (err error) {
+func (n *node) generateAction(post Condition, act Action) (ok bool, err error) {
 	err = fmt.Errorf(`pabt: invalid action`)
-	defer func() { _ = recover() }()
 
 	r := new(action)
 
@@ -252,14 +255,17 @@ func (n *node) generateAction(post Condition, act Action) (err error) {
 		if len(effects) == 0 {
 			return
 		}
-		var (
-			pk = post.Key()
-			ok bool
-		)
+		pk := post.Key()
 		r.effects = make(map[interface{}]Effect, len(effects))
 		for _, effect := range effects {
 			key := effect.Key()
-			if _, ok := r.effects[key]; ok {
+			if !func() bool {
+				defer func() { _ = recover() }()
+				if _, ok := r.effects[key]; ok {
+					return false
+				}
+				return true
+			}() {
 				return
 			}
 			r.effects[key] = effect
@@ -267,9 +273,10 @@ func (n *node) generateAction(post Condition, act Action) (err error) {
 				ok = true
 			}
 		}
-		if !ok {
-			return
-		}
+	}
+	if !ok {
+		err = nil
+		return
 	}
 
 	// create action node

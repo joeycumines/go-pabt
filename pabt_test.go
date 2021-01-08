@@ -1,5 +1,5 @@
 /*
-   Copyright 2020 Joseph Cumines
+   Copyright 2021 Joseph Cumines
 
    Licensed under the Apache License, Version 2.0 (the "License");
    you may not use this file except in compliance with the License.
@@ -105,17 +105,17 @@ func TestNew_initialStructure(t *testing.T) {
 		{
 			Name:   `nil goal`,
 			Goal:   nil,
-			String: "[0x1 util.go:140 0x2 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence",
+			String: "[0x1 util.go:144 0x2 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence",
 		},
 		{
 			Name:   `case 0`,
 			Goal:   []Conditions{},
-			String: "[0x1 util.go:140 0x2 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence",
+			String: "[0x1 util.go:144 0x2 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence",
 		},
 		{
 			Name:   `precondition single condition`,
 			Goal:   []Conditions{{cond3}},
-			String: "[0x1 util.go:140 0x2 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence\n└── [0x3 util.go:154 0x4 util.go:154]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1",
+			String: "[0x1 util.go:144 0x2 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence\n└── [0x3 util.go:158 0x4 util.go:158]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1",
 			Plan: func(t *testing.T, p *Plan) {
 				if p.root == nil ||
 					p.root.parent != nil ||
@@ -180,7 +180,7 @@ func TestNew_initialStructure(t *testing.T) {
 		{
 			Name:   `precondition multiple conditions`,
 			Goal:   []Conditions{{cond1, cond2, cond3}},
-			String: "[0x1 util.go:140 0x2 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence\n├── [0x3 util.go:154 0x4 util.go:154]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1\n├── [0x3 util.go:154 0x4 util.go:154]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1\n└── [0x3 util.go:154 0x4 util.go:154]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1",
+			String: "[0x1 util.go:144 0x2 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence\n├── [0x3 util.go:158 0x4 util.go:158]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1\n├── [0x3 util.go:158 0x4 util.go:158]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1\n└── [0x3 util.go:158 0x4 util.go:158]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1",
 			Plan: func(t *testing.T, p *Plan) {
 				if p.root == nil ||
 					p.root.goal == nil ||
@@ -212,7 +212,7 @@ func TestNew_initialStructure(t *testing.T) {
 				{cond1, cond3},
 				{cond1, cond3},
 			},
-			String: "[0x1 util.go:140 0x2 selector.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Selector\n├── [0x1 util.go:140 0x3 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence\n│\u00a0\u00a0 └── [0x4 util.go:154 0x5 util.go:154]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1\n├── [0x1 util.go:140 0x3 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence\n│\u00a0\u00a0 ├── [0x4 util.go:154 0x5 util.go:154]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1\n│\u00a0\u00a0 └── [0x4 util.go:154 0x5 util.go:154]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1\n└── [0x1 util.go:140 0x3 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence\n    ├── [0x4 util.go:154 0x5 util.go:154]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1\n    └── [0x4 util.go:154 0x5 util.go:154]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1",
+			String: "[0x1 util.go:144 0x2 selector.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Selector\n├── [0x1 util.go:144 0x3 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence\n│\u00a0\u00a0 └── [0x4 util.go:158 0x5 util.go:158]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1\n├── [0x1 util.go:144 0x3 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence\n│\u00a0\u00a0 ├── [0x4 util.go:158 0x5 util.go:158]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1\n│\u00a0\u00a0 └── [0x4 util.go:158 0x5 util.go:158]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1\n└── [0x1 util.go:144 0x3 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence\n    ├── [0x4 util.go:158 0x5 util.go:158]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1\n    └── [0x4 util.go:158 0x5 util.go:158]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1",
 			Plan: func(t *testing.T, p *Plan) {
 				if p.root == nil ||
 					p.root.parent != nil ||
