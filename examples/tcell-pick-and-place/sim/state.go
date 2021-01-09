@@ -152,6 +152,10 @@ func (s *State) ValidateShape(shape Shape) error {
 	return validateSpriteSpace(s.SpaceWidth, s.SpaceHeight, x, y, w, h)
 }
 
+func (s *State) ScreenPosition(x, y int32) (int, int) {
+	return int(x) + baseWidth - spaceWidth, int(y)
+}
+
 func (s *state) State() *State {
 	s.mu.RLock()
 	defer s.mu.RUnlock()

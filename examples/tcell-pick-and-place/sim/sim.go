@@ -51,6 +51,11 @@ numbers = pick
 'r' = place`
 )
 
+const (
+	scenarioStatic       = `static`
+	scenarioHumanVsRobot = `human-vs-robot`
+)
+
 type (
 	Simulation interface {
 		Run(ctx context.Context) error
@@ -69,6 +74,7 @@ type (
 	Config struct {
 		Screen   tcell.Screen
 		Interval time.Duration // tick interval
+		Scenario string
 	}
 
 	Space struct {
@@ -100,10 +106,11 @@ type (
 	}
 
 	model struct {
-		State    *state
-		Time     time.Time
-		Interval time.Duration
-		Dirty    bool
+		State      *state
+		PlanConfig PlanConfig
+		Time       time.Time
+		Interval   time.Duration
+		Dirty      bool
 		// window width and height
 		Width, Height int32
 		// approximation of a robot doing picking and placing
@@ -158,6 +165,10 @@ type (
 	}
 
 	externalLogic func(ctx context.Context, u *update) bool
+
+	scenarioValue struct {
+		init func(u *update)
+	}
 )
 
 var (
@@ -174,6 +185,146 @@ var (
 	goalSpace = Space{
 		Floor: true,
 	}
+
+	scenarioMap = map[string]scenarioValue{
+		scenarioStatic: {
+			init: func(u *update) {
+				if sprite, err := u.createSprite(30-hudWidth, 10, 3, 2, []rune(`0|00|0`)); err != nil {
+					panic(err)
+				} else if actor, err := u.createActor(sprite); err != nil {
+					panic(err)
+				} else {
+					u.PlanConfig.Actors = append(u.PlanConfig.Actors, u.State.new(actor.Sprite, actor).(Actor))
+
+					actor.Keyboard = true
+
+					// build actor criteria (initialising other relevant sprites)
+					{
+						var (
+							actorGoal Goal
+							actorCube Cube
+						)
+
+						if sprite, err := u.createSprite(77-hudWidth, 9, 3, 5, []rune(`!G!!O!!A!!L!!!!`)); err != nil {
+							panic(err)
+						} else if goal, err := u.createGoal(sprite); err != nil {
+							panic(err)
+						} else {
+							actorGoal = u.State.new(goal.Sprite, goal).(Goal)
+						}
+
+						if sprite, err := u.createSprite(60-hudWidth, 8, 1, 1, []rune(`1`)); err != nil {
+							panic(err)
+						} else if cube, err := u.createCube(sprite); err != nil {
+							panic(err)
+						} else {
+							actorCube = u.State.new(cube.Sprite, cube).(Cube)
+						}
+
+						actor.Criteria[CriteriaKey{Cube: actorCube, Goal: actorGoal}] = CriteriaValue{}
+					}
+				}
+
+				if sprite, err := u.createSprite(77-hudWidth, 8, 1, 1, []rune(`2`)); err != nil {
+					panic(err)
+				} else if _, err := u.createCube(sprite); err != nil {
+					panic(err)
+				}
+				if sprite, err := u.createSprite(75-hudWidth, 9, 1, 1, []rune(`3`)); err != nil {
+					panic(err)
+				} else if _, err := u.createCube(sprite); err != nil {
+					panic(err)
+				}
+				if sprite, err := u.createSprite(74-hudWidth, 11, 1, 1, []rune(`4`)); err != nil {
+					panic(err)
+				} else if _, err := u.createCube(sprite); err != nil {
+					panic(err)
+				}
+				if sprite, err := u.createSprite(75-hudWidth, 13, 1, 1, []rune(`5`)); err != nil {
+					panic(err)
+				} else if _, err := u.createCube(sprite); err != nil {
+					panic(err)
+				}
+				if sprite, err := u.createSprite(77-hudWidth, 14, 1, 1, []rune(`6`)); err != nil {
+					panic(err)
+				} else if _, err := u.createCube(sprite); err != nil {
+					panic(err)
+				}
+			},
+		},
+		scenarioHumanVsRobot: {
+			init: func(u *update) {
+				if sprite, err := u.createSprite(30-hudWidth, 10, 3, 2, []rune(`0|00|0`)); err != nil {
+					panic(err)
+				} else if actor, err := u.createActor(sprite); err != nil {
+					panic(err)
+				} else {
+					u.PlanConfig.Actors = append(u.PlanConfig.Actors, u.State.new(actor.Sprite, actor).(Actor))
+
+					// build actor criteria (initialising other relevant sprites)
+					{
+						var (
+							actorGoal Goal
+							actorCube Cube
+						)
+
+						if sprite, err := u.createSprite(77-hudWidth, 9, 3, 5, []rune(`!G!!O!!A!!L!!!!`)); err != nil {
+							panic(err)
+						} else if goal, err := u.createGoal(sprite); err != nil {
+							panic(err)
+						} else {
+							actorGoal = u.State.new(goal.Sprite, goal).(Goal)
+						}
+
+						if sprite, err := u.createSprite(60-hudWidth, 8, 1, 1, []rune(`1`)); err != nil {
+							panic(err)
+						} else if cube, err := u.createCube(sprite); err != nil {
+							panic(err)
+						} else {
+							actorCube = u.State.new(cube.Sprite, cube).(Cube)
+						}
+
+						actor.Criteria[CriteriaKey{Cube: actorCube, Goal: actorGoal}] = CriteriaValue{}
+					}
+				}
+
+				// user controlled
+				if sprite, err := u.createSprite(33, 13, 3, 4, []rune{'_', '_', '_', '\\', 'O', '/', 0, '|', 0, '/', 0, '\\'}); err != nil {
+					panic(err)
+				} else if actor, err := u.createActor(sprite); err != nil {
+					panic(err)
+				} else {
+					actor.Keyboard = true
+				}
+
+				if sprite, err := u.createSprite(77-hudWidth, 8, 1, 1, []rune(`2`)); err != nil {
+					panic(err)
+				} else if _, err := u.createCube(sprite); err != nil {
+					panic(err)
+				}
+				if sprite, err := u.createSprite(75-hudWidth, 9, 1, 1, []rune(`3`)); err != nil {
+					panic(err)
+				} else if _, err := u.createCube(sprite); err != nil {
+					panic(err)
+				}
+				if sprite, err := u.createSprite(74-hudWidth, 11, 1, 1, []rune(`4`)); err != nil {
+					panic(err)
+				} else if _, err := u.createCube(sprite); err != nil {
+					panic(err)
+				}
+				if sprite, err := u.createSprite(75-hudWidth, 13, 1, 1, []rune(`5`)); err != nil {
+					panic(err)
+				} else if _, err := u.createCube(sprite); err != nil {
+					panic(err)
+				}
+				if sprite, err := u.createSprite(77-hudWidth, 14, 1, 1, []rune(`6`)); err != nil {
+					panic(err)
+				} else if _, err := u.createCube(sprite); err != nil {
+					panic(err)
+				}
+			},
+		},
+	}
 )
 
 var (
@@ -189,6 +340,12 @@ func New(config Config) (Simulation, error) {
 	}
 	if config.Interval <= 0 {
 		return nil, fmt.Errorf(`invalid interval: %s`, config.Interval)
+	}
+	if config.Scenario == `` {
+		config.Scenario = scenarioStatic
+	}
+	if _, ok := scenarioMap[config.Scenario]; !ok {
+		return nil, fmt.Errorf(`invalid scenario: %s`, config.Scenario)
 	}
 	svc := &service{
 		state: &state{
@@ -213,75 +370,15 @@ func (s *service) init(config Config) (u update) {
 	}
 	u.Width, u.Height = sizeInt32(s.config.Screen.Size())
 
-	// built as part of this func
-	var planConfig PlanConfig
-	u.Actions = append(u.Actions, func() { u.State.plan = planConfig })
-
-	if sprite, err := u.createSprite(30-hudWidth, 10, 3, 2, []rune(`0|00|0`)); err != nil {
-		panic(err)
-	} else if actor, err := u.createActor(sprite); err != nil {
-		panic(err)
-	} else {
-		planConfig.Actors = append(planConfig.Actors, u.State.new(actor.Sprite, actor).(Actor))
-
-		actor.Keyboard = true
-
-		// build actor criteria (initialising other relevant sprites)
-		{
-			var (
-				actorGoal Goal
-				actorCube Cube
-			)
-
-			if sprite, err := u.createSprite(77-hudWidth, 9, 3, 5, []rune(`!G!!O!!A!!L!!!!`)); err != nil {
-				panic(err)
-			} else if goal, err := u.createGoal(sprite); err != nil {
-				panic(err)
-			} else {
-				actorGoal = u.State.new(goal.Sprite, goal).(Goal)
-			}
-
-			if sprite, err := u.createSprite(60-hudWidth, 8, 1, 1, []rune(`1`)); err != nil {
-				panic(err)
-			} else if cube, err := u.createCube(sprite); err != nil {
-				panic(err)
-			} else {
-				actorCube = u.State.new(cube.Sprite, cube).(Cube)
-			}
-
-			actor.Criteria[CriteriaKey{Cube: actorCube, Goal: actorGoal}] = CriteriaValue{}
-		}
-	}
-
-	if sprite, err := u.createSprite(77-hudWidth, 8, 1, 1, []rune(`2`)); err != nil {
-		panic(err)
-	} else if _, err := u.createCube(sprite); err != nil {
-		panic(err)
-	}
-	if sprite, err := u.createSprite(75-hudWidth, 9, 1, 1, []rune(`3`)); err != nil {
-		panic(err)
-	} else if _, err := u.createCube(sprite); err != nil {
-		panic(err)
-	}
-	if sprite, err := u.createSprite(74-hudWidth, 11, 1, 1, []rune(`4`)); err != nil {
-		panic(err)
-	} else if _, err := u.createCube(sprite); err != nil {
-		panic(err)
-	}
-	if sprite, err := u.createSprite(75-hudWidth, 13, 1, 1, []rune(`5`)); err != nil {
-		panic(err)
-	} else if _, err := u.createCube(sprite); err != nil {
-		panic(err)
-	}
-	if sprite, err := u.createSprite(77-hudWidth, 14, 1, 1, []rune(`6`)); err != nil {
-		panic(err)
-	} else if _, err := u.createCube(sprite); err != nil {
-		panic(err)
-	}
+	// setup scenario
+	scenarioMap[config.Scenario].init(&u)
 
 	u.Redraw = true
 	u.Dirty = false
 	u.Lock = true
+
+	// plan config will be setup by scenario init
+	u.Actions = append(u.Actions, func() { u.State.plan = u.PlanConfig })
 	return
 }
 func (s *service) view(u update) {

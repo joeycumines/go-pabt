@@ -17,17 +17,21 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"flag"
+	"fmt"
 	"github.com/gdamore/tcell/v2"
 	bt "github.com/joeycumines/go-behaviortree"
 	"github.com/joeycumines/go-pabt/examples/tcell-pick-and-place/logic"
 	"github.com/joeycumines/go-pabt/examples/tcell-pick-and-place/sim"
+	"io"
 	"io/ioutil"
 	"log"
 	"math/rand"
 	"os"
 	"os/signal"
+	"sync"
 	"time"
 )
 
@@ -36,12 +40,16 @@ func main() {
 	os.Exit(run(os.Args[0], os.Args[1:]))
 }
 
-func run(cmd string, args []string) int {
+func run(cmd string, args []string) (exitCode int) {
 	var (
-		flags   = flag.NewFlagSet(cmd, flag.ContinueOnError)
-		logfile stringFlag
+		flags    = flag.NewFlagSet(cmd, flag.ContinueOnError)
+		logfile  stringFlag
+		exit     bool
+		scenario stringFlag
 	)
 	flags.Var(&logfile, `logfile`, `write log output to file`)
+	flags.BoolVar(&exit, `exit`, false, `exit once all plans succeed`)
+	flags.Var(&scenario, `scenario`, `specify scenario as one of (static, human-vs-robot) [default=static]`)
 	if err := flags.Parse(args); err != nil {
 		return 1
 	}
@@ -84,7 +92,8 @@ func run(cmd string, args []string) int {
 	defer screen.Fini()
 
 	simulation, err := sim.New(sim.Config{
-		Screen: screen,
+		Screen:   screen,
+		Scenario: string(scenario),
 	})
 	if err != nil {
 		if logfile == `` {
@@ -94,55 +103,127 @@ func run(cmd string, args []string) int {
 		return 1
 	}
 
-	manager := bt.NewManager()
-	go func() {
-		<-manager.Done()
-		if err := manager.Err(); err != nil {
-			if logfile == `` {
-				log.SetOutput(os.Stderr)
-			}
-			log.Printf("bt error: %s\n", err)
-			cancel()
-		}
-	}()
-	for _, actor := range simulation.State().PlanConfig.Actors {
-		plan := logic.PickAndPlace(ctx, simulation, actor)
-		if err := manager.Add(bt.NewTicker(ctx, time.Millisecond*10, bt.New(
-			bt.All,
-			//bt.New(func([]bt.Node) (bt.Status, error) {
-			//	_, _ = fmt.Fprintf(os.Stderr, "\n\nSTART TREE\n%s\nEND TREE\n\n", plan.String())
-			//	return bt.Success, nil
-			//}),
-			bt.New(
-				bt.Selector,
-				bt.New(
-					bt.Sequence,
-					plan,
-					bt.New(func([]bt.Node) (bt.Status, error) {
-						log.Println(`tick success`)
-						return bt.Success, nil
-					}),
-				),
-				bt.New(func([]bt.Node) (bt.Status, error) {
-					log.Println(`tick failure`)
-					return bt.Failure, nil
-				}),
-			),
-			//bt.New(func([]bt.Node) (bt.Status, error) {
-			//	_, _ = fmt.Fprintf(os.Stderr, "\n\nSTART TREE\n%s\nEND TREE\n\n", plan.String())
-			//	return bt.Success, nil
-			//}),
-		))); err != nil {
-			panic(err)
-		}
-	}
 	defer func() {
-		cancel()
-		manager.Stop()
-		<-manager.Done()
+		var b bytes.Buffer
+		if _, err := dumpSimSpace(&b, screen, simulation); err == nil {
+			log.Printf("dumping final state...\n%s\n", b.Bytes())
+		}
 	}()
 
-	if err := simulation.Run(ctx); err != nil {
+	exitErrs := make(chan error, 5)
+	defer func() {
+		if exitCode != 0 {
+			return
+		}
+		select {
+		case <-exitErrs:
+			exitCode = 1
+		default:
+		}
+	}()
+
+	if planConfig := simulation.State().PlanConfig; len(planConfig.Actors) != 0 {
+		var newTicker func(ctx context.Context, duration time.Duration, node bt.Node) bt.Ticker
+		if exit {
+			newTicker = bt.NewTickerStopOnFailure
+		} else {
+			newTicker = bt.NewTicker
+		}
+
+		var (
+			manager     = bt.NewManager()
+			managerDone = make(chan struct{})
+		)
+		go func() {
+			defer close(managerDone)
+			<-manager.Done()
+			if err := manager.Err(); err != nil {
+				if logfile == `` {
+					log.SetOutput(os.Stderr)
+				}
+				log.Printf("bt error: %s\n", err)
+				select {
+				case exitErrs <- err:
+				default:
+				}
+				cancel()
+				return
+			}
+		}()
+
+		var (
+			wg     sync.WaitGroup
+			wgDone = make(chan struct{})
+		)
+		wg.Add(len(planConfig.Actors))
+		go func() {
+			wg.Wait()
+			close(wgDone)
+		}()
+		for i, actor := range planConfig.Actors {
+			var (
+				name   = fmt.Sprintf(`actors[%d]`, i)
+				plan   = logic.PickAndPlace(ctx, simulation, actor)
+				ticker = newTicker(ctx, time.Millisecond*10, bt.New(
+					// if exit is true then this ticker will exit as soon as the bt succeeds
+					bt.Not(bt.All),
+					bt.New(
+						bt.Selector,
+						bt.New(
+							bt.Sequence,
+							plan,
+							bt.New(func([]bt.Node) (bt.Status, error) {
+								log.Printf("tick success for %s\n", name)
+								return bt.Success, nil
+							}),
+						),
+						bt.New(func([]bt.Node) (bt.Status, error) {
+							log.Printf("tick failure for %s\n", name)
+							return bt.Failure, nil
+						}),
+					),
+					//bt.New(logBT(name, plan)),
+				))
+			)
+			log.Printf("plan started for %s\n", name)
+			if err := manager.Add(ticker); err != nil {
+				panic(err)
+			}
+			go func() {
+				defer wg.Done()
+				<-ticker.Done()
+				if err := ticker.Err(); err != nil {
+					if logfile == `` {
+						log.SetOutput(os.Stderr)
+					}
+					log.Printf("plan error for %s: %s\n", name, err)
+					return
+				}
+				log.Printf("plan success for %s\n", name)
+			}()
+		}
+
+		if exit {
+			go func() {
+				select {
+				case <-ctx.Done():
+					return
+				case <-managerDone:
+				case <-wgDone:
+				}
+				cancel()
+			}()
+		}
+
+		defer func() {
+			cancel()
+			manager.Stop()
+			<-managerDone
+			<-wgDone
+		}()
+	}
+
+	if err := simulation.Run(ctx); err != nil && err != context.Canceled {
 		if logfile == `` {
 			log.SetOutput(os.Stderr)
 		}
@@ -167,4 +248,46 @@ func (f stringFlag) String() string { return string(f) }
 func (f *stringFlag) Set(s string) error {
 	*f = stringFlag(s)
 	return nil
+}
+
+func logBT(name string, node bt.Node) bt.Tick {
+	return func([]bt.Node) (bt.Status, error) {
+		var b bytes.Buffer
+		b.WriteString(fmt.Sprintf("dumping bt %q start\n", name))
+		b.WriteString(node.String())
+		if b.Bytes()[b.Len()-1] != '\n' {
+			b.WriteRune('\n')
+		}
+		b.WriteString(fmt.Sprintf("dumping bt %q finish\n", name))
+		log.Printf("%s", b.Bytes())
+		return bt.Success, nil
+	}
+}
+
+func dumpSimSpace(w io.Writer, screen tcell.Screen, simulation sim.Simulation) (written int64, err error) {
+	var (
+		state = simulation.State()
+		x, y  int32
+		b     bytes.Buffer
+		r     rune
+		n     int64
+	)
+	for y = -1; y <= state.SpaceHeight; y++ {
+		b.Reset()
+		for x = -1; x <= state.SpaceWidth; x++ {
+			if x >= 0 && x < state.SpaceWidth && y >= 0 && y < state.SpaceHeight {
+				r, _, _, _ = screen.GetContent(state.ScreenPosition(x, y))
+			} else {
+				r = '#'
+			}
+			b.WriteRune(r)
+		}
+		b.WriteRune('\n')
+		n, err = io.Copy(w, &b)
+		written += n
+		if err != nil {
+			return
+		}
+	}
+	return
 }

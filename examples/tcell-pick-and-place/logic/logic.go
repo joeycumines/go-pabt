@@ -24,6 +24,7 @@ import (
 	"github.com/joeycumines/go-pabt/examples/tcell-pick-and-place/sim"
 	"log"
 	"math"
+	"sync"
 )
 
 type (
@@ -31,6 +32,11 @@ type (
 		ctx        context.Context
 		simulation sim.Simulation
 		actor      sim.Actor
+		moveState  struct {
+			mu     sync.Mutex
+			cancel context.CancelFunc
+			done   chan struct{}
+		}
 	}
 
 	stateInterface interface {
@@ -45,6 +51,8 @@ type (
 		Space sim.Space
 		Shape sim.Shape
 	}
+
+	pabtCond pabt.Condition
 
 	// VARIABLES
 
@@ -75,6 +83,11 @@ type (
 		key   interface{}
 		match func(r interface{}) bool
 	}
+
+	//moveCollisionCond struct {
+	//	pabtCond
+	//	sprite sim.Sprite
+	//}
 
 	// EFFECTS
 
@@ -145,12 +158,13 @@ func (p *pickAndPlace) Variable(key interface{}) (interface{}, error) {
 func (p *pickAndPlace) Actions(failed pabt.Condition) (actions []pabt.Action, err error) {
 	var (
 		key = failed.Key()
-		add = func(name string) func(a []pabt.Action, e error) bool {
+		add = func(name string, limit int) func(a []pabt.Action, e error) bool {
 			return func(a []pabt.Action, e error) bool {
 				if e != nil {
 					err = e
 					return true
 				}
+				var count int
 				for i, a := range a {
 					var ok bool
 					for _, effect := range a.Effects() {
@@ -161,11 +175,12 @@ func (p *pickAndPlace) Actions(failed pabt.Condition) (actions []pabt.Action, er
 					}
 					if ok {
 						log.Printf(`adding %d from %s for %T...`, i, name, key)
+						actions = append(actions, a)
+						count++
+						if count == limit {
+							break
+						}
 					}
-					// NOTE the same check as ^ is performed in the (current) pabt package implementation, so doing
-					// the append anyway is effectively the same as guarding it above...
-					// I had it error originally, might add it as an option / toggleable mode, at some point
-					actions = append(actions, a)
 				}
 				return false
 			}
@@ -179,12 +194,13 @@ func (p *pickAndPlace) Actions(failed pabt.Condition) (actions []pabt.Action, er
 		}
 		switch sprite := sprite.(type) {
 		case sim.Cube:
-			if add(`pick`)(p.templatePick(failed, snapshot, sprite)) {
+			if add(`pick`, 0)(p.templatePick(failed, snapshot, sprite)) {
 				return
 			}
+
 			for x := int32(0); x < snapshot.SpaceWidth; x++ {
 				for y := int32(0); y < snapshot.SpaceHeight; y++ {
-					if add(`place`)(p.templatePlace(failed, snapshot, x, y, sprite)) {
+					if add(`place`, 0)(p.templatePlace(failed, snapshot, x, y, sprite)) {
 						return
 					}
 				}
@@ -194,7 +210,7 @@ func (p *pickAndPlace) Actions(failed pabt.Condition) (actions []pabt.Action, er
 
 	for x := int32(0); x < snapshot.SpaceWidth; x++ {
 		for y := int32(0); y < snapshot.SpaceHeight; y++ {
-			if add(`move`)(p.templateMove(failed, snapshot, x, y)) {
+			if add(`move`, 0)(p.templateMove(failed, snapshot, x, y)) {
 				return
 			}
 		}
@@ -220,9 +236,13 @@ func (p *pickAndPlace) getSimulation() sim.Simulation { return p.simulation }
 //      h = /0
 // eff: h = cube
 func (p *pickAndPlace) templatePick(failed pabt.Condition, snapshot *sim.State, sprite sim.Sprite) (actions []pabt.Action, err error) {
-	spriteValue, ok := snapshot.Sprites[sprite]
-	if !ok || spriteValue.Shape() == nil {
+	var ox, oy int32
+	if spriteValue, ok := snapshot.Sprites[sprite]; !ok {
 		return
+	} else if spriteShape := spriteValue.Shape(); spriteShape == nil {
+		return
+	} else {
+		ox, oy = spriteShape.Position()
 	}
 
 	positions := make(map[sim.Sprite]*positionInfo, len(snapshot.Sprites))
@@ -236,10 +256,26 @@ func (p *pickAndPlace) templatePick(failed pabt.Condition, snapshot *sim.State, 
 
 	pickupDistance := snapshot.PickupDistance
 
+	var running bool
+
 	snapshot = nil
 	actions = append(actions, &simpleAction{
 		conditions: []pabt.Conditions{
 			{
+				&simpleCond{
+					key: positionVar{Sprite: sprite},
+					match: func(r interface{}) bool {
+						if pos := r.(*positionValue).positions[sprite]; pos != nil && pos.Shape != nil {
+							if running {
+								return true
+							}
+							if nx, ny := pos.Shape.Position(); ox == nx && oy == ny {
+								return true
+							}
+						}
+						return false
+					},
+				},
 				&simpleCond{
 					key: heldItemVar{Actor: p.actor},
 					match: func(r interface{}) bool {
@@ -273,7 +309,14 @@ func (p *pickAndPlace) templatePick(failed pabt.Condition, snapshot *sim.State, 
 				value: &positionValue{positions: positions},
 			},
 		},
-		node: bt.New(bt.Async(p.tickPick(sprite))),
+		node: bt.New(
+			bt.Sequence,
+			bt.New(func([]bt.Node) (bt.Status, error) {
+				running = true
+				return bt.Success, nil
+			}),
+			bt.New(bt.Async(p.tickPick(sprite))),
+		),
 	})
 	return
 }
@@ -473,7 +516,7 @@ func (p *pickAndPlace) tickPick(sprite sim.Sprite) bt.Tick {
 func (p *pickAndPlace) tickMove(x, y int32) bt.Tick {
 	return func(children []bt.Node) (bt.Status, error) {
 		log.Printf("move(%d, %d): start\n", x, y)
-		if err := p.simulation.Move(p.ctx, p.actor, float64(x), float64(y)); err != nil {
+		if err := p.move(p.actor, float64(x), float64(y)); err != nil {
 			log.Printf("move(%d, %d): failure\n", x, y)
 			return bt.Failure, nil
 		}
@@ -491,6 +534,26 @@ func (p *pickAndPlace) tickPlace(sprite sim.Sprite) bt.Tick {
 		log.Printf("place(%s): success\n", string(sprite.Image()))
 		return bt.Success, nil
 	}
+}
+
+func (p *pickAndPlace) move(sprite sim.Sprite, x, y float64) error {
+	p.moveState.mu.Lock()
+
+	if p.moveState.cancel != nil {
+		p.moveState.cancel()
+		<-p.moveState.done
+	}
+
+	p.moveState.done = make(chan struct{})
+	defer close(p.moveState.done)
+
+	var ctx context.Context
+	ctx, p.moveState.cancel = context.WithCancel(p.ctx)
+	defer p.moveState.cancel()
+
+	p.moveState.mu.Unlock()
+
+	return p.simulation.Move(ctx, sprite, x, y)
 }
 
 func (e *simpleEffect) Key() interface{}   { return e.key }
