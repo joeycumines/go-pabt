@@ -21,13 +21,13 @@ import (
 	bt "github.com/joeycumines/go-behaviortree"
 )
 
-func (n *node) append(next *node, children ...*node) {
+func (n *node[T]) append(next *node[T], children ...*node[T]) {
 	if n.node != nil {
 		panic(fmt.Errorf(`pabt: invalid append`))
 	}
 	for _, child := range children {
 		child.delete()
-		var prev *node
+		var prev *node[T]
 		if next != nil {
 			prev = next.prev
 		} else {
@@ -48,7 +48,7 @@ func (n *node) append(next *node, children ...*node) {
 		}
 	}
 }
-func (n *node) delete() {
+func (n *node[T]) delete() {
 	var (
 		prev   = n.prev
 		next   = n.next
@@ -72,21 +72,21 @@ func (n *node) delete() {
 	n.next = nil
 	n.parent = nil
 }
-func (n *node) generateOr(goal []Conditions) (or []*preconditions, err error) {
+func (n *node[T]) generateOr(goal []Conditions[T]) (or []*preconditions[T], err error) {
 	switch len(goal) {
 	case 0:
 		n.tick = bt.Sequence
 	case 1:
-		n.preconditions = &preconditions{root: n}
-		or = []*preconditions{n.preconditions}
+		n.preconditions = &preconditions[T]{root: n}
+		or = []*preconditions[T]{n.preconditions}
 	default:
 		n.tick = bt.Selector
 		for range goal {
-			node := &node{
+			node := &node[T]{
 				goal:          n.goal,
 				ppa:           n.ppa,
 				action:        n.action,
-				preconditions: &preconditions{},
+				preconditions: &preconditions[T]{},
 			}
 			node.preconditions.root = node
 			n.append(nil, node)
@@ -101,13 +101,13 @@ func (n *node) generateOr(goal []Conditions) (or []*preconditions, err error) {
 	}
 	return
 }
-func (n *node) generateAnd(conditions Conditions) (and map[interface{}]*precondition, err error) {
+func (n *node[T]) generateAnd(conditions Conditions[T]) (and map[any]*precondition[T], err error) {
 	err = fmt.Errorf(`pabt: invalid conditions`)
 	if len(conditions) == 0 {
 		return
 	}
 	n.tick = bt.Sequence
-	and = make(map[interface{}]*precondition, len(conditions))
+	and = make(map[any]*precondition[T], len(conditions))
 	for _, condition := range conditions {
 		key := condition.Key()
 		if !func() bool {
@@ -119,12 +119,12 @@ func (n *node) generateAnd(conditions Conditions) (and map[interface{}]*precondi
 		}() {
 			return
 		}
-		node := &node{
+		node := &node[T]{
 			goal:          n.goal,
 			ppa:           n.ppa,
 			action:        n.action,
 			preconditions: n.preconditions,
-			precondition:  &precondition{condition: condition},
+			precondition:  &precondition[T]{condition: condition},
 		}
 		node.precondition.root = node
 		node.node = newConditionNode(n.goal.state, key, condition.Match, &node.precondition.status)
@@ -134,14 +134,14 @@ func (n *node) generateAnd(conditions Conditions) (and map[interface{}]*precondi
 	err = nil
 	return
 }
-func (n *node) bt() (node bt.Node) {
+func (n *node[T]) bt() (node bt.Node) {
 	node = n.node
 	if node == nil {
 		node = n.group
 	}
 	return
 }
-func (n *node) group() (tick bt.Tick, children []bt.Node) {
+func (n *node[T]) group() (tick bt.Tick, children []bt.Node) {
 	tick = n.tick
 	for node := n.first; node != nil; node = node.next {
 		children = append(children, node.bt())
@@ -149,14 +149,14 @@ func (n *node) group() (tick bt.Tick, children []bt.Node) {
 	return
 }
 
-func newConditionNode(
-	state State,
-	key interface{},
-	match func(value interface{}) bool,
+func newConditionNode[T Condition](
+	state State[T],
+	key any,
+	match func(value any) bool,
 	outcome *bt.Status,
 ) bt.Node {
 	return bt.New(func([]bt.Node) (status bt.Status, err error) {
-		var value interface{}
+		var value any
 		value, err = state.Variable(key)
 		if err == nil && match(value) {
 			status = bt.Success
@@ -169,7 +169,7 @@ func newConditionNode(
 }
 
 // copy updates all fields of the receiver from src except the tree links then returns the receiver
-func (n *node) copy(src *node) *node {
+func (n *node[T]) copy(src *node[T]) *node[T] {
 	// TODO test
 	n.goal = src.goal
 	n.ppa = src.ppa
@@ -180,8 +180,8 @@ func (n *node) copy(src *node) *node {
 	n.tick = src.tick
 	return n
 }
-func (n *node) search() (*precondition, bool) {
-	queue := []*node{n}
+func (n *node[T]) search() (*precondition[T], bool) {
+	queue := []*node[T]{n}
 	for len(queue) != 0 {
 		item := queue[0]
 		queue[0] = nil
@@ -198,8 +198,8 @@ func (n *node) search() (*precondition, bool) {
 	}
 	return nil, false
 }
-func (p *precondition) expand() (err error) {
-	var acts []Action
+func (p *precondition[T]) expand() (err error) {
+	var acts []Action[T]
 	acts, err = p.root.goal.state.Actions(p.condition)
 	if err != nil {
 		return
@@ -207,11 +207,11 @@ func (p *precondition) expand() (err error) {
 
 	// original root is copied and used as the post-condition, then has it's links preserved and is updated
 	// with a new ppa (linking to the new copy), note the original root has all fields overwritten except it's links
-	p.root.copy(&node{
+	p.root.copy(&node[T]{
 		goal: p.root.goal,
-		ppa: &ppa{
+		ppa: &ppa[T]{
 			root: p.root,
-			post: new(node).copy(p.root),
+			post: new(node[T]).copy(p.root),
 		},
 		tick: bt.Selector,
 	})
@@ -232,7 +232,7 @@ func (p *precondition) expand() (err error) {
 	case 1:
 		p.root.append(nil, p.root.ppa.actions[0].root)
 	default:
-		node := &node{
+		node := &node[T]{
 			goal: p.root.goal,
 			ppa:  p.root.ppa,
 			tick: bt.Memorize(bt.Selector),
@@ -244,10 +244,10 @@ func (p *precondition) expand() (err error) {
 	}
 	return
 }
-func (n *node) generateAction(post Condition, act Action) (ok bool, err error) {
+func (n *node[T]) generateAction(post Condition, act Action[T]) (ok bool, err error) {
 	err = fmt.Errorf(`pabt: invalid action`)
 
-	r := new(action)
+	r := new(action[T])
 
 	// map the effects
 	{
@@ -256,7 +256,7 @@ func (n *node) generateAction(post Condition, act Action) (ok bool, err error) {
 			return
 		}
 		pk := post.Key()
-		r.effects = make(map[interface{}]Effect, len(effects))
+		r.effects = make(map[any]Effect, len(effects))
 		for _, effect := range effects {
 			key := effect.Key()
 			if !func() bool {
@@ -280,7 +280,7 @@ func (n *node) generateAction(post Condition, act Action) (ok bool, err error) {
 	}
 
 	// create action node
-	r.node = &node{
+	r.node = &node[T]{
 		goal:   n.goal,
 		ppa:    n.ppa,
 		action: r,
@@ -291,7 +291,7 @@ func (n *node) generateAction(post Condition, act Action) (ok bool, err error) {
 	}
 
 	// build the conditions root as the action root (for the moment)
-	r.root = &node{
+	r.root = &node[T]{
 		goal:   n.goal,
 		ppa:    n.ppa,
 		action: r,
@@ -308,7 +308,7 @@ func (n *node) generateAction(post Condition, act Action) (ok bool, err error) {
 	default:
 		// more than one Conditions, need another layer
 		condRoot := r.root
-		r.root = &node{
+		r.root = &node[T]{
 			goal:   n.goal,
 			ppa:    n.ppa,
 			action: r,
@@ -324,14 +324,14 @@ func (n *node) generateAction(post Condition, act Action) (ok bool, err error) {
 	n.ppa.actions = append(n.ppa.actions, r)
 	return
 }
-func (p *ppa) resolve() (conflicts int) {
+func (p *ppa[T]) resolve() (conflicts int) {
 	for c := p.conflict(); c != nil; c = p.conflict() {
 		c.root.parent.append(c.root, p.root)
 		conflicts++
 	}
 	return
 }
-func (p *ppa) conflict() *ppa {
+func (p *ppa[T]) conflict() *ppa[T] {
 	// finding a conflict involves checking the new subtree's (receiver) conditions against the
 	// effects of any actions that may be executed prior to it, in the tree structure
 	//
@@ -385,10 +385,10 @@ func (p *ppa) conflict() *ppa {
 		}
 	}
 }
-func (p *ppa) conflicts(o *ppa) bool {
+func (p *ppa[T]) conflicts(o *ppa[T]) bool {
 	// prepare conditions for comparison
 	type Pair struct {
-		K interface{}
+		K any
 		V Condition
 	}
 	var pairs []Pair
@@ -406,7 +406,7 @@ func (p *ppa) conflicts(o *ppa) bool {
 	}
 
 	// ensure that p's conditions are compatible with any corresponding effects from o (also checks all sub-ppa)
-	queue := []*ppa{o}
+	queue := []*ppa[T]{o}
 	for len(queue) != 0 {
 		o = queue[0]
 		queue[0] = nil

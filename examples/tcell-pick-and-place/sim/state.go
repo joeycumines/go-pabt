@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+//go:build example
 // +build example
 
 package sim
@@ -172,7 +173,7 @@ func (s *state) State() *State {
 		PlanConfig:     s.plan,
 	}
 }
-func (s *state) new(sprite *spriteModel, owner interface{}) Sprite {
+func (s *state) new(sprite *spriteModel, owner any) Sprite {
 	switch owner := owner.(type) {
 	case *actorModel:
 		return Actor{spriteState{s, sprite}, actorState{s, owner}}

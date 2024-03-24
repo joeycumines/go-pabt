@@ -24,16 +24,16 @@ import (
 
 func Test_node_append(t *testing.T) {
 	var (
-		n1     = new(node)
-		n1n1   = new(node)
-		n1n2   = &node{node: func() (bt.Tick, []bt.Node) { panic(`unexpected call`) }}
-		n1n3   = new(node)
-		n1n3n1 = new(node)
-		n1n4   = new(node)
-		n2     = new(node)
-		n2n1   = new(node)
-		n2n2   = new(node)
-		n3     = new(node)
+		n1     = new(node[Condition])
+		n1n1   = new(node[Condition])
+		n1n2   = &node[Condition]{node: func() (bt.Tick, []bt.Node) { panic(`unexpected call`) }}
+		n1n3   = new(node[Condition])
+		n1n3n1 = new(node[Condition])
+		n1n4   = new(node[Condition])
+		n2     = new(node[Condition])
+		n2n1   = new(node[Condition])
+		n2n2   = new(node[Condition])
+		n3     = new(node[Condition])
 	)
 	t.Logf(
 		"\nn1 = %p\nn1n1 = %p\nn1n2 = %p\nn1n3 = %p\nn1n3n1 = %p\nn1n4 = %p\nn2 = %p\nn2n1 = %p\nn2n2 = %p\nn3 = %p",
@@ -402,6 +402,6 @@ func Test_node_append_panic(t *testing.T) {
 			t.Error(r)
 		}
 	}()
-	(&node{node: func() (bt.Tick, []bt.Node) { panic(`unexpected call`) }}).append(nil)
+	(&node[Condition]{node: func() (bt.Tick, []bt.Node) { panic(`unexpected call`) }}).append(nil)
 	t.Error(`expected panic`)
 }

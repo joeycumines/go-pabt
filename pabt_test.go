@@ -26,15 +26,17 @@ import (
 )
 
 type mockState struct {
-	variable func(key interface{}) (value interface{}, err error)
-	actions  func(failed Condition) ([]Action, error)
+	variable func(key any) (value any, err error)
+	actions  func(failed Condition) ([]IAction, error)
 }
 
-func (m *mockState) Variable(key interface{}) (value interface{}, err error) { return m.variable(key) }
-func (m *mockState) Actions(failed Condition) ([]Action, error)              { return m.actions(failed) }
+func (m *mockState) Variable(key any) (value any, err error) { return m.variable(key) }
+func (m *mockState) Actions(failed Condition) ([]IAction, error) {
+	return m.actions(failed)
+}
 
 func TestNew_nilState(t *testing.T) {
-	p, err := New(nil, nil)
+	p, err := INew(nil, nil)
 	if err == nil || p != nil || err.Error() != `pabt: nil state` {
 		t.Error(p, err)
 	}
@@ -59,17 +61,17 @@ func replacePointers(b string) string {
 }
 
 type mockCondition struct {
-	key   func() interface{}
-	match func(value interface{}) bool
+	key   func() any
+	match func(value any) bool
 }
 
-func (m *mockCondition) Key() interface{}             { return m.key() }
-func (m *mockCondition) Match(value interface{}) bool { return m.match(value) }
+func (m *mockCondition) Key() any             { return m.key() }
+func (m *mockCondition) Match(value any) bool { return m.match(value) }
 
 func TestNew_initialStructure(t *testing.T) {
 	var (
-		variables map[interface{}]interface{}
-		state     = &mockState{variable: func(key interface{}) (value interface{}, err error) {
+		variables map[any]any
+		state     = &mockState{variable: func(key any) (value any, err error) {
 			var ok bool
 			value, ok = variables[key]
 			if !ok {
@@ -78,16 +80,16 @@ func TestNew_initialStructure(t *testing.T) {
 			return
 		}}
 		cond1 = &mockCondition{
-			key:   func() interface{} { return 1 },
-			match: func(value interface{}) bool { return value == `1` },
+			key:   func() any { return 1 },
+			match: func(value any) bool { return value == `1` },
 		}
 		cond2 = &mockCondition{
-			key:   func() interface{} { return 2 },
-			match: func(value interface{}) bool { return value == `2` },
+			key:   func() any { return 2 },
+			match: func(value any) bool { return value == `2` },
 		}
 		cond3 = &mockCondition{
-			key: func() interface{} { return 3 },
-			match: func(value interface{}) bool {
+			key: func() any { return 3 },
+			match: func(value any) bool {
 				if value == nil {
 					t.Error(value)
 				}
@@ -97,26 +99,26 @@ func TestNew_initialStructure(t *testing.T) {
 	)
 	for _, test := range []struct {
 		Name   string
-		Goal   []Conditions
+		Goal   []IConditions
 		Err    error
 		String string
-		Plan   func(t *testing.T, plan *Plan)
+		Plan   func(t *testing.T, plan *IPlan)
 	}{
 		{
 			Name:   `nil goal`,
 			Goal:   nil,
-			String: "[0x1 util.go:144 0x2 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence",
+			String: "[0x1 util.go:140 0x2 sequence.go:21]  github.com/joeycumines/go-pabt.TestNew_initialStructure.func14.(*node[...]).bt.1 | github.com/joeycumines/go-behaviortree.Sequence",
 		},
 		{
 			Name:   `case 0`,
-			Goal:   []Conditions{},
-			String: "[0x1 util.go:144 0x2 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence",
+			Goal:   []IConditions{},
+			String: "[0x1 util.go:140 0x2 sequence.go:21]  github.com/joeycumines/go-pabt.TestNew_initialStructure.func14.(*node[...]).bt.1 | github.com/joeycumines/go-behaviortree.Sequence",
 		},
 		{
 			Name:   `precondition single condition`,
-			Goal:   []Conditions{{cond3}},
-			String: "[0x1 util.go:144 0x2 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence\n└── [0x3 util.go:158 0x4 util.go:158]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1",
-			Plan: func(t *testing.T, p *Plan) {
+			Goal:   []IConditions{{cond3}},
+			String: "[0x1 util.go:140 0x2 sequence.go:21]  github.com/joeycumines/go-pabt.TestNew_initialStructure.func14.(*node[...]).bt.1 | github.com/joeycumines/go-behaviortree.Sequence\n└── [0x3 util.go:158 0x4 util.go:158]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1",
+			Plan: func(t *testing.T, p *IPlan) {
 				if p.root == nil ||
 					p.root.parent != nil ||
 					p.root.next != nil ||
@@ -155,7 +157,7 @@ func TestNew_initialStructure(t *testing.T) {
 					t.Errorf(`%s %p`, p.root.first.precondition.status, &p.root.first.precondition.status)
 				}
 				p.root.first.precondition.status = 0
-				variables = map[interface{}]interface{}{
+				variables = map[any]any{
 					3: false,
 				}
 				if status, err := p.root.bt().Tick(); err != nil || status != bt.Failure {
@@ -165,7 +167,7 @@ func TestNew_initialStructure(t *testing.T) {
 					t.Errorf(`%s %p`, p.root.first.precondition.status, &p.root.first.precondition.status)
 				}
 				p.root.first.precondition.status = 0
-				variables = map[interface{}]interface{}{
+				variables = map[any]any{
 					3: `3`,
 				}
 				if status, err := p.root.bt().Tick(); err != nil || status != bt.Success {
@@ -179,9 +181,9 @@ func TestNew_initialStructure(t *testing.T) {
 		},
 		{
 			Name:   `precondition multiple conditions`,
-			Goal:   []Conditions{{cond1, cond2, cond3}},
-			String: "[0x1 util.go:144 0x2 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence\n├── [0x3 util.go:158 0x4 util.go:158]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1\n├── [0x3 util.go:158 0x4 util.go:158]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1\n└── [0x3 util.go:158 0x4 util.go:158]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1",
-			Plan: func(t *testing.T, p *Plan) {
+			Goal:   []IConditions{{cond1, cond2, cond3}},
+			String: "[0x1 util.go:140 0x2 sequence.go:21]  github.com/joeycumines/go-pabt.TestNew_initialStructure.func14.(*node[...]).bt.1 | github.com/joeycumines/go-behaviortree.Sequence\n├── [0x3 util.go:158 0x4 util.go:158]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1\n├── [0x3 util.go:158 0x4 util.go:158]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1\n└── [0x3 util.go:158 0x4 util.go:158]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1",
+			Plan: func(t *testing.T, p *IPlan) {
 				if p.root == nil ||
 					p.root.goal == nil ||
 					p.root.goal.root != p.root ||
@@ -194,26 +196,26 @@ func TestNew_initialStructure(t *testing.T) {
 		},
 		{
 			Name: `condition key not comparable`,
-			Goal: []Conditions{{&mockCondition{key: func() interface{} { return func() {} }}}},
+			Goal: []IConditions{{&mockCondition{key: func() any { return func() {} }}}},
 			Err:  errors.New(`pabt: invalid conditions`),
 		},
 		{
 			Name: `condition key duplicated`,
-			Goal: []Conditions{{
-				&mockCondition{key: func() interface{} { return true }},
-				&mockCondition{key: func() interface{} { return true }},
+			Goal: []IConditions{{
+				&mockCondition{key: func() any { return true }},
+				&mockCondition{key: func() any { return true }},
 			}},
 			Err: errors.New(`pabt: invalid conditions`),
 		},
 		{
 			Name: `preconditions`,
-			Goal: []Conditions{
+			Goal: []IConditions{
 				{cond2},
 				{cond1, cond3},
 				{cond1, cond3},
 			},
-			String: "[0x1 util.go:144 0x2 selector.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Selector\n├── [0x1 util.go:144 0x3 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence\n│\u00a0\u00a0 └── [0x4 util.go:158 0x5 util.go:158]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1\n├── [0x1 util.go:144 0x3 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence\n│\u00a0\u00a0 ├── [0x4 util.go:158 0x5 util.go:158]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1\n│\u00a0\u00a0 └── [0x4 util.go:158 0x5 util.go:158]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1\n└── [0x1 util.go:144 0x3 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence\n    ├── [0x4 util.go:158 0x5 util.go:158]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1\n    └── [0x4 util.go:158 0x5 util.go:158]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1",
-			Plan: func(t *testing.T, p *Plan) {
+			String: "[0x1 util.go:140 0x2 selector.go:21]  github.com/joeycumines/go-pabt.TestNew_initialStructure.func14.(*node[...]).bt.1 | github.com/joeycumines/go-behaviortree.Selector\n├── [0x3 util.go:140 0x4 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence\n│   └── [0x5 util.go:158 0x6 util.go:158]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1\n├── [0x3 util.go:140 0x4 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence\n│   ├── [0x5 util.go:158 0x6 util.go:158]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1\n│   └── [0x5 util.go:158 0x6 util.go:158]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1\n└── [0x3 util.go:140 0x4 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence\n    ├── [0x5 util.go:158 0x6 util.go:158]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1\n    └── [0x5 util.go:158 0x6 util.go:158]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1",
+			Plan: func(t *testing.T, p *IPlan) {
 				if p.root == nil ||
 					p.root.parent != nil ||
 					p.root.next != nil ||
@@ -248,7 +250,7 @@ func TestNew_initialStructure(t *testing.T) {
 		},
 	} {
 		t.Run(test.Name, func(t *testing.T) {
-			p, err := New(state, test.Goal)
+			p, err := INew(state, test.Goal)
 			if err != nil {
 				if p != nil {
 					t.Error(p)
@@ -273,7 +275,7 @@ func TestNew_initialStructure(t *testing.T) {
 }
 
 func Test_node_generateAnd_empty(t *testing.T) {
-	if v, err := (*node)(nil).generateAnd(nil); err == nil || err.Error() != `pabt: invalid conditions` || v != nil {
+	if v, err := (*node[Condition])(nil).generateAnd(nil); err == nil || err.Error() != `pabt: invalid conditions` || v != nil {
 		t.Error(v, err)
 	}
 }
@@ -281,35 +283,35 @@ func Test_node_generateAnd_empty(t *testing.T) {
 type (
 	simpleCondition struct {
 		key   string
-		value interface{}
+		value any
 	}
 	simpleEffect struct {
 		key   string
-		value interface{}
+		value any
 	}
 	simpleAction struct {
-		conditions []Conditions
+		conditions []IConditions
 		effects    Effects
 		node       bt.Node
 	}
 	treeMetaKey struct{}
 )
 
-func (e *simpleEffect) Key() interface{}                { return e.key }
-func (e *simpleEffect) Value() interface{}              { return e.value }
-func (c *simpleCondition) Key() interface{}             { return c.key }
-func (c *simpleCondition) Match(value interface{}) bool { return value == c.value }
-func (a *simpleAction) Conditions() []Conditions        { return a.conditions }
-func (a *simpleAction) Effects() Effects                { return a.effects }
-func (a *simpleAction) Node() bt.Node                   { return a.node }
+func (e *simpleEffect) Key() any                  { return e.key }
+func (e *simpleEffect) Value() any                { return e.value }
+func (c *simpleCondition) Key() any               { return c.key }
+func (c *simpleCondition) Match(value any) bool   { return value == c.value }
+func (a *simpleAction) Conditions() []IConditions { return a.conditions }
+func (a *simpleAction) Effects() Effects          { return a.effects }
+func (a *simpleAction) Node() bt.Node             { return a.node }
 
 func patchTreeMeta() func() {
 	old := bt.DefaultPrinter
 	bt.DefaultPrinter = bt.TreePrinter{
-		Inspector: func(node bt.Node, tick bt.Tick) (meta []interface{}, value interface{}) {
+		Inspector: func(node bt.Node, tick bt.Tick) (meta []any, value any) {
 			meta, value = bt.DefaultPrinterInspector(node, tick)
-			extra, _ := node.Value(treeMetaKey{}).([]interface{})
-			meta = append([]interface{}{meta[1], meta[3]}, extra...)
+			extra, _ := node.Value(treeMetaKey{}).([]any)
+			meta = append([]any{meta[1], meta[3]}, extra...)
 			return
 		},
 		Formatter: bt.DefaultPrinterFormatter,
@@ -318,6 +320,6 @@ func patchTreeMeta() func() {
 		bt.DefaultPrinter = old
 	}
 }
-func attachTreeMeta(node bt.Node, meta ...interface{}) bt.Node {
+func attachTreeMeta(node bt.Node, meta ...any) bt.Node {
 	return node.WithValue(treeMetaKey{}, meta)
 }

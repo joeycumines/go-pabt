@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+//go:build example
 // +build example
 
 package logic
@@ -44,7 +45,7 @@ type (
 	}
 
 	stateVar interface {
-		stateVar(state stateInterface) (interface{}, error)
+		stateVar(state stateInterface) (any, error)
 	}
 
 	positionInfo struct {
@@ -80,8 +81,8 @@ type (
 	// CONDITIONS
 
 	simpleCond struct {
-		key   interface{}
-		match func(r interface{}) bool
+		key   any
+		match func(r any) bool
 	}
 
 	//moveCollisionCond struct {
@@ -92,8 +93,8 @@ type (
 	// EFFECTS
 
 	simpleEffect struct {
-		key   interface{}
-		value interface{}
+		key   any
+		value any
 	}
 
 	// ACTIONS
@@ -122,7 +123,7 @@ func PickAndPlace(ctx context.Context, simulation sim.Simulation, actor sim.Acto
 			// cube is on the goal (at least partially, though cubes are only 1x1 anyway)
 			&simpleCond{
 				key: positionVar{Sprite: pair.Cube},
-				match: func(r interface{}) bool {
+				match: func(r any) bool {
 					var (
 						positions = r.(*positionValue).positions
 						cubePos   = positions[pair.Cube]
@@ -138,7 +139,7 @@ func PickAndPlace(ctx context.Context, simulation sim.Simulation, actor sim.Acto
 		})
 	}
 
-	plan, err := pabt.New(state, successConditions)
+	plan, err := pabt.INew(state, successConditions)
 	if err != nil {
 		panic(err)
 	}
@@ -146,7 +147,7 @@ func PickAndPlace(ctx context.Context, simulation sim.Simulation, actor sim.Acto
 	return plan.Node()
 }
 
-func (p *pickAndPlace) Variable(key interface{}) (interface{}, error) {
+func (p *pickAndPlace) Variable(key any) (any, error) {
 	switch key := key.(type) {
 	case stateVar:
 		return key.stateVar(p)
@@ -224,17 +225,17 @@ func (p *pickAndPlace) getSimulation() sim.Simulation { return p.simulation }
 // templatePick will template actions to pickup the given sprite, note that these actions will be conditional on the
 // sprite remaining in it's current, visible position, since that is critical to the planning (e.g. of actor movement)
 //
-// fig 7.4
+//	fig 7.4
 //
-// Pick(i)
-// con: o_r ∈ N_o_i
-//      h = /0
-// eff: h = i
+//	Pick(i)
+//	con: o_r ∈ N_o_i
+//	     h = /0
+//	eff: h = i
 //
-// Pick(cube)
-// con: o_r ∈ N_o_cube
-//      h = /0
-// eff: h = cube
+//	Pick(cube)
+//	con: o_r ∈ N_o_cube
+//	     h = /0
+//	eff: h = cube
 func (p *pickAndPlace) templatePick(failed pabt.Condition, snapshot *sim.State, sprite sim.Sprite) (actions []pabt.Action, err error) {
 	var ox, oy int32
 	if spriteValue, ok := snapshot.Sprites[sprite]; !ok {
@@ -264,7 +265,7 @@ func (p *pickAndPlace) templatePick(failed pabt.Condition, snapshot *sim.State, 
 			{
 				&simpleCond{
 					key: positionVar{Sprite: sprite},
-					match: func(r interface{}) bool {
+					match: func(r any) bool {
 						if pos := r.(*positionValue).positions[sprite]; pos != nil && pos.Shape != nil {
 							if running {
 								return true
@@ -278,13 +279,13 @@ func (p *pickAndPlace) templatePick(failed pabt.Condition, snapshot *sim.State, 
 				},
 				&simpleCond{
 					key: heldItemVar{Actor: p.actor},
-					match: func(r interface{}) bool {
+					match: func(r any) bool {
 						return r.(*heldItemValue).item == nil
 					},
 				},
 				&simpleCond{
 					key: positionVar{Sprite: p.actor},
-					match: func(r interface{}) bool {
+					match: func(r any) bool {
 						var (
 							positions = r.(*positionValue).positions
 							spritePos = positions[sprite]
@@ -323,10 +324,10 @@ func (p *pickAndPlace) templatePick(failed pabt.Condition, snapshot *sim.State, 
 
 // templatePlace accepts the actor position (x, y) and sprite (to place)
 //
-// Place(i, p)
-// con: o_r ∈ N_p
-//      h = i
-// eff: o_i = p
+//	Place(i, p)
+//	con: o_r ∈ N_p
+//	     h = i
+//	eff: o_i = p
 func (p *pickAndPlace) templatePlace(failed pabt.Condition, snapshot *sim.State, x, y int32, sprite sim.Sprite) (actions []pabt.Action, err error) {
 	spriteValue, ok := snapshot.Sprites[sprite]
 	if !ok {
@@ -363,7 +364,7 @@ func (p *pickAndPlace) templatePlace(failed pabt.Condition, snapshot *sim.State,
 				k := k
 				noCollisionConds = append(noCollisionConds, &simpleCond{
 					key: positionVar{Sprite: k},
-					match: func(r interface{}) bool {
+					match: func(r any) bool {
 						if v := r.(*positionValue).positions[k]; v != nil && v.Shape != nil && v.Space.Collides(spriteValue.Space()) && v.Shape.Collides(spriteShape) {
 							return false
 						}
@@ -381,13 +382,13 @@ func (p *pickAndPlace) templatePlace(failed pabt.Condition, snapshot *sim.State,
 			append(append(pabt.Conditions(nil),
 				&simpleCond{
 					key: heldItemVar{Actor: p.actor},
-					match: func(r interface{}) bool {
+					match: func(r any) bool {
 						return r.(*heldItemValue).item == sprite
 					},
 				},
 				&simpleCond{
 					key: positionVar{Sprite: p.actor},
-					match: func(r interface{}) bool {
+					match: func(r any) bool {
 						if v := r.(*positionValue).positions[p.actor]; v != nil && v.Shape != nil {
 							if cx, cy := v.Shape.Position(); x == cx && y == cy {
 								return true
@@ -471,7 +472,7 @@ func (p *pickAndPlace) templateMove(failed pabt.Condition, snapshot *sim.State, 
 			k := k
 			noCollisionConds = append(noCollisionConds, &simpleCond{
 				key: positionVar{Sprite: k},
-				match: func(r interface{}) bool {
+				match: func(r any) bool {
 					if v := r.(*positionValue).positions[k]; v != nil && v.Shape != nil && v.Space.Collides(space) {
 						for _, shape := range shapes {
 							if shape.Collides(v.Shape) {
@@ -556,17 +557,17 @@ func (p *pickAndPlace) move(sprite sim.Sprite, x, y float64) error {
 	return p.simulation.Move(ctx, sprite, x, y)
 }
 
-func (e *simpleEffect) Key() interface{}   { return e.key }
-func (e *simpleEffect) Value() interface{} { return e.value }
+func (e *simpleEffect) Key() any   { return e.key }
+func (e *simpleEffect) Value() any { return e.value }
 
-func (c *simpleCond) Key() interface{}             { return c.key }
-func (c *simpleCond) Match(value interface{}) bool { return c.match(value) }
+func (c *simpleCond) Key() any             { return c.key }
+func (c *simpleCond) Match(value any) bool { return c.match(value) }
 
 func (a *simpleAction) Conditions() []pabt.Conditions { return a.conditions }
 func (a *simpleAction) Effects() pabt.Effects         { return a.effects }
 func (a *simpleAction) Node() bt.Node                 { return a.node }
 
-func (a heldItemVar) stateVar(state stateInterface) (interface{}, error) {
+func (a heldItemVar) stateVar(state stateInterface) (any, error) {
 	var r heldItemValue
 	if v, ok := state.getSimulation().State().Sprites[a.Actor]; ok {
 		if v, ok := v.(sim.Actor); ok {
@@ -576,7 +577,7 @@ func (a heldItemVar) stateVar(state stateInterface) (interface{}, error) {
 	return &r, nil
 }
 
-func (p positionVar) stateVar(state stateInterface) (interface{}, error) {
+func (p positionVar) stateVar(state stateInterface) (any, error) {
 	var r positionValue
 	for k, v := range state.getSimulation().State().Sprites {
 		if r.positions == nil {

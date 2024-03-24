@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+//go:build example
 // +build example
 
 package sim
@@ -19,7 +20,7 @@ package sim
 import (
 	"context"
 	"fmt"
-	"github.com/gdamore/tcell/v2"
+	tcell "github.com/gdamore/tcell/v2"
 	"math"
 	"strings"
 	"sync"
@@ -131,7 +132,7 @@ type (
 		Images        []spriteImage // image stack see also spriteImage
 		Image         []rune        // last image runes
 		Shape         Shape         // shape must be set if the sprite is visible and must be added to the space
-		Owner         interface{}   // Owner is what this sprite is for
+		Owner         any           // Owner is what this sprite is for
 		Space         Space         // flags indicating what it should collide with
 	}
 
@@ -796,7 +797,7 @@ func (u *update) updateSprite(sprite *spriteModel) {
 	u.Lock = true
 	u.Actions = append(u.Actions, func() { u.State.sprites[sprite] = sprite.clone() })
 }
-func (u *update) initSprite(sprite *spriteModel, owner interface{}, space Space) error {
+func (u *update) initSprite(sprite *spriteModel, owner any, space Space) error {
 	if sprite.Owner != nil || sprite.Space != (Space{}) {
 		panic(sprite)
 	}

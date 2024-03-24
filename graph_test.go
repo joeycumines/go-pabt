@@ -87,14 +87,14 @@ func (g *graphState) String() string {
 	return s.String()
 }
 
-func (g *graphState) Goal() (conditions []Conditions) {
+func (g *graphState) Goal() (conditions []IConditions) {
 	for _, node := range g.goal {
-		conditions = append(conditions, Conditions{&simpleCondition{key: "actor", value: node}})
+		conditions = append(conditions, IConditions{&simpleCondition{key: "actor", value: node}})
 	}
 	return
 }
 
-func (g *graphState) Variable(key interface{}) (value interface{}, err error) {
+func (g *graphState) Variable(key any) (value any, err error) {
 	switch key {
 	case `actor`:
 		return g.actor, nil
@@ -103,17 +103,17 @@ func (g *graphState) Variable(key interface{}) (value interface{}, err error) {
 	}
 }
 
-func (g *graphState) Actions(failed Condition) ([]Action, error) {
+func (g *graphState) Actions(failed Condition) ([]IAction, error) {
 	switch failed := failed.(type) {
 	case *simpleCondition:
 		switch failed.key {
 		case `actor`:
 			switch failed := failed.value.(type) {
 			case *graphNode:
-				var actions []Action
+				var actions []IAction
 				for _, node := range failed.links {
 					actions = append(actions, &simpleAction{
-						conditions: []Conditions{{&simpleCondition{key: "actor", value: node}}},
+						conditions: []IConditions{{&simpleCondition{key: "actor", value: node}}},
 						effects:    Effects{&simpleEffect{key: "actor", value: failed}},
 						node: attachTreeMeta(bt.New(func([]bt.Node) (bt.Status, error) {
 							// could be a whole subtree or whatever
@@ -147,7 +147,7 @@ func Example_graph() {
 	defer patchTreeMeta()()
 
 	state := newGraphState()
-	plan, err := New(state, state.Goal())
+	plan, err := INew(state, state.Goal())
 	if err != nil {
 		panic(err)
 	}
@@ -189,475 +189,475 @@ func Example_graph() {
 	// goal = sg
 	// actor = s0
 	//
-	// [pabt.go:183 pabt.go:193]  github.com/joeycumines/go-pabt.(*Plan).bt-fm | github.com/joeycumines/go-pabt.(*Plan).bt.func2
-	// └── [util.go:158 util.go:158]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
+	// [pabt.go:207 pabt.go:227]  github.com/joeycumines/go-pabt.Example_graph.(*Plan[...]).Node.func3 | github.com/joeycumines/go-pabt.(*Plan[...]).bt.func2
+	// └── [util.go:158 util.go:158]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
 	//
 	// iteration = 1, status = running, err = <nil>, actor = s0
-	// [pabt.go:183 pabt.go:193]  github.com/joeycumines/go-pabt.(*Plan).bt-fm | github.com/joeycumines/go-pabt.(*Plan).bt.func2
-	// └── [util.go:144 selector.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Selector
-	//     ├── [util.go:158 util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//     └── [util.go:144 memorize.go:34]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Memorize.func1
-	//         ├── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//         │   └── [graph_test.go:118 graph_test.go:118 pre:s5 post:sg]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
-	//         └── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//             ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
+	// [pabt.go:207 pabt.go:227]  github.com/joeycumines/go-pabt.Example_graph.(*Plan[...]).Node.func3 | github.com/joeycumines/go-pabt.(*Plan[...]).bt.func2
+	// └── [util.go:140 selector.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Selector
+	//     ├── [util.go:158 util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//     └── [util.go:140 memorize.go:34]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
+	//         ├── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   └── [graph_test.go:118 graph_test.go:118 pre:s5 post:sg]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	//         └── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//             ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
 	//             └── [graph_test.go:118 graph_test.go:118 pre:s3 post:sg]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
 	//
 	// iteration = 2, status = running, err = <nil>, actor = s0
-	// [pabt.go:183 pabt.go:193]  github.com/joeycumines/go-pabt.(*Plan).bt-fm | github.com/joeycumines/go-pabt.(*Plan).bt.func2
-	// └── [util.go:144 selector.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Selector
-	//     ├── [util.go:158 util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//     └── [util.go:144 memorize.go:34]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Memorize.func1
-	//         ├── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   ├── [util.go:144       selector.go:21                  ]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Selector
-	//         │   │   ├── [util.go:158 util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//         │   │   └── [util.go:144 memorize.go:34]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Memorize.func1
-	//         │   │       ├── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │       │   ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//         │   │       │   └── [graph_test.go:118 graph_test.go:118 pre:sg post:s5]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
-	//         │   │       ├── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │       │   ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//         │   │       │   └── [graph_test.go:118 graph_test.go:118 pre:s4 post:s5]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
-	//         │   │       └── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │           ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//         │   │           └── [graph_test.go:118 graph_test.go:118 pre:s2 post:s5]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
-	//         │   └── [graph_test.go:118 graph_test.go:118 pre:s5 post:sg]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
-	//         └── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//             ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
+	// [pabt.go:207 pabt.go:227]  github.com/joeycumines/go-pabt.Example_graph.(*Plan[...]).Node.func3 | github.com/joeycumines/go-pabt.(*Plan[...]).bt.func2
+	// └── [util.go:140 selector.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Selector
+	//     ├── [util.go:158 util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//     └── [util.go:140 memorize.go:34]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
+	//         ├── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   ├── [util.go:140       selector.go:21                  ]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Selector
+	//         │   │   ├── [util.go:158 util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │   └── [util.go:140 memorize.go:34]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
+	//         │   │       ├── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │       │   ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │       │   └── [graph_test.go:118 graph_test.go:118 pre:sg post:s5]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	//         │   │       ├── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │       │   ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │       │   └── [graph_test.go:118 graph_test.go:118 pre:s4 post:s5]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	//         │   │       └── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │           ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │           └── [graph_test.go:118 graph_test.go:118 pre:s2 post:s5]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	//         │   └── [graph_test.go:118 graph_test.go:118 pre:s5 post:sg]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	//         └── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//             ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
 	//             └── [graph_test.go:118 graph_test.go:118 pre:s3 post:sg]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
 	//
 	// iteration = 3, status = running, err = <nil>, actor = s0
-	// [pabt.go:183 pabt.go:193]  github.com/joeycumines/go-pabt.(*Plan).bt-fm | github.com/joeycumines/go-pabt.(*Plan).bt.func2
-	// └── [util.go:144 selector.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Selector
-	//     ├── [util.go:158 util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//     └── [util.go:144 memorize.go:34]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Memorize.func1
-	//         ├── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   ├── [util.go:144       selector.go:21                  ]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Selector
-	//         │   │   ├── [util.go:158 util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//         │   │   └── [util.go:144 memorize.go:34]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Memorize.func1
-	//         │   │       ├── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │       │   ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//         │   │       │   └── [graph_test.go:118 graph_test.go:118 pre:sg post:s5]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
-	//         │   │       ├── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │       │   ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//         │   │       │   └── [graph_test.go:118 graph_test.go:118 pre:s4 post:s5]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
-	//         │   │       └── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │           ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//         │   │           └── [graph_test.go:118 graph_test.go:118 pre:s2 post:s5]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
-	//         │   └── [graph_test.go:118 graph_test.go:118 pre:s5 post:sg]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
-	//         └── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//             ├── [util.go:144       selector.go:21                  ]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Selector
-	//             │   ├── [util.go:158 util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//             │   └── [util.go:144 memorize.go:34]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Memorize.func1
-	//             │       ├── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//             │       │   ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//             │       │   └── [graph_test.go:118 graph_test.go:118 pre:sg post:s3]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
-	//             │       ├── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//             │       │   ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//             │       │   └── [graph_test.go:118 graph_test.go:118 pre:s4 post:s3]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
-	//             │       └── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//             │           ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//             │           └── [graph_test.go:118 graph_test.go:118 pre:s1 post:s3]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	// [pabt.go:207 pabt.go:227]  github.com/joeycumines/go-pabt.Example_graph.(*Plan[...]).Node.func3 | github.com/joeycumines/go-pabt.(*Plan[...]).bt.func2
+	// └── [util.go:140 selector.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Selector
+	//     ├── [util.go:158 util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//     └── [util.go:140 memorize.go:34]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
+	//         ├── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   ├── [util.go:140       selector.go:21                  ]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Selector
+	//         │   │   ├── [util.go:158 util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │   └── [util.go:140 memorize.go:34]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
+	//         │   │       ├── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │       │   ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │       │   └── [graph_test.go:118 graph_test.go:118 pre:sg post:s5]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	//         │   │       ├── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │       │   ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │       │   └── [graph_test.go:118 graph_test.go:118 pre:s4 post:s5]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	//         │   │       └── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │           ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │           └── [graph_test.go:118 graph_test.go:118 pre:s2 post:s5]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	//         │   └── [graph_test.go:118 graph_test.go:118 pre:s5 post:sg]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	//         └── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//             ├── [util.go:140       selector.go:21                  ]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Selector
+	//             │   ├── [util.go:158 util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//             │   └── [util.go:140 memorize.go:34]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
+	//             │       ├── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//             │       │   ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//             │       │   └── [graph_test.go:118 graph_test.go:118 pre:sg post:s3]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	//             │       ├── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//             │       │   ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//             │       │   └── [graph_test.go:118 graph_test.go:118 pre:s4 post:s3]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	//             │       └── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//             │           ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//             │           └── [graph_test.go:118 graph_test.go:118 pre:s1 post:s3]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
 	//             └── [graph_test.go:118 graph_test.go:118 pre:s3 post:sg]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
 	//
 	// iteration = 4, status = running, err = <nil>, actor = s0
-	// [pabt.go:183 pabt.go:193]  github.com/joeycumines/go-pabt.(*Plan).bt-fm | github.com/joeycumines/go-pabt.(*Plan).bt.func2
-	// └── [util.go:144 selector.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Selector
-	//     ├── [util.go:158 util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//     └── [util.go:144 memorize.go:34]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Memorize.func1
-	//         ├── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   ├── [util.go:144       selector.go:21                  ]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Selector
-	//         │   │   ├── [util.go:158 util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//         │   │   └── [util.go:144 memorize.go:34]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Memorize.func1
-	//         │   │       ├── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │       │   ├── [util.go:144       selector.go:21                  ]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Selector
-	//         │   │       │   │   ├── [util.go:158 util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//         │   │       │   │   └── [util.go:144 memorize.go:34]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Memorize.func1
-	//         │   │       │   │       ├── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │       │   │       │   ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//         │   │       │   │       │   └── [graph_test.go:118 graph_test.go:118 pre:s5 post:sg]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
-	//         │   │       │   │       └── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │       │   │           ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//         │   │       │   │           └── [graph_test.go:118 graph_test.go:118 pre:s3 post:sg]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
-	//         │   │       │   └── [graph_test.go:118 graph_test.go:118 pre:sg post:s5]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
-	//         │   │       ├── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │       │   ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//         │   │       │   └── [graph_test.go:118 graph_test.go:118 pre:s4 post:s5]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
-	//         │   │       └── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │           ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//         │   │           └── [graph_test.go:118 graph_test.go:118 pre:s2 post:s5]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
-	//         │   └── [graph_test.go:118 graph_test.go:118 pre:s5 post:sg]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
-	//         └── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//             ├── [util.go:144       selector.go:21                  ]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Selector
-	//             │   ├── [util.go:158 util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//             │   └── [util.go:144 memorize.go:34]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Memorize.func1
-	//             │       ├── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//             │       │   ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//             │       │   └── [graph_test.go:118 graph_test.go:118 pre:sg post:s3]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
-	//             │       ├── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//             │       │   ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//             │       │   └── [graph_test.go:118 graph_test.go:118 pre:s4 post:s3]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
-	//             │       └── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//             │           ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//             │           └── [graph_test.go:118 graph_test.go:118 pre:s1 post:s3]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	// [pabt.go:207 pabt.go:227]  github.com/joeycumines/go-pabt.Example_graph.(*Plan[...]).Node.func3 | github.com/joeycumines/go-pabt.(*Plan[...]).bt.func2
+	// └── [util.go:140 selector.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Selector
+	//     ├── [util.go:158 util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//     └── [util.go:140 memorize.go:34]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
+	//         ├── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   ├── [util.go:140       selector.go:21                  ]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Selector
+	//         │   │   ├── [util.go:158 util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │   └── [util.go:140 memorize.go:34]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
+	//         │   │       ├── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │       │   ├── [util.go:140       selector.go:21                  ]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Selector
+	//         │   │       │   │   ├── [util.go:158 util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │       │   │   └── [util.go:140 memorize.go:34]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
+	//         │   │       │   │       ├── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │       │   │       │   ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │       │   │       │   └── [graph_test.go:118 graph_test.go:118 pre:s5 post:sg]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	//         │   │       │   │       └── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │       │   │           ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │       │   │           └── [graph_test.go:118 graph_test.go:118 pre:s3 post:sg]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	//         │   │       │   └── [graph_test.go:118 graph_test.go:118 pre:sg post:s5]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	//         │   │       ├── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │       │   ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │       │   └── [graph_test.go:118 graph_test.go:118 pre:s4 post:s5]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	//         │   │       └── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │           ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │           └── [graph_test.go:118 graph_test.go:118 pre:s2 post:s5]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	//         │   └── [graph_test.go:118 graph_test.go:118 pre:s5 post:sg]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	//         └── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//             ├── [util.go:140       selector.go:21                  ]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Selector
+	//             │   ├── [util.go:158 util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//             │   └── [util.go:140 memorize.go:34]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
+	//             │       ├── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//             │       │   ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//             │       │   └── [graph_test.go:118 graph_test.go:118 pre:sg post:s3]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	//             │       ├── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//             │       │   ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//             │       │   └── [graph_test.go:118 graph_test.go:118 pre:s4 post:s3]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	//             │       └── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//             │           ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//             │           └── [graph_test.go:118 graph_test.go:118 pre:s1 post:s3]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
 	//             └── [graph_test.go:118 graph_test.go:118 pre:s3 post:sg]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
 	//
 	// iteration = 5, status = running, err = <nil>, actor = s0
-	// [pabt.go:183 pabt.go:193]  github.com/joeycumines/go-pabt.(*Plan).bt-fm | github.com/joeycumines/go-pabt.(*Plan).bt.func2
-	// └── [util.go:144 selector.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Selector
-	//     ├── [util.go:158 util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//     └── [util.go:144 memorize.go:34]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Memorize.func1
-	//         ├── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   ├── [util.go:144       selector.go:21                  ]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Selector
-	//         │   │   ├── [util.go:158 util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//         │   │   └── [util.go:144 memorize.go:34]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Memorize.func1
-	//         │   │       ├── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │       │   ├── [util.go:144       selector.go:21                  ]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Selector
-	//         │   │       │   │   ├── [util.go:158 util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//         │   │       │   │   └── [util.go:144 memorize.go:34]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Memorize.func1
-	//         │   │       │   │       ├── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │       │   │       │   ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//         │   │       │   │       │   └── [graph_test.go:118 graph_test.go:118 pre:s5 post:sg]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
-	//         │   │       │   │       └── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │       │   │           ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//         │   │       │   │           └── [graph_test.go:118 graph_test.go:118 pre:s3 post:sg]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
-	//         │   │       │   └── [graph_test.go:118 graph_test.go:118 pre:sg post:s5]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
-	//         │   │       ├── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │       │   ├── [util.go:144       selector.go:21                  ]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Selector
-	//         │   │       │   │   ├── [util.go:158 util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//         │   │       │   │   └── [util.go:144 memorize.go:34]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Memorize.func1
-	//         │   │       │   │       ├── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │       │   │       │   ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//         │   │       │   │       │   └── [graph_test.go:118 graph_test.go:118 pre:s5 post:s4]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
-	//         │   │       │   │       ├── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │       │   │       │   ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//         │   │       │   │       │   └── [graph_test.go:118 graph_test.go:118 pre:s3 post:s4]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
-	//         │   │       │   │       └── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │       │   │           ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//         │   │       │   │           └── [graph_test.go:118 graph_test.go:118 pre:s1 post:s4]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
-	//         │   │       │   └── [graph_test.go:118 graph_test.go:118 pre:s4 post:s5]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
-	//         │   │       └── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │           ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//         │   │           └── [graph_test.go:118 graph_test.go:118 pre:s2 post:s5]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
-	//         │   └── [graph_test.go:118 graph_test.go:118 pre:s5 post:sg]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
-	//         └── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//             ├── [util.go:144       selector.go:21                  ]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Selector
-	//             │   ├── [util.go:158 util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//             │   └── [util.go:144 memorize.go:34]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Memorize.func1
-	//             │       ├── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//             │       │   ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//             │       │   └── [graph_test.go:118 graph_test.go:118 pre:sg post:s3]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
-	//             │       ├── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//             │       │   ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//             │       │   └── [graph_test.go:118 graph_test.go:118 pre:s4 post:s3]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
-	//             │       └── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//             │           ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//             │           └── [graph_test.go:118 graph_test.go:118 pre:s1 post:s3]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	// [pabt.go:207 pabt.go:227]  github.com/joeycumines/go-pabt.Example_graph.(*Plan[...]).Node.func3 | github.com/joeycumines/go-pabt.(*Plan[...]).bt.func2
+	// └── [util.go:140 selector.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Selector
+	//     ├── [util.go:158 util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//     └── [util.go:140 memorize.go:34]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
+	//         ├── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   ├── [util.go:140       selector.go:21                  ]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Selector
+	//         │   │   ├── [util.go:158 util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │   └── [util.go:140 memorize.go:34]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
+	//         │   │       ├── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │       │   ├── [util.go:140       selector.go:21                  ]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Selector
+	//         │   │       │   │   ├── [util.go:158 util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │       │   │   └── [util.go:140 memorize.go:34]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
+	//         │   │       │   │       ├── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │       │   │       │   ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │       │   │       │   └── [graph_test.go:118 graph_test.go:118 pre:s5 post:sg]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	//         │   │       │   │       └── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │       │   │           ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │       │   │           └── [graph_test.go:118 graph_test.go:118 pre:s3 post:sg]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	//         │   │       │   └── [graph_test.go:118 graph_test.go:118 pre:sg post:s5]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	//         │   │       ├── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │       │   ├── [util.go:140       selector.go:21                  ]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Selector
+	//         │   │       │   │   ├── [util.go:158 util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │       │   │   └── [util.go:140 memorize.go:34]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
+	//         │   │       │   │       ├── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │       │   │       │   ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │       │   │       │   └── [graph_test.go:118 graph_test.go:118 pre:s5 post:s4]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	//         │   │       │   │       ├── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │       │   │       │   ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │       │   │       │   └── [graph_test.go:118 graph_test.go:118 pre:s3 post:s4]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	//         │   │       │   │       └── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │       │   │           ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │       │   │           └── [graph_test.go:118 graph_test.go:118 pre:s1 post:s4]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	//         │   │       │   └── [graph_test.go:118 graph_test.go:118 pre:s4 post:s5]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	//         │   │       └── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │           ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │           └── [graph_test.go:118 graph_test.go:118 pre:s2 post:s5]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	//         │   └── [graph_test.go:118 graph_test.go:118 pre:s5 post:sg]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	//         └── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//             ├── [util.go:140       selector.go:21                  ]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Selector
+	//             │   ├── [util.go:158 util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//             │   └── [util.go:140 memorize.go:34]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
+	//             │       ├── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//             │       │   ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//             │       │   └── [graph_test.go:118 graph_test.go:118 pre:sg post:s3]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	//             │       ├── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//             │       │   ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//             │       │   └── [graph_test.go:118 graph_test.go:118 pre:s4 post:s3]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	//             │       └── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//             │           ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//             │           └── [graph_test.go:118 graph_test.go:118 pre:s1 post:s3]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
 	//             └── [graph_test.go:118 graph_test.go:118 pre:s3 post:sg]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
 	//
 	// iteration = 6, status = running, err = <nil>, actor = s0
-	// [pabt.go:183 pabt.go:193]  github.com/joeycumines/go-pabt.(*Plan).bt-fm | github.com/joeycumines/go-pabt.(*Plan).bt.func2
-	// └── [util.go:144 selector.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Selector
-	//     ├── [util.go:158 util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//     └── [util.go:144 memorize.go:34]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Memorize.func1
-	//         ├── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   ├── [util.go:144       selector.go:21                  ]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Selector
-	//         │   │   ├── [util.go:158 util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//         │   │   └── [util.go:144 memorize.go:34]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Memorize.func1
-	//         │   │       ├── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │       │   ├── [util.go:144       selector.go:21                  ]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Selector
-	//         │   │       │   │   ├── [util.go:158 util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//         │   │       │   │   └── [util.go:144 memorize.go:34]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Memorize.func1
-	//         │   │       │   │       ├── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │       │   │       │   ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//         │   │       │   │       │   └── [graph_test.go:118 graph_test.go:118 pre:s5 post:sg]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
-	//         │   │       │   │       └── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │       │   │           ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//         │   │       │   │           └── [graph_test.go:118 graph_test.go:118 pre:s3 post:sg]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
-	//         │   │       │   └── [graph_test.go:118 graph_test.go:118 pre:sg post:s5]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
-	//         │   │       ├── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │       │   ├── [util.go:144       selector.go:21                  ]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Selector
-	//         │   │       │   │   ├── [util.go:158 util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//         │   │       │   │   └── [util.go:144 memorize.go:34]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Memorize.func1
-	//         │   │       │   │       ├── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │       │   │       │   ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//         │   │       │   │       │   └── [graph_test.go:118 graph_test.go:118 pre:s5 post:s4]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
-	//         │   │       │   │       ├── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │       │   │       │   ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//         │   │       │   │       │   └── [graph_test.go:118 graph_test.go:118 pre:s3 post:s4]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
-	//         │   │       │   │       └── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │       │   │           ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//         │   │       │   │           └── [graph_test.go:118 graph_test.go:118 pre:s1 post:s4]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
-	//         │   │       │   └── [graph_test.go:118 graph_test.go:118 pre:s4 post:s5]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
-	//         │   │       └── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │           ├── [util.go:144       selector.go:21                  ]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Selector
-	//         │   │           │   ├── [util.go:158 util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//         │   │           │   └── [util.go:144 memorize.go:34]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Memorize.func1
-	//         │   │           │       ├── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │           │       │   ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//         │   │           │       │   └── [graph_test.go:118 graph_test.go:118 pre:s5 post:s2]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
-	//         │   │           │       └── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │           │           ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//         │   │           │           └── [graph_test.go:118 graph_test.go:118 pre:s1 post:s2]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
-	//         │   │           └── [graph_test.go:118 graph_test.go:118 pre:s2 post:s5]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
-	//         │   └── [graph_test.go:118 graph_test.go:118 pre:s5 post:sg]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
-	//         └── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//             ├── [util.go:144       selector.go:21                  ]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Selector
-	//             │   ├── [util.go:158 util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//             │   └── [util.go:144 memorize.go:34]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Memorize.func1
-	//             │       ├── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//             │       │   ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//             │       │   └── [graph_test.go:118 graph_test.go:118 pre:sg post:s3]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
-	//             │       ├── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//             │       │   ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//             │       │   └── [graph_test.go:118 graph_test.go:118 pre:s4 post:s3]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
-	//             │       └── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//             │           ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//             │           └── [graph_test.go:118 graph_test.go:118 pre:s1 post:s3]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	// [pabt.go:207 pabt.go:227]  github.com/joeycumines/go-pabt.Example_graph.(*Plan[...]).Node.func3 | github.com/joeycumines/go-pabt.(*Plan[...]).bt.func2
+	// └── [util.go:140 selector.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Selector
+	//     ├── [util.go:158 util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//     └── [util.go:140 memorize.go:34]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
+	//         ├── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   ├── [util.go:140       selector.go:21                  ]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Selector
+	//         │   │   ├── [util.go:158 util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │   └── [util.go:140 memorize.go:34]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
+	//         │   │       ├── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │       │   ├── [util.go:140       selector.go:21                  ]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Selector
+	//         │   │       │   │   ├── [util.go:158 util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │       │   │   └── [util.go:140 memorize.go:34]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
+	//         │   │       │   │       ├── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │       │   │       │   ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │       │   │       │   └── [graph_test.go:118 graph_test.go:118 pre:s5 post:sg]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	//         │   │       │   │       └── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │       │   │           ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │       │   │           └── [graph_test.go:118 graph_test.go:118 pre:s3 post:sg]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	//         │   │       │   └── [graph_test.go:118 graph_test.go:118 pre:sg post:s5]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	//         │   │       ├── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │       │   ├── [util.go:140       selector.go:21                  ]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Selector
+	//         │   │       │   │   ├── [util.go:158 util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │       │   │   └── [util.go:140 memorize.go:34]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
+	//         │   │       │   │       ├── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │       │   │       │   ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │       │   │       │   └── [graph_test.go:118 graph_test.go:118 pre:s5 post:s4]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	//         │   │       │   │       ├── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │       │   │       │   ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │       │   │       │   └── [graph_test.go:118 graph_test.go:118 pre:s3 post:s4]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	//         │   │       │   │       └── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │       │   │           ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │       │   │           └── [graph_test.go:118 graph_test.go:118 pre:s1 post:s4]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	//         │   │       │   └── [graph_test.go:118 graph_test.go:118 pre:s4 post:s5]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	//         │   │       └── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │           ├── [util.go:140       selector.go:21                  ]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Selector
+	//         │   │           │   ├── [util.go:158 util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │           │   └── [util.go:140 memorize.go:34]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
+	//         │   │           │       ├── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │           │       │   ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │           │       │   └── [graph_test.go:118 graph_test.go:118 pre:s5 post:s2]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	//         │   │           │       └── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │           │           ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │           │           └── [graph_test.go:118 graph_test.go:118 pre:s1 post:s2]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	//         │   │           └── [graph_test.go:118 graph_test.go:118 pre:s2 post:s5]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	//         │   └── [graph_test.go:118 graph_test.go:118 pre:s5 post:sg]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	//         └── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//             ├── [util.go:140       selector.go:21                  ]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Selector
+	//             │   ├── [util.go:158 util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//             │   └── [util.go:140 memorize.go:34]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
+	//             │       ├── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//             │       │   ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//             │       │   └── [graph_test.go:118 graph_test.go:118 pre:sg post:s3]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	//             │       ├── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//             │       │   ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//             │       │   └── [graph_test.go:118 graph_test.go:118 pre:s4 post:s3]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	//             │       └── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//             │           ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//             │           └── [graph_test.go:118 graph_test.go:118 pre:s1 post:s3]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
 	//             └── [graph_test.go:118 graph_test.go:118 pre:s3 post:sg]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
 	//
 	// iteration = 7, status = running, err = <nil>, actor = s0
-	// [pabt.go:183 pabt.go:193]  github.com/joeycumines/go-pabt.(*Plan).bt-fm | github.com/joeycumines/go-pabt.(*Plan).bt.func2
-	// └── [util.go:144 selector.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Selector
-	//     ├── [util.go:158 util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//     └── [util.go:144 memorize.go:34]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Memorize.func1
-	//         ├── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   ├── [util.go:144       selector.go:21                  ]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Selector
-	//         │   │   ├── [util.go:158 util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//         │   │   └── [util.go:144 memorize.go:34]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Memorize.func1
-	//         │   │       ├── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │       │   ├── [util.go:144       selector.go:21                  ]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Selector
-	//         │   │       │   │   ├── [util.go:158 util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//         │   │       │   │   └── [util.go:144 memorize.go:34]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Memorize.func1
-	//         │   │       │   │       ├── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │       │   │       │   ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//         │   │       │   │       │   └── [graph_test.go:118 graph_test.go:118 pre:s5 post:sg]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
-	//         │   │       │   │       └── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │       │   │           ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//         │   │       │   │           └── [graph_test.go:118 graph_test.go:118 pre:s3 post:sg]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
-	//         │   │       │   └── [graph_test.go:118 graph_test.go:118 pre:sg post:s5]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
-	//         │   │       ├── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │       │   ├── [util.go:144       selector.go:21                  ]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Selector
-	//         │   │       │   │   ├── [util.go:158 util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//         │   │       │   │   └── [util.go:144 memorize.go:34]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Memorize.func1
-	//         │   │       │   │       ├── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │       │   │       │   ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//         │   │       │   │       │   └── [graph_test.go:118 graph_test.go:118 pre:s5 post:s4]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
-	//         │   │       │   │       ├── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │       │   │       │   ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//         │   │       │   │       │   └── [graph_test.go:118 graph_test.go:118 pre:s3 post:s4]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
-	//         │   │       │   │       └── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │       │   │           ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//         │   │       │   │           └── [graph_test.go:118 graph_test.go:118 pre:s1 post:s4]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
-	//         │   │       │   └── [graph_test.go:118 graph_test.go:118 pre:s4 post:s5]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
-	//         │   │       └── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │           ├── [util.go:144       selector.go:21                  ]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Selector
-	//         │   │           │   ├── [util.go:158 util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//         │   │           │   └── [util.go:144 memorize.go:34]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Memorize.func1
-	//         │   │           │       ├── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │           │       │   ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//         │   │           │       │   └── [graph_test.go:118 graph_test.go:118 pre:s5 post:s2]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
-	//         │   │           │       └── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │           │           ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//         │   │           │           └── [graph_test.go:118 graph_test.go:118 pre:s1 post:s2]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
-	//         │   │           └── [graph_test.go:118 graph_test.go:118 pre:s2 post:s5]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
-	//         │   └── [graph_test.go:118 graph_test.go:118 pre:s5 post:sg]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
-	//         └── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//             ├── [util.go:144       selector.go:21                  ]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Selector
-	//             │   ├── [util.go:158 util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//             │   └── [util.go:144 memorize.go:34]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Memorize.func1
-	//             │       ├── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//             │       │   ├── [util.go:144       selector.go:21                  ]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Selector
-	//             │       │   │   ├── [util.go:158 util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//             │       │   │   └── [util.go:144 memorize.go:34]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Memorize.func1
-	//             │       │   │       ├── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//             │       │   │       │   ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//             │       │   │       │   └── [graph_test.go:118 graph_test.go:118 pre:s5 post:sg]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
-	//             │       │   │       └── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//             │       │   │           ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//             │       │   │           └── [graph_test.go:118 graph_test.go:118 pre:s3 post:sg]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
-	//             │       │   └── [graph_test.go:118 graph_test.go:118 pre:sg post:s3]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
-	//             │       ├── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//             │       │   ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//             │       │   └── [graph_test.go:118 graph_test.go:118 pre:s4 post:s3]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
-	//             │       └── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//             │           ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//             │           └── [graph_test.go:118 graph_test.go:118 pre:s1 post:s3]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	// [pabt.go:207 pabt.go:227]  github.com/joeycumines/go-pabt.Example_graph.(*Plan[...]).Node.func3 | github.com/joeycumines/go-pabt.(*Plan[...]).bt.func2
+	// └── [util.go:140 selector.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Selector
+	//     ├── [util.go:158 util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//     └── [util.go:140 memorize.go:34]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
+	//         ├── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   ├── [util.go:140       selector.go:21                  ]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Selector
+	//         │   │   ├── [util.go:158 util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │   └── [util.go:140 memorize.go:34]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
+	//         │   │       ├── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │       │   ├── [util.go:140       selector.go:21                  ]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Selector
+	//         │   │       │   │   ├── [util.go:158 util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │       │   │   └── [util.go:140 memorize.go:34]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
+	//         │   │       │   │       ├── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │       │   │       │   ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │       │   │       │   └── [graph_test.go:118 graph_test.go:118 pre:s5 post:sg]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	//         │   │       │   │       └── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │       │   │           ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │       │   │           └── [graph_test.go:118 graph_test.go:118 pre:s3 post:sg]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	//         │   │       │   └── [graph_test.go:118 graph_test.go:118 pre:sg post:s5]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	//         │   │       ├── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │       │   ├── [util.go:140       selector.go:21                  ]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Selector
+	//         │   │       │   │   ├── [util.go:158 util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │       │   │   └── [util.go:140 memorize.go:34]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
+	//         │   │       │   │       ├── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │       │   │       │   ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │       │   │       │   └── [graph_test.go:118 graph_test.go:118 pre:s5 post:s4]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	//         │   │       │   │       ├── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │       │   │       │   ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │       │   │       │   └── [graph_test.go:118 graph_test.go:118 pre:s3 post:s4]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	//         │   │       │   │       └── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │       │   │           ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │       │   │           └── [graph_test.go:118 graph_test.go:118 pre:s1 post:s4]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	//         │   │       │   └── [graph_test.go:118 graph_test.go:118 pre:s4 post:s5]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	//         │   │       └── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │           ├── [util.go:140       selector.go:21                  ]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Selector
+	//         │   │           │   ├── [util.go:158 util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │           │   └── [util.go:140 memorize.go:34]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
+	//         │   │           │       ├── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │           │       │   ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │           │       │   └── [graph_test.go:118 graph_test.go:118 pre:s5 post:s2]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	//         │   │           │       └── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │           │           ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │           │           └── [graph_test.go:118 graph_test.go:118 pre:s1 post:s2]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	//         │   │           └── [graph_test.go:118 graph_test.go:118 pre:s2 post:s5]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	//         │   └── [graph_test.go:118 graph_test.go:118 pre:s5 post:sg]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	//         └── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//             ├── [util.go:140       selector.go:21                  ]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Selector
+	//             │   ├── [util.go:158 util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//             │   └── [util.go:140 memorize.go:34]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
+	//             │       ├── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//             │       │   ├── [util.go:140       selector.go:21                  ]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Selector
+	//             │       │   │   ├── [util.go:158 util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//             │       │   │   └── [util.go:140 memorize.go:34]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
+	//             │       │   │       ├── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//             │       │   │       │   ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//             │       │   │       │   └── [graph_test.go:118 graph_test.go:118 pre:s5 post:sg]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	//             │       │   │       └── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//             │       │   │           ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//             │       │   │           └── [graph_test.go:118 graph_test.go:118 pre:s3 post:sg]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	//             │       │   └── [graph_test.go:118 graph_test.go:118 pre:sg post:s3]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	//             │       ├── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//             │       │   ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//             │       │   └── [graph_test.go:118 graph_test.go:118 pre:s4 post:s3]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	//             │       └── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//             │           ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//             │           └── [graph_test.go:118 graph_test.go:118 pre:s1 post:s3]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
 	//             └── [graph_test.go:118 graph_test.go:118 pre:s3 post:sg]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
 	//
 	// iteration = 8, status = running, err = <nil>, actor = s0
-	// [pabt.go:183 pabt.go:193]  github.com/joeycumines/go-pabt.(*Plan).bt-fm | github.com/joeycumines/go-pabt.(*Plan).bt.func2
-	// └── [util.go:144 selector.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Selector
-	//     ├── [util.go:158 util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//     └── [util.go:144 memorize.go:34]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Memorize.func1
-	//         ├── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   ├── [util.go:144       selector.go:21                  ]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Selector
-	//         │   │   ├── [util.go:158 util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//         │   │   └── [util.go:144 memorize.go:34]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Memorize.func1
-	//         │   │       ├── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │       │   ├── [util.go:144       selector.go:21                  ]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Selector
-	//         │   │       │   │   ├── [util.go:158 util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//         │   │       │   │   └── [util.go:144 memorize.go:34]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Memorize.func1
-	//         │   │       │   │       ├── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │       │   │       │   ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//         │   │       │   │       │   └── [graph_test.go:118 graph_test.go:118 pre:s5 post:sg]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
-	//         │   │       │   │       └── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │       │   │           ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//         │   │       │   │           └── [graph_test.go:118 graph_test.go:118 pre:s3 post:sg]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
-	//         │   │       │   └── [graph_test.go:118 graph_test.go:118 pre:sg post:s5]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
-	//         │   │       ├── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │       │   ├── [util.go:144       selector.go:21                  ]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Selector
-	//         │   │       │   │   ├── [util.go:158 util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//         │   │       │   │   └── [util.go:144 memorize.go:34]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Memorize.func1
-	//         │   │       │   │       ├── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │       │   │       │   ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//         │   │       │   │       │   └── [graph_test.go:118 graph_test.go:118 pre:s5 post:s4]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
-	//         │   │       │   │       ├── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │       │   │       │   ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//         │   │       │   │       │   └── [graph_test.go:118 graph_test.go:118 pre:s3 post:s4]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
-	//         │   │       │   │       └── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │       │   │           ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//         │   │       │   │           └── [graph_test.go:118 graph_test.go:118 pre:s1 post:s4]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
-	//         │   │       │   └── [graph_test.go:118 graph_test.go:118 pre:s4 post:s5]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
-	//         │   │       └── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │           ├── [util.go:144       selector.go:21                  ]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Selector
-	//         │   │           │   ├── [util.go:158 util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//         │   │           │   └── [util.go:144 memorize.go:34]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Memorize.func1
-	//         │   │           │       ├── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │           │       │   ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//         │   │           │       │   └── [graph_test.go:118 graph_test.go:118 pre:s5 post:s2]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
-	//         │   │           │       └── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │           │           ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//         │   │           │           └── [graph_test.go:118 graph_test.go:118 pre:s1 post:s2]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
-	//         │   │           └── [graph_test.go:118 graph_test.go:118 pre:s2 post:s5]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
-	//         │   └── [graph_test.go:118 graph_test.go:118 pre:s5 post:sg]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
-	//         └── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//             ├── [util.go:144       selector.go:21                  ]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Selector
-	//             │   ├── [util.go:158 util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//             │   └── [util.go:144 memorize.go:34]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Memorize.func1
-	//             │       ├── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//             │       │   ├── [util.go:144       selector.go:21                  ]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Selector
-	//             │       │   │   ├── [util.go:158 util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//             │       │   │   └── [util.go:144 memorize.go:34]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Memorize.func1
-	//             │       │   │       ├── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//             │       │   │       │   ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//             │       │   │       │   └── [graph_test.go:118 graph_test.go:118 pre:s5 post:sg]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
-	//             │       │   │       └── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//             │       │   │           ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//             │       │   │           └── [graph_test.go:118 graph_test.go:118 pre:s3 post:sg]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
-	//             │       │   └── [graph_test.go:118 graph_test.go:118 pre:sg post:s3]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
-	//             │       ├── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//             │       │   ├── [util.go:144       selector.go:21                  ]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Selector
-	//             │       │   │   ├── [util.go:158 util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//             │       │   │   └── [util.go:144 memorize.go:34]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Memorize.func1
-	//             │       │   │       ├── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//             │       │   │       │   ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//             │       │   │       │   └── [graph_test.go:118 graph_test.go:118 pre:s5 post:s4]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
-	//             │       │   │       ├── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//             │       │   │       │   ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//             │       │   │       │   └── [graph_test.go:118 graph_test.go:118 pre:s3 post:s4]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
-	//             │       │   │       └── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//             │       │   │           ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//             │       │   │           └── [graph_test.go:118 graph_test.go:118 pre:s1 post:s4]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
-	//             │       │   └── [graph_test.go:118 graph_test.go:118 pre:s4 post:s3]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
-	//             │       └── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//             │           ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//             │           └── [graph_test.go:118 graph_test.go:118 pre:s1 post:s3]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	// [pabt.go:207 pabt.go:227]  github.com/joeycumines/go-pabt.Example_graph.(*Plan[...]).Node.func3 | github.com/joeycumines/go-pabt.(*Plan[...]).bt.func2
+	// └── [util.go:140 selector.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Selector
+	//     ├── [util.go:158 util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//     └── [util.go:140 memorize.go:34]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
+	//         ├── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   ├── [util.go:140       selector.go:21                  ]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Selector
+	//         │   │   ├── [util.go:158 util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │   └── [util.go:140 memorize.go:34]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
+	//         │   │       ├── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │       │   ├── [util.go:140       selector.go:21                  ]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Selector
+	//         │   │       │   │   ├── [util.go:158 util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │       │   │   └── [util.go:140 memorize.go:34]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
+	//         │   │       │   │       ├── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │       │   │       │   ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │       │   │       │   └── [graph_test.go:118 graph_test.go:118 pre:s5 post:sg]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	//         │   │       │   │       └── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │       │   │           ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │       │   │           └── [graph_test.go:118 graph_test.go:118 pre:s3 post:sg]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	//         │   │       │   └── [graph_test.go:118 graph_test.go:118 pre:sg post:s5]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	//         │   │       ├── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │       │   ├── [util.go:140       selector.go:21                  ]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Selector
+	//         │   │       │   │   ├── [util.go:158 util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │       │   │   └── [util.go:140 memorize.go:34]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
+	//         │   │       │   │       ├── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │       │   │       │   ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │       │   │       │   └── [graph_test.go:118 graph_test.go:118 pre:s5 post:s4]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	//         │   │       │   │       ├── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │       │   │       │   ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │       │   │       │   └── [graph_test.go:118 graph_test.go:118 pre:s3 post:s4]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	//         │   │       │   │       └── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │       │   │           ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │       │   │           └── [graph_test.go:118 graph_test.go:118 pre:s1 post:s4]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	//         │   │       │   └── [graph_test.go:118 graph_test.go:118 pre:s4 post:s5]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	//         │   │       └── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │           ├── [util.go:140       selector.go:21                  ]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Selector
+	//         │   │           │   ├── [util.go:158 util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │           │   └── [util.go:140 memorize.go:34]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
+	//         │   │           │       ├── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │           │       │   ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │           │       │   └── [graph_test.go:118 graph_test.go:118 pre:s5 post:s2]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	//         │   │           │       └── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │           │           ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │           │           └── [graph_test.go:118 graph_test.go:118 pre:s1 post:s2]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	//         │   │           └── [graph_test.go:118 graph_test.go:118 pre:s2 post:s5]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	//         │   └── [graph_test.go:118 graph_test.go:118 pre:s5 post:sg]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	//         └── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//             ├── [util.go:140       selector.go:21                  ]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Selector
+	//             │   ├── [util.go:158 util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//             │   └── [util.go:140 memorize.go:34]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
+	//             │       ├── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//             │       │   ├── [util.go:140       selector.go:21                  ]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Selector
+	//             │       │   │   ├── [util.go:158 util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//             │       │   │   └── [util.go:140 memorize.go:34]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
+	//             │       │   │       ├── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//             │       │   │       │   ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//             │       │   │       │   └── [graph_test.go:118 graph_test.go:118 pre:s5 post:sg]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	//             │       │   │       └── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//             │       │   │           ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//             │       │   │           └── [graph_test.go:118 graph_test.go:118 pre:s3 post:sg]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	//             │       │   └── [graph_test.go:118 graph_test.go:118 pre:sg post:s3]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	//             │       ├── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//             │       │   ├── [util.go:140       selector.go:21                  ]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Selector
+	//             │       │   │   ├── [util.go:158 util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//             │       │   │   └── [util.go:140 memorize.go:34]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
+	//             │       │   │       ├── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//             │       │   │       │   ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//             │       │   │       │   └── [graph_test.go:118 graph_test.go:118 pre:s5 post:s4]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	//             │       │   │       ├── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//             │       │   │       │   ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//             │       │   │       │   └── [graph_test.go:118 graph_test.go:118 pre:s3 post:s4]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	//             │       │   │       └── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//             │       │   │           ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//             │       │   │           └── [graph_test.go:118 graph_test.go:118 pre:s1 post:s4]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	//             │       │   └── [graph_test.go:118 graph_test.go:118 pre:s4 post:s3]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	//             │       └── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//             │           ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//             │           └── [graph_test.go:118 graph_test.go:118 pre:s1 post:s3]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
 	//             └── [graph_test.go:118 graph_test.go:118 pre:s3 post:sg]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
 	//
 	// iteration = 9, status = running, err = <nil>, actor = s0
-	// [pabt.go:183 pabt.go:193]  github.com/joeycumines/go-pabt.(*Plan).bt-fm | github.com/joeycumines/go-pabt.(*Plan).bt.func2
-	// └── [util.go:144 selector.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Selector
-	//     ├── [util.go:158 util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//     └── [util.go:144 memorize.go:34]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Memorize.func1
-	//         ├── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   ├── [util.go:144       selector.go:21                  ]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Selector
-	//         │   │   ├── [util.go:158 util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//         │   │   └── [util.go:144 memorize.go:34]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Memorize.func1
-	//         │   │       ├── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │       │   ├── [util.go:144       selector.go:21                  ]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Selector
-	//         │   │       │   │   ├── [util.go:158 util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//         │   │       │   │   └── [util.go:144 memorize.go:34]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Memorize.func1
-	//         │   │       │   │       ├── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │       │   │       │   ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//         │   │       │   │       │   └── [graph_test.go:118 graph_test.go:118 pre:s5 post:sg]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
-	//         │   │       │   │       └── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │       │   │           ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//         │   │       │   │           └── [graph_test.go:118 graph_test.go:118 pre:s3 post:sg]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
-	//         │   │       │   └── [graph_test.go:118 graph_test.go:118 pre:sg post:s5]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
-	//         │   │       ├── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │       │   ├── [util.go:144       selector.go:21                  ]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Selector
-	//         │   │       │   │   ├── [util.go:158 util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//         │   │       │   │   └── [util.go:144 memorize.go:34]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Memorize.func1
-	//         │   │       │   │       ├── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │       │   │       │   ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//         │   │       │   │       │   └── [graph_test.go:118 graph_test.go:118 pre:s5 post:s4]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
-	//         │   │       │   │       ├── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │       │   │       │   ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//         │   │       │   │       │   └── [graph_test.go:118 graph_test.go:118 pre:s3 post:s4]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
-	//         │   │       │   │       └── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │       │   │           ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//         │   │       │   │           └── [graph_test.go:118 graph_test.go:118 pre:s1 post:s4]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
-	//         │   │       │   └── [graph_test.go:118 graph_test.go:118 pre:s4 post:s5]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
-	//         │   │       └── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │           ├── [util.go:144       selector.go:21                  ]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Selector
-	//         │   │           │   ├── [util.go:158 util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//         │   │           │   └── [util.go:144 memorize.go:34]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Memorize.func1
-	//         │   │           │       ├── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │           │       │   ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//         │   │           │       │   └── [graph_test.go:118 graph_test.go:118 pre:s5 post:s2]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
-	//         │   │           │       └── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │           │           ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//         │   │           │           └── [graph_test.go:118 graph_test.go:118 pre:s1 post:s2]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
-	//         │   │           └── [graph_test.go:118 graph_test.go:118 pre:s2 post:s5]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
-	//         │   └── [graph_test.go:118 graph_test.go:118 pre:s5 post:sg]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
-	//         └── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//             ├── [util.go:144       selector.go:21                  ]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Selector
-	//             │   ├── [util.go:158 util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//             │   └── [util.go:144 memorize.go:34]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Memorize.func1
-	//             │       ├── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//             │       │   ├── [util.go:144       selector.go:21                  ]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Selector
-	//             │       │   │   ├── [util.go:158 util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//             │       │   │   └── [util.go:144 memorize.go:34]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Memorize.func1
-	//             │       │   │       ├── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//             │       │   │       │   ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//             │       │   │       │   └── [graph_test.go:118 graph_test.go:118 pre:s5 post:sg]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
-	//             │       │   │       └── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//             │       │   │           ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//             │       │   │           └── [graph_test.go:118 graph_test.go:118 pre:s3 post:sg]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
-	//             │       │   └── [graph_test.go:118 graph_test.go:118 pre:sg post:s3]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
-	//             │       ├── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//             │       │   ├── [util.go:144       selector.go:21                  ]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Selector
-	//             │       │   │   ├── [util.go:158 util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//             │       │   │   └── [util.go:144 memorize.go:34]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Memorize.func1
-	//             │       │   │       ├── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//             │       │   │       │   ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//             │       │   │       │   └── [graph_test.go:118 graph_test.go:118 pre:s5 post:s4]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
-	//             │       │   │       ├── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//             │       │   │       │   ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//             │       │   │       │   └── [graph_test.go:118 graph_test.go:118 pre:s3 post:s4]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
-	//             │       │   │       └── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//             │       │   │           ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//             │       │   │           └── [graph_test.go:118 graph_test.go:118 pre:s1 post:s4]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
-	//             │       │   └── [graph_test.go:118 graph_test.go:118 pre:s4 post:s3]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
-	//             │       └── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//             │           ├── [util.go:144       selector.go:21                  ]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Selector
-	//             │           │   ├── [util.go:158 util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//             │           │   └── [util.go:144 memorize.go:34]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Memorize.func1
-	//             │           │       ├── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//             │           │       │   ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//             │           │       │   └── [graph_test.go:118 graph_test.go:118 pre:s4 post:s1]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
-	//             │           │       ├── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//             │           │       │   ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//             │           │       │   └── [graph_test.go:118 graph_test.go:118 pre:s3 post:s1]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
-	//             │           │       ├── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//             │           │       │   ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//             │           │       │   └── [graph_test.go:118 graph_test.go:118 pre:s2 post:s1]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
-	//             │           │       └── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//             │           │           ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//             │           │           └── [graph_test.go:118 graph_test.go:118 pre:s0 post:s1]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
-	//             │           └── [graph_test.go:118 graph_test.go:118 pre:s1 post:s3]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	// [pabt.go:207 pabt.go:227]  github.com/joeycumines/go-pabt.Example_graph.(*Plan[...]).Node.func3 | github.com/joeycumines/go-pabt.(*Plan[...]).bt.func2
+	// └── [util.go:140 selector.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Selector
+	//     ├── [util.go:158 util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//     └── [util.go:140 memorize.go:34]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
+	//         ├── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   ├── [util.go:140       selector.go:21                  ]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Selector
+	//         │   │   ├── [util.go:158 util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │   └── [util.go:140 memorize.go:34]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
+	//         │   │       ├── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │       │   ├── [util.go:140       selector.go:21                  ]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Selector
+	//         │   │       │   │   ├── [util.go:158 util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │       │   │   └── [util.go:140 memorize.go:34]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
+	//         │   │       │   │       ├── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │       │   │       │   ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │       │   │       │   └── [graph_test.go:118 graph_test.go:118 pre:s5 post:sg]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	//         │   │       │   │       └── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │       │   │           ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │       │   │           └── [graph_test.go:118 graph_test.go:118 pre:s3 post:sg]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	//         │   │       │   └── [graph_test.go:118 graph_test.go:118 pre:sg post:s5]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	//         │   │       ├── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │       │   ├── [util.go:140       selector.go:21                  ]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Selector
+	//         │   │       │   │   ├── [util.go:158 util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │       │   │   └── [util.go:140 memorize.go:34]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
+	//         │   │       │   │       ├── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │       │   │       │   ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │       │   │       │   └── [graph_test.go:118 graph_test.go:118 pre:s5 post:s4]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	//         │   │       │   │       ├── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │       │   │       │   ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │       │   │       │   └── [graph_test.go:118 graph_test.go:118 pre:s3 post:s4]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	//         │   │       │   │       └── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │       │   │           ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │       │   │           └── [graph_test.go:118 graph_test.go:118 pre:s1 post:s4]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	//         │   │       │   └── [graph_test.go:118 graph_test.go:118 pre:s4 post:s5]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	//         │   │       └── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │           ├── [util.go:140       selector.go:21                  ]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Selector
+	//         │   │           │   ├── [util.go:158 util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │           │   └── [util.go:140 memorize.go:34]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
+	//         │   │           │       ├── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │           │       │   ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │           │       │   └── [graph_test.go:118 graph_test.go:118 pre:s5 post:s2]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	//         │   │           │       └── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │           │           ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │           │           └── [graph_test.go:118 graph_test.go:118 pre:s1 post:s2]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	//         │   │           └── [graph_test.go:118 graph_test.go:118 pre:s2 post:s5]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	//         │   └── [graph_test.go:118 graph_test.go:118 pre:s5 post:sg]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	//         └── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//             ├── [util.go:140       selector.go:21                  ]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Selector
+	//             │   ├── [util.go:158 util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//             │   └── [util.go:140 memorize.go:34]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
+	//             │       ├── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//             │       │   ├── [util.go:140       selector.go:21                  ]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Selector
+	//             │       │   │   ├── [util.go:158 util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//             │       │   │   └── [util.go:140 memorize.go:34]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
+	//             │       │   │       ├── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//             │       │   │       │   ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//             │       │   │       │   └── [graph_test.go:118 graph_test.go:118 pre:s5 post:sg]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	//             │       │   │       └── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//             │       │   │           ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//             │       │   │           └── [graph_test.go:118 graph_test.go:118 pre:s3 post:sg]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	//             │       │   └── [graph_test.go:118 graph_test.go:118 pre:sg post:s3]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	//             │       ├── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//             │       │   ├── [util.go:140       selector.go:21                  ]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Selector
+	//             │       │   │   ├── [util.go:158 util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//             │       │   │   └── [util.go:140 memorize.go:34]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
+	//             │       │   │       ├── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//             │       │   │       │   ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//             │       │   │       │   └── [graph_test.go:118 graph_test.go:118 pre:s5 post:s4]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	//             │       │   │       ├── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//             │       │   │       │   ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//             │       │   │       │   └── [graph_test.go:118 graph_test.go:118 pre:s3 post:s4]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	//             │       │   │       └── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//             │       │   │           ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//             │       │   │           └── [graph_test.go:118 graph_test.go:118 pre:s1 post:s4]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	//             │       │   └── [graph_test.go:118 graph_test.go:118 pre:s4 post:s3]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	//             │       └── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//             │           ├── [util.go:140       selector.go:21                  ]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Selector
+	//             │           │   ├── [util.go:158 util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//             │           │   └── [util.go:140 memorize.go:34]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
+	//             │           │       ├── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//             │           │       │   ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//             │           │       │   └── [graph_test.go:118 graph_test.go:118 pre:s4 post:s1]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	//             │           │       ├── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//             │           │       │   ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//             │           │       │   └── [graph_test.go:118 graph_test.go:118 pre:s3 post:s1]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	//             │           │       ├── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//             │           │       │   ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//             │           │       │   └── [graph_test.go:118 graph_test.go:118 pre:s2 post:s1]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	//             │           │       └── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//             │           │           ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//             │           │           └── [graph_test.go:118 graph_test.go:118 pre:s0 post:s1]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	//             │           └── [graph_test.go:118 graph_test.go:118 pre:s1 post:s3]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
 	//             └── [graph_test.go:118 graph_test.go:118 pre:s3 post:sg]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
 	//
 	// actor s0 -> s1
@@ -667,97 +667,97 @@ func Example_graph() {
 	// actor s3 -> sg
 	//
 	// iteration = 10, status = success, err = <nil>, actor = sg
-	// [pabt.go:183 pabt.go:193]  github.com/joeycumines/go-pabt.(*Plan).bt-fm | github.com/joeycumines/go-pabt.(*Plan).bt.func2
-	// └── [util.go:144 selector.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Selector
-	//     ├── [util.go:158 util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//     └── [util.go:144 memorize.go:34]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Memorize.func1
-	//         ├── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   ├── [util.go:144       selector.go:21                  ]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Selector
-	//         │   │   ├── [util.go:158 util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//         │   │   └── [util.go:144 memorize.go:34]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Memorize.func1
-	//         │   │       ├── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │       │   ├── [util.go:144       selector.go:21                  ]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Selector
-	//         │   │       │   │   ├── [util.go:158 util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//         │   │       │   │   └── [util.go:144 memorize.go:34]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Memorize.func1
-	//         │   │       │   │       ├── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │       │   │       │   ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//         │   │       │   │       │   └── [graph_test.go:118 graph_test.go:118 pre:s5 post:sg]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
-	//         │   │       │   │       └── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │       │   │           ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//         │   │       │   │           └── [graph_test.go:118 graph_test.go:118 pre:s3 post:sg]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
-	//         │   │       │   └── [graph_test.go:118 graph_test.go:118 pre:sg post:s5]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
-	//         │   │       ├── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │       │   ├── [util.go:144       selector.go:21                  ]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Selector
-	//         │   │       │   │   ├── [util.go:158 util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//         │   │       │   │   └── [util.go:144 memorize.go:34]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Memorize.func1
-	//         │   │       │   │       ├── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │       │   │       │   ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//         │   │       │   │       │   └── [graph_test.go:118 graph_test.go:118 pre:s5 post:s4]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
-	//         │   │       │   │       ├── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │       │   │       │   ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//         │   │       │   │       │   └── [graph_test.go:118 graph_test.go:118 pre:s3 post:s4]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
-	//         │   │       │   │       └── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │       │   │           ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//         │   │       │   │           └── [graph_test.go:118 graph_test.go:118 pre:s1 post:s4]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
-	//         │   │       │   └── [graph_test.go:118 graph_test.go:118 pre:s4 post:s5]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
-	//         │   │       └── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │           ├── [util.go:144       selector.go:21                  ]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Selector
-	//         │   │           │   ├── [util.go:158 util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//         │   │           │   └── [util.go:144 memorize.go:34]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Memorize.func1
-	//         │   │           │       ├── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │           │       │   ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//         │   │           │       │   └── [graph_test.go:118 graph_test.go:118 pre:s5 post:s2]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
-	//         │   │           │       └── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │           │           ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//         │   │           │           └── [graph_test.go:118 graph_test.go:118 pre:s1 post:s2]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
-	//         │   │           └── [graph_test.go:118 graph_test.go:118 pre:s2 post:s5]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
-	//         │   └── [graph_test.go:118 graph_test.go:118 pre:s5 post:sg]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
-	//         └── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//             ├── [util.go:144       selector.go:21                  ]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Selector
-	//             │   ├── [util.go:158 util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//             │   └── [util.go:144 memorize.go:34]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Memorize.func1
-	//             │       ├── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//             │       │   ├── [util.go:144       selector.go:21                  ]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Selector
-	//             │       │   │   ├── [util.go:158 util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//             │       │   │   └── [util.go:144 memorize.go:34]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Memorize.func1
-	//             │       │   │       ├── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//             │       │   │       │   ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//             │       │   │       │   └── [graph_test.go:118 graph_test.go:118 pre:s5 post:sg]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
-	//             │       │   │       └── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//             │       │   │           ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//             │       │   │           └── [graph_test.go:118 graph_test.go:118 pre:s3 post:sg]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
-	//             │       │   └── [graph_test.go:118 graph_test.go:118 pre:sg post:s3]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
-	//             │       ├── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//             │       │   ├── [util.go:144       selector.go:21                  ]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Selector
-	//             │       │   │   ├── [util.go:158 util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//             │       │   │   └── [util.go:144 memorize.go:34]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Memorize.func1
-	//             │       │   │       ├── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//             │       │   │       │   ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//             │       │   │       │   └── [graph_test.go:118 graph_test.go:118 pre:s5 post:s4]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
-	//             │       │   │       ├── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//             │       │   │       │   ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//             │       │   │       │   └── [graph_test.go:118 graph_test.go:118 pre:s3 post:s4]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
-	//             │       │   │       └── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//             │       │   │           ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//             │       │   │           └── [graph_test.go:118 graph_test.go:118 pre:s1 post:s4]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
-	//             │       │   └── [graph_test.go:118 graph_test.go:118 pre:s4 post:s3]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
-	//             │       └── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//             │           ├── [util.go:144       selector.go:21                  ]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Selector
-	//             │           │   ├── [util.go:158 util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//             │           │   └── [util.go:144 memorize.go:34]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Memorize.func1
-	//             │           │       ├── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//             │           │       │   ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//             │           │       │   └── [graph_test.go:118 graph_test.go:118 pre:s4 post:s1]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
-	//             │           │       ├── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//             │           │       │   ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//             │           │       │   └── [graph_test.go:118 graph_test.go:118 pre:s3 post:s1]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
-	//             │           │       ├── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//             │           │       │   ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//             │           │       │   └── [graph_test.go:118 graph_test.go:118 pre:s2 post:s1]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
-	//             │           │       └── [util.go:144 sequence.go:21]  github.com/joeycumines/go-pabt.(*node).group-fm | github.com/joeycumines/go-behaviortree.Sequence
-	//             │           │           ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode | github.com/joeycumines/go-pabt.newConditionNode.func1
-	//             │           │           └── [graph_test.go:118 graph_test.go:118 pre:s0 post:s1]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
-	//             │           └── [graph_test.go:118 graph_test.go:118 pre:s1 post:s3]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	// [pabt.go:207 pabt.go:227]  github.com/joeycumines/go-pabt.Example_graph.(*Plan[...]).Node.func3 | github.com/joeycumines/go-pabt.(*Plan[...]).bt.func2
+	// └── [util.go:140 selector.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Selector
+	//     ├── [util.go:158 util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//     └── [util.go:140 memorize.go:34]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
+	//         ├── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   ├── [util.go:140       selector.go:21                  ]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Selector
+	//         │   │   ├── [util.go:158 util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │   └── [util.go:140 memorize.go:34]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
+	//         │   │       ├── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │       │   ├── [util.go:140       selector.go:21                  ]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Selector
+	//         │   │       │   │   ├── [util.go:158 util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │       │   │   └── [util.go:140 memorize.go:34]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
+	//         │   │       │   │       ├── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │       │   │       │   ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │       │   │       │   └── [graph_test.go:118 graph_test.go:118 pre:s5 post:sg]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	//         │   │       │   │       └── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │       │   │           ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │       │   │           └── [graph_test.go:118 graph_test.go:118 pre:s3 post:sg]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	//         │   │       │   └── [graph_test.go:118 graph_test.go:118 pre:sg post:s5]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	//         │   │       ├── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │       │   ├── [util.go:140       selector.go:21                  ]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Selector
+	//         │   │       │   │   ├── [util.go:158 util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │       │   │   └── [util.go:140 memorize.go:34]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
+	//         │   │       │   │       ├── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │       │   │       │   ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │       │   │       │   └── [graph_test.go:118 graph_test.go:118 pre:s5 post:s4]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	//         │   │       │   │       ├── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │       │   │       │   ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │       │   │       │   └── [graph_test.go:118 graph_test.go:118 pre:s3 post:s4]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	//         │   │       │   │       └── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │       │   │           ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │       │   │           └── [graph_test.go:118 graph_test.go:118 pre:s1 post:s4]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	//         │   │       │   └── [graph_test.go:118 graph_test.go:118 pre:s4 post:s5]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	//         │   │       └── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │           ├── [util.go:140       selector.go:21                  ]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Selector
+	//         │   │           │   ├── [util.go:158 util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │           │   └── [util.go:140 memorize.go:34]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
+	//         │   │           │       ├── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │           │       │   ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │           │       │   └── [graph_test.go:118 graph_test.go:118 pre:s5 post:s2]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	//         │   │           │       └── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │           │           ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │           │           └── [graph_test.go:118 graph_test.go:118 pre:s1 post:s2]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	//         │   │           └── [graph_test.go:118 graph_test.go:118 pre:s2 post:s5]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	//         │   └── [graph_test.go:118 graph_test.go:118 pre:s5 post:sg]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	//         └── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//             ├── [util.go:140       selector.go:21                  ]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Selector
+	//             │   ├── [util.go:158 util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//             │   └── [util.go:140 memorize.go:34]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
+	//             │       ├── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//             │       │   ├── [util.go:140       selector.go:21                  ]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Selector
+	//             │       │   │   ├── [util.go:158 util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//             │       │   │   └── [util.go:140 memorize.go:34]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
+	//             │       │   │       ├── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//             │       │   │       │   ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//             │       │   │       │   └── [graph_test.go:118 graph_test.go:118 pre:s5 post:sg]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	//             │       │   │       └── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//             │       │   │           ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//             │       │   │           └── [graph_test.go:118 graph_test.go:118 pre:s3 post:sg]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	//             │       │   └── [graph_test.go:118 graph_test.go:118 pre:sg post:s3]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	//             │       ├── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//             │       │   ├── [util.go:140       selector.go:21                  ]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Selector
+	//             │       │   │   ├── [util.go:158 util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//             │       │   │   └── [util.go:140 memorize.go:34]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
+	//             │       │   │       ├── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//             │       │   │       │   ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//             │       │   │       │   └── [graph_test.go:118 graph_test.go:118 pre:s5 post:s4]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	//             │       │   │       ├── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//             │       │   │       │   ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//             │       │   │       │   └── [graph_test.go:118 graph_test.go:118 pre:s3 post:s4]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	//             │       │   │       └── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//             │       │   │           ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//             │       │   │           └── [graph_test.go:118 graph_test.go:118 pre:s1 post:s4]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	//             │       │   └── [graph_test.go:118 graph_test.go:118 pre:s4 post:s3]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	//             │       └── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//             │           ├── [util.go:140       selector.go:21                  ]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Selector
+	//             │           │   ├── [util.go:158 util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//             │           │   └── [util.go:140 memorize.go:34]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
+	//             │           │       ├── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//             │           │       │   ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//             │           │       │   └── [graph_test.go:118 graph_test.go:118 pre:s4 post:s1]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	//             │           │       ├── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//             │           │       │   ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//             │           │       │   └── [graph_test.go:118 graph_test.go:118 pre:s3 post:s1]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	//             │           │       ├── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//             │           │       │   ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//             │           │       │   └── [graph_test.go:118 graph_test.go:118 pre:s2 post:s1]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	//             │           │       └── [util.go:140 sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
+	//             │           │           ├── [util.go:158       util.go:158                     ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//             │           │           └── [graph_test.go:118 graph_test.go:118 pre:s0 post:s1]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
+	//             │           └── [graph_test.go:118 graph_test.go:118 pre:s1 post:s3]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
 	//             └── [graph_test.go:118 graph_test.go:118 pre:s3 post:sg]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*graphState).Actions.func1
 	//
 	// iteration = 10, status = success, err = <nil>, actor = sg
