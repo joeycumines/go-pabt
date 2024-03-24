@@ -100,14 +100,14 @@ type (
 	// ACTIONS
 
 	simpleAction struct {
-		conditions []pabt.Conditions
+		conditions []pabt.IConditions
 		effects    pabt.Effects
 		node       bt.Node
 	}
 )
 
 var (
-	_ pabt.State = (*pickAndPlace)(nil)
+	_ pabt.IState = (*pickAndPlace)(nil)
 )
 
 func PickAndPlace(ctx context.Context, simulation sim.Simulation, actor sim.Actor) bt.Node {
@@ -117,9 +117,9 @@ func PickAndPlace(ctx context.Context, simulation sim.Simulation, actor sim.Acto
 		actor:      actor,
 	}
 
-	var successConditions []pabt.Conditions
+	var successConditions []pabt.IConditions
 	for pair := range actor.Criteria() {
-		successConditions = append(successConditions, pabt.Conditions{
+		successConditions = append(successConditions, pabt.IConditions{
 			// cube is on the goal (at least partially, though cubes are only 1x1 anyway)
 			&simpleCond{
 				key: positionVar{Sprite: pair.Cube},
@@ -156,11 +156,11 @@ func (p *pickAndPlace) Variable(key any) (any, error) {
 	}
 }
 
-func (p *pickAndPlace) Actions(failed pabt.Condition) (actions []pabt.Action, err error) {
+func (p *pickAndPlace) Actions(failed pabt.Condition) (actions []pabt.IAction, err error) {
 	var (
 		key = failed.Key()
-		add = func(name string, limit int) func(a []pabt.Action, e error) bool {
-			return func(a []pabt.Action, e error) bool {
+		add = func(name string, limit int) func(a []pabt.IAction, e error) bool {
+			return func(a []pabt.IAction, e error) bool {
 				if e != nil {
 					err = e
 					return true
@@ -236,7 +236,7 @@ func (p *pickAndPlace) getSimulation() sim.Simulation { return p.simulation }
 //	con: o_r ∈ N_o_cube
 //	     h = /0
 //	eff: h = cube
-func (p *pickAndPlace) templatePick(failed pabt.Condition, snapshot *sim.State, sprite sim.Sprite) (actions []pabt.Action, err error) {
+func (p *pickAndPlace) templatePick(failed pabt.Condition, snapshot *sim.State, sprite sim.Sprite) (actions []pabt.IAction, err error) {
 	var ox, oy int32
 	if spriteValue, ok := snapshot.Sprites[sprite]; !ok {
 		return
@@ -261,7 +261,7 @@ func (p *pickAndPlace) templatePick(failed pabt.Condition, snapshot *sim.State, 
 
 	snapshot = nil
 	actions = append(actions, &simpleAction{
-		conditions: []pabt.Conditions{
+		conditions: []pabt.IConditions{
 			{
 				&simpleCond{
 					key: positionVar{Sprite: sprite},
@@ -328,7 +328,7 @@ func (p *pickAndPlace) templatePick(failed pabt.Condition, snapshot *sim.State, 
 //	con: o_r ∈ N_p
 //	     h = i
 //	eff: o_i = p
-func (p *pickAndPlace) templatePlace(failed pabt.Condition, snapshot *sim.State, x, y int32, sprite sim.Sprite) (actions []pabt.Action, err error) {
+func (p *pickAndPlace) templatePlace(failed pabt.Condition, snapshot *sim.State, x, y int32, sprite sim.Sprite) (actions []pabt.IAction, err error) {
 	spriteValue, ok := snapshot.Sprites[sprite]
 	if !ok {
 		return
@@ -337,7 +337,7 @@ func (p *pickAndPlace) templatePlace(failed pabt.Condition, snapshot *sim.State,
 	var (
 		spriteShape      sim.Shape
 		positions        map[sim.Sprite]*positionInfo
-		noCollisionConds pabt.Conditions
+		noCollisionConds pabt.IConditions
 	)
 	{
 		var actorShape sim.Shape
@@ -378,8 +378,8 @@ func (p *pickAndPlace) templatePlace(failed pabt.Condition, snapshot *sim.State,
 
 	snapshot = nil
 	actions = append(actions, &simpleAction{
-		conditions: []pabt.Conditions{
-			append(append(pabt.Conditions(nil),
+		conditions: []pabt.IConditions{
+			append(append(pabt.IConditions(nil),
 				&simpleCond{
 					key: heldItemVar{Actor: p.actor},
 					match: func(r any) bool {
@@ -420,7 +420,7 @@ func (p *pickAndPlace) templatePlace(failed pabt.Condition, snapshot *sim.State,
 // MoveTo(p, τ)
 // con: τ ⊂ CollFree
 // eff: o_r = p
-func (p *pickAndPlace) templateMove(failed pabt.Condition, snapshot *sim.State, x, y int32) (actions []pabt.Action, err error) {
+func (p *pickAndPlace) templateMove(failed pabt.Condition, snapshot *sim.State, x, y int32) (actions []pabt.IAction, err error) {
 	// dumb "pathfinding"
 	var (
 		space  sim.Space
@@ -460,7 +460,7 @@ func (p *pickAndPlace) templateMove(failed pabt.Condition, snapshot *sim.State, 
 	}
 
 	var (
-		noCollisionConds pabt.Conditions
+		noCollisionConds pabt.IConditions
 		positions        = make(map[sim.Sprite]*positionInfo, len(snapshot.Sprites))
 	)
 	for k, v := range snapshot.Sprites {
@@ -489,7 +489,7 @@ func (p *pickAndPlace) templateMove(failed pabt.Condition, snapshot *sim.State, 
 
 	snapshot = nil
 	actions = append(actions, &simpleAction{
-		conditions: []pabt.Conditions{
+		conditions: []pabt.IConditions{
 			noCollisionConds,
 		},
 		effects: pabt.Effects{
@@ -563,9 +563,9 @@ func (e *simpleEffect) Value() any { return e.value }
 func (c *simpleCond) Key() any             { return c.key }
 func (c *simpleCond) Match(value any) bool { return c.match(value) }
 
-func (a *simpleAction) Conditions() []pabt.Conditions { return a.conditions }
-func (a *simpleAction) Effects() pabt.Effects         { return a.effects }
-func (a *simpleAction) Node() bt.Node                 { return a.node }
+func (a *simpleAction) Conditions() []pabt.IConditions { return a.conditions }
+func (a *simpleAction) Effects() pabt.Effects          { return a.effects }
+func (a *simpleAction) Node() bt.Node                  { return a.node }
 
 func (a heldItemVar) stateVar(state stateInterface) (any, error) {
 	var r heldItemValue
