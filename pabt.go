@@ -46,6 +46,12 @@ type (
 		Effects() Effects
 
 		// Node must return the actual logic / behavior for this action, as a behavior tree node.
+		//
+		// "Async" nodes (nodes that return a [bt.Running] status) are allowed, but may have some impact on (re)planning
+		// behavior, depending on how (and when) condition-affecting changes are applied to the [State]. Additionally,
+		// remember that the outcome of a running async node is never guaranteed to be consumed, be they [bt.Success],
+		// [bt.Failure], or an error. One approach to ensure handling of errors is to propagate them via a guard node,
+		// in a [bt.Sequence], as a (preceding) sibling of [Plan.Node].
 		Node() bt.Node
 	}
 
@@ -99,7 +105,8 @@ type (
 	// Plan models the planning implementation, see the [New] factory function for initialisation.
 	Plan[T Condition] struct {
 		config[T]
-		root *node[T]
+		root    *node[T]
+		running bool // running due to an Action.Node tick?
 	}
 
 	// IPlan is an alias for a [Plan] without a more-specific [Condition] type.
@@ -143,9 +150,10 @@ type (
 	// the root link is primarily used to modify the tree during conflict resolution
 
 	goal[T Condition] struct {
-		root  *node[T]
-		state State[T]
-		or    []*preconditions[T]
+		root    *node[T]
+		state   State[T]
+		running *bool
+		or      []*preconditions[T]
 	}
 	ppa[T Condition] struct {
 		root    *node[T]
@@ -205,8 +213,20 @@ func New[T Condition](
 
 // Node returns the [Plan] as a behavior tree node.
 func (p *Plan[T]) Node() bt.Node { return p.bt }
+
+// Running returns true if the [Plan]'s last tick returned [bt.Running] as the
+// result of an [Action.Node] tick, otherwise false.
+// It may only be called between ticks of the root [Plan.Node], i.e. not
+// concurrently with ticking the root [Plan.Node].
+// The purpose of this method is to (optionally) facilitate faster planning, by
+// providing an indicator that the ticker implementation may immediately
+// re-tick the [Plan.Node], while this method returns false.
+func (p *Plan[T]) Running() bool {
+	return p.running
+}
+
 func (p *Plan[T]) init() (err error) {
-	p.root = &node[T]{goal: &goal[T]{state: p.state}}
+	p.root = &node[T]{goal: &goal[T]{state: p.state, running: &p.running}}
 	p.root.goal.root = p.root
 	p.root.goal.or, err = p.root.generateOr(p.goal)
 	if err != nil {
@@ -225,6 +245,7 @@ func (p *Plan[T]) bt() (bt.Tick, []bt.Node) {
 		tick, children = node.bt()()
 	)
 	return func(children []bt.Node) (status bt.Status, err error) {
+		p.running = false
 		status, err = tick(children)
 		if err != nil || status != bt.Failure {
 			return

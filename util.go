@@ -245,8 +245,6 @@ func (p *precondition[T]) expand() (err error) {
 	return
 }
 func (n *node[T]) generateAction(post Condition, act Action[T]) (ok bool, err error) {
-	err = fmt.Errorf(`pabt: invalid action`)
-
 	r := new(action[T])
 
 	// map the effects
@@ -275,19 +273,20 @@ func (n *node[T]) generateAction(post Condition, act Action[T]) (ok bool, err er
 		}
 	}
 	if !ok {
-		err = nil
-		return
+		return false, nil
 	}
 
 	// create action node
-	r.node = &node[T]{
-		goal:   n.goal,
-		ppa:    n.ppa,
-		action: r,
-		node:   act.Node(),
-	}
-	if r.node.node == nil {
-		return
+	if actNode := act.Node(); actNode == nil {
+		return false, fmt.Errorf(`pabt: invalid action`)
+	} else {
+		actNode = wrapActionNodeHandleSetRunning(n.goal.running, actNode)
+		r.node = &node[T]{
+			goal:   n.goal,
+			ppa:    n.ppa,
+			action: r,
+			node:   actNode,
+		}
 	}
 
 	// build the conditions root as the action root (for the moment)
@@ -428,4 +427,20 @@ func (p *ppa[T]) conflicts(o *ppa[T]) bool {
 	}
 
 	return false
+}
+
+func wrapActionNodeHandleSetRunning(running *bool, actNode bt.Node) bt.Node {
+	return func() (bt.Tick, []bt.Node) {
+		tick, children := actNode()
+		if tick == nil {
+			return nil, children
+		}
+		return func(children []bt.Node) (status bt.Status, err error) {
+			status, err = tick(children)
+			if err == nil && status == bt.Running {
+				*running = true
+			}
+			return
+		}, children
+	}
 }
