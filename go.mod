@@ -4,7 +4,7 @@ go 1.25.6
 
 require (
 	github.com/gdamore/tcell/v2 v2.1.0
-	github.com/joeycumines/go-behaviortree v1.9.0
+	github.com/joeycumines/go-behaviortree v1.11.0
 )
 
 require (
