@@ -1,0 +1,305 @@
+{
+    "project": "go-pabt bt.Metadata Integration",
+    "session": {
+        "startEpoch": 1769830459,
+        "startISO": "2026-01-31T03:34:19Z",
+        "fourHourEndEpoch": 1769844859,
+        "timerFile": ".session_timer"
+    },
+    "reminders": [
+        "FOUR HOURS MINIMUM SESSION - verify via date math against .session_timer",
+        "Use #runSubagent SERIALLY for peer review",
+        "Commit only after TWO contiguous issue-free reviews with GUARANTEE language",
+        "Track ALL tasks exhaustively - this is the SOLE source of truth",
+        "Clean up temporary files at end of task",
+        "Fully address reviews BEFORE moving on - wasted effort is FAILURE"
+    ],
+    "phase": "IMPLEMENTATION_PLAN_REVIEW",
+    "currentFocus": "Peer review of implementation plan before coding",
+    "tasks": [
+        {
+            "id": "T1",
+            "title": "Explore bt API",
+            "status": "DONE",
+            "subtasks": [
+                {
+                    "id": "T1.1",
+                    "title": "Document bt.Metadata interface",
+                    "status": "DONE"
+                },
+                {
+                    "id": "T1.2",
+                    "title": "Document bt.Valuer interface",
+                    "status": "DONE"
+                },
+                {
+                    "id": "T1.3",
+                    "title": "Document bt.ValueAttachable interface",
+                    "status": "DONE"
+                },
+                {
+                    "id": "T1.4",
+                    "title": "Document bt.ValueProvider interface",
+                    "status": "DONE"
+                },
+                {
+                    "id": "T1.5",
+                    "title": "Document bt.UseValueProvider mechanism",
+                    "status": "DONE"
+                },
+                {
+                    "id": "T1.6",
+                    "title": "Document bt.Use{Frame,Name,Structure}",
+                    "status": "DONE"
+                },
+                {
+                    "id": "T1.7",
+                    "title": "Document bt.With{Frame,Name,Structure}",
+                    "status": "DONE"
+                },
+                {
+                    "id": "T1.8",
+                    "title": "Document bt.Get{Frame,Name,Structure}",
+                    "status": "DONE"
+                },
+                {
+                    "id": "T1.9",
+                    "title": "Analyze how bt.Walk uses Metadata",
+                    "status": "DONE"
+                }
+            ]
+        },
+        {
+            "id": "T2",
+            "title": "Analyze pabt node structure",
+            "status": "DONE",
+            "subtasks": [
+                {
+                    "id": "T2.1",
+                    "title": "Map all bt.Node creation points in pabt.go",
+                    "status": "DONE"
+                },
+                {
+                    "id": "T2.2",
+                    "title": "Map all bt.Node creation points in util.go",
+                    "status": "DONE"
+                },
+                {
+                    "id": "T2.3",
+                    "title": "Identify which nodes need metadata",
+                    "status": "DONE"
+                },
+                {
+                    "id": "T2.4",
+                    "title": "Design metadata attachment strategy",
+                    "status": "DONE"
+                }
+            ]
+        },
+        {
+            "id": "T3",
+            "title": "Design node[T] Metadata implementation",
+            "status": "DONE",
+            "subtasks": [
+                {
+                    "id": "T3.1",
+                    "title": "Design node[T] implementing bt.Valuer",
+                    "status": "DONE"
+                },
+                {
+                    "id": "T3.2",
+                    "title": "Decision: No bt.ValueAttachable on node[T]",
+                    "status": "DONE",
+                    "note": "Not needed - use bt.Node.WithValue instead"
+                },
+                {
+                    "id": "T3.3",
+                    "title": "Decision: No internal map field",
+                    "status": "DONE",
+                    "note": "Contextual values computed on demand"
+                },
+                {
+                    "id": "T3.4",
+                    "title": "Decision: Keep node unexported, expose NodeInfo",
+                    "status": "DONE"
+                }
+            ]
+        },
+        {
+            "id": "T4",
+            "title": "Design ValueProvider types for PPA structures",
+            "status": "DONE",
+            "subtasks": [
+                {
+                    "id": "T4.1",
+                    "title": "Identify metadata: NodeType, VariableKey, Condition, Effects",
+                    "status": "DONE"
+                },
+                {
+                    "id": "T4.2",
+                    "title": "Design nodeValueProvider type alias",
+                    "status": "DONE"
+                },
+                {
+                    "id": "T4.3",
+                    "title": "Design GetNodeInfo + convenience getters",
+                    "status": "DONE"
+                }
+            ]
+        },
+        {
+            "id": "T5",
+            "title": "Produce implementation plan artifacts",
+            "status": "DONE",
+            "subtasks": [
+                {
+                    "id": "T5.1",
+                    "title": "Artifact 1: bt.Metadata API Analysis",
+                    "status": "DONE",
+                    "file": "artifacts/01_bt_metadata_api_analysis.md"
+                },
+                {
+                    "id": "T5.2",
+                    "title": "Artifact 2: pabt Node Structure Analysis",
+                    "status": "DONE",
+                    "file": "artifacts/02_pabt_node_structure_analysis.md"
+                },
+                {
+                    "id": "T5.3",
+                    "title": "Artifact 3: Design Variants Analysis",
+                    "status": "DONE",
+                    "file": "artifacts/03_design_variants_analysis.md"
+                },
+                {
+                    "id": "T5.4",
+                    "title": "Artifact 4: Implementation Plan",
+                    "status": "DONE",
+                    "file": "artifacts/04_implementation_plan.md"
+                }
+            ]
+        },
+        {
+            "id": "T6",
+            "title": "Peer review implementation plan",
+            "status": "IN_PROGRESS",
+            "subtasks": [
+                {
+                    "id": "T6.1",
+                    "title": "Run subagent review of plan",
+                    "status": "IN_PROGRESS"
+                },
+                {
+                    "id": "T6.2",
+                    "title": "Address review feedback",
+                    "status": "TODO"
+                }
+            ]
+        },
+        {
+            "id": "T7",
+            "title": "Implement bt.Metadata support",
+            "status": "TODO",
+            "subtasks": [
+                {
+                    "id": "T7.1",
+                    "title": "Create metadata.go with types",
+                    "status": "TODO"
+                },
+                {
+                    "id": "T7.2",
+                    "title": "Add node[T].Value() method",
+                    "status": "TODO"
+                },
+                {
+                    "id": "T7.3",
+                    "title": "Modify node[T].bt() for leaf nodes",
+                    "status": "TODO"
+                },
+                {
+                    "id": "T7.4",
+                    "title": "Modify node[T].group() to register",
+                    "status": "TODO"
+                },
+                {
+                    "id": "T7.5",
+                    "title": "Modify Plan[T].bt() for root",
+                    "status": "TODO"
+                }
+            ]
+        },
+        {
+            "id": "T8",
+            "title": "Implement exported API",
+            "status": "TODO",
+            "subtasks": [
+                {
+                    "id": "T8.1",
+                    "title": "Implement GetNodeInfo",
+                    "status": "TODO"
+                },
+                {
+                    "id": "T8.2",
+                    "title": "Implement UseNodeInfo",
+                    "status": "TODO"
+                },
+                {
+                    "id": "T8.3",
+                    "title": "Implement convenience getters",
+                    "status": "TODO"
+                }
+            ]
+        },
+        {
+            "id": "T9",
+            "title": "Exhaustive test coverage",
+            "status": "TODO",
+            "subtasks": [
+                {
+                    "id": "T9.1",
+                    "title": "Test NodeInfo struct",
+                    "status": "TODO"
+                },
+                {
+                    "id": "T9.2",
+                    "title": "Test GetNodeInfo for all node types",
+                    "status": "TODO"
+                },
+                {
+                    "id": "T9.3",
+                    "title": "Test bt.Walk integration",
+                    "status": "TODO"
+                },
+                {
+                    "id": "T9.4",
+                    "title": "Test UseNodeInfo for custom actions",
+                    "status": "TODO"
+                }
+            ]
+        },
+        {
+            "id": "T10",
+            "title": "Final review cycle (2x contiguous pass)",
+            "status": "TODO",
+            "subtasks": []
+        }
+    ],
+    "diffVsHEAD": {
+        "status": "PENDING_REVIEW",
+        "files": [
+            "go.mod",
+            "go.sum"
+        ],
+        "summary": "Dependency upgrade go-behaviortree v1.9.0 -> v1.11.0"
+    },
+    "diffVsMain": {
+        "status": "PENDING_REVIEW",
+        "summary": "Same as HEAD - only dependency upgrade"
+    },
+    "artifacts": [
+        "artifacts/01_bt_metadata_api_analysis.md",
+        "artifacts/02_pabt_node_structure_analysis.md",
+        "artifacts/03_design_variants_analysis.md",
+        "artifacts/04_implementation_plan.md",
+        "artifacts/bt_api_doc.txt"
+    ]
+}

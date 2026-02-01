@@ -179,7 +179,7 @@ func Example_graph() {
 
 	fmt.Printf("\niteration = %d, status = %s, err = %v, actor = %s\nDONE\n", iterations, status, err, state.actor.name)
 
-	// output:
+// output:
 	// s0 -> s1
 	// s1 -> s4, s3, s2, s0
 	// s2 -> s5, s1
@@ -189,578 +189,578 @@ func Example_graph() {
 	// sg -> s5, s3
 	// goal = sg
 	// actor = s0
-	//
-	// [pabt.go:215 pabt.go:247]  github.com/joeycumines/go-pabt.Example_graph.(*Plan[...]).Node.func3 | github.com/joeycumines/go-pabt.(*Plan[...]).bt.func2
-	// └── [util.go:158 util.go:158]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//
+	// 
+	// [pabt.go:215 pabt.go:247]  GoalRoot | github.com/joeycumines/go-pabt.(*Plan[...]).bt.func2
+	// └── [util.go:257 util.go:257]  PreconditionLeaf | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	// 
 	// iteration = 1, status = running, err = <nil>, actor = s0
-	// [pabt.go:215       pabt.go:247   ]  github.com/joeycumines/go-pabt.Example_graph.(*Plan[...]).Node.func3 | github.com/joeycumines/go-pabt.(*Plan[...]).bt.func2
-	// └── [util.go:140       selector.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Selector
-	//     ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//     └── [util.go:140       memorize.go:34]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
-	//         ├── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//         │   └── [graph_test.go:119 util.go:438    pre:s5 post:sg]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//         └── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//             ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//             └── [graph_test.go:119 util.go:438    pre:s3 post:sg]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//
+	// [pabt.go:215       pabt.go:247   ]  GoalRoot | github.com/joeycumines/go-pabt.(*Plan[...]).bt.func2
+	// └── [util.go:142       selector.go:21]  PPARoot | github.com/joeycumines/go-behaviortree.Selector
+	//     ├── [util.go:257       util.go:257   ]  Unknown | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//     └── [util.go:142       memorize.go:34]  Unknown | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
+	//         ├── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   ├── [util.go:257       util.go:257   ]  PreconditionLeaf | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   └── [graph_test.go:119 util.go:537    pre:s5 post:sg]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//         └── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//             ├── [util.go:257       util.go:257   ]  PreconditionLeaf | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//             └── [graph_test.go:119 util.go:537    pre:s3 post:sg]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	// 
 	// iteration = 2, status = running, err = <nil>, actor = s0
-	// [pabt.go:215       pabt.go:247   ]  github.com/joeycumines/go-pabt.Example_graph.(*Plan[...]).Node.func3 | github.com/joeycumines/go-pabt.(*Plan[...]).bt.func2
-	// └── [util.go:140       selector.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Selector
-	//     ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//     └── [util.go:140       memorize.go:34]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
-	//         ├── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   ├── [util.go:140       selector.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Selector
-	//         │   │   ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//         │   │   └── [util.go:140       memorize.go:34]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
-	//         │   │       ├── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │       │   ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//         │   │       │   └── [graph_test.go:119 util.go:438    pre:sg post:s5]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//         │   │       ├── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │       │   ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//         │   │       │   └── [graph_test.go:119 util.go:438    pre:s4 post:s5]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//         │   │       └── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │           ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//         │   │           └── [graph_test.go:119 util.go:438    pre:s2 post:s5]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//         │   └── [graph_test.go:119 util.go:438    pre:s5 post:sg]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//         └── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//             ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//             └── [graph_test.go:119 util.go:438    pre:s3 post:sg]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//
+	// [pabt.go:215       pabt.go:247   ]  GoalRoot | github.com/joeycumines/go-pabt.(*Plan[...]).bt.func2
+	// └── [util.go:142       selector.go:21]  PPARoot | github.com/joeycumines/go-behaviortree.Selector
+	//     ├── [util.go:257       util.go:257   ]  Unknown | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//     └── [util.go:142       memorize.go:34]  Unknown | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
+	//         ├── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   ├── [util.go:142       selector.go:21]  PPARoot | github.com/joeycumines/go-behaviortree.Selector
+	//         │   │   ├── [util.go:257       util.go:257   ]  Unknown | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │   └── [util.go:142       memorize.go:34]  Unknown | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
+	//         │   │       ├── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │       │   ├── [util.go:257       util.go:257   ]  PreconditionLeaf | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │       │   └── [graph_test.go:119 util.go:537    pre:sg post:s5]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//         │   │       ├── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │       │   ├── [util.go:257       util.go:257   ]  PreconditionLeaf | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │       │   └── [graph_test.go:119 util.go:537    pre:s4 post:s5]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//         │   │       └── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │           ├── [util.go:257       util.go:257   ]  PreconditionLeaf | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │           └── [graph_test.go:119 util.go:537    pre:s2 post:s5]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//         │   └── [graph_test.go:119 util.go:537    pre:s5 post:sg]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//         └── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//             ├── [util.go:257       util.go:257   ]  PreconditionLeaf | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//             └── [graph_test.go:119 util.go:537    pre:s3 post:sg]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	// 
 	// iteration = 3, status = running, err = <nil>, actor = s0
-	// [pabt.go:215       pabt.go:247   ]  github.com/joeycumines/go-pabt.Example_graph.(*Plan[...]).Node.func3 | github.com/joeycumines/go-pabt.(*Plan[...]).bt.func2
-	// └── [util.go:140       selector.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Selector
-	//     ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//     └── [util.go:140       memorize.go:34]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
-	//         ├── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   ├── [util.go:140       selector.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Selector
-	//         │   │   ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//         │   │   └── [util.go:140       memorize.go:34]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
-	//         │   │       ├── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │       │   ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//         │   │       │   └── [graph_test.go:119 util.go:438    pre:sg post:s5]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//         │   │       ├── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │       │   ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//         │   │       │   └── [graph_test.go:119 util.go:438    pre:s4 post:s5]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//         │   │       └── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │           ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//         │   │           └── [graph_test.go:119 util.go:438    pre:s2 post:s5]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//         │   └── [graph_test.go:119 util.go:438    pre:s5 post:sg]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//         └── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//             ├── [util.go:140       selector.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Selector
-	//             │   ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//             │   └── [util.go:140       memorize.go:34]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
-	//             │       ├── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//             │       │   ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//             │       │   └── [graph_test.go:119 util.go:438    pre:sg post:s3]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//             │       ├── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//             │       │   ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//             │       │   └── [graph_test.go:119 util.go:438    pre:s4 post:s3]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//             │       └── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//             │           ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//             │           └── [graph_test.go:119 util.go:438    pre:s1 post:s3]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//             └── [graph_test.go:119 util.go:438    pre:s3 post:sg]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//
+	// [pabt.go:215       pabt.go:247   ]  GoalRoot | github.com/joeycumines/go-pabt.(*Plan[...]).bt.func2
+	// └── [util.go:142       selector.go:21]  PPARoot | github.com/joeycumines/go-behaviortree.Selector
+	//     ├── [util.go:257       util.go:257   ]  Unknown | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//     └── [util.go:142       memorize.go:34]  Unknown | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
+	//         ├── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   ├── [util.go:142       selector.go:21]  PPARoot | github.com/joeycumines/go-behaviortree.Selector
+	//         │   │   ├── [util.go:257       util.go:257   ]  Unknown | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │   └── [util.go:142       memorize.go:34]  Unknown | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
+	//         │   │       ├── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │       │   ├── [util.go:257       util.go:257   ]  PreconditionLeaf | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │       │   └── [graph_test.go:119 util.go:537    pre:sg post:s5]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//         │   │       ├── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │       │   ├── [util.go:257       util.go:257   ]  PreconditionLeaf | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │       │   └── [graph_test.go:119 util.go:537    pre:s4 post:s5]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//         │   │       └── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │           ├── [util.go:257       util.go:257   ]  PreconditionLeaf | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │           └── [graph_test.go:119 util.go:537    pre:s2 post:s5]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//         │   └── [graph_test.go:119 util.go:537    pre:s5 post:sg]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//         └── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//             ├── [util.go:142       selector.go:21]  PPARoot | github.com/joeycumines/go-behaviortree.Selector
+	//             │   ├── [util.go:257       util.go:257   ]  Unknown | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//             │   └── [util.go:142       memorize.go:34]  Unknown | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
+	//             │       ├── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//             │       │   ├── [util.go:257       util.go:257   ]  PreconditionLeaf | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//             │       │   └── [graph_test.go:119 util.go:537    pre:sg post:s3]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//             │       ├── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//             │       │   ├── [util.go:257       util.go:257   ]  PreconditionLeaf | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//             │       │   └── [graph_test.go:119 util.go:537    pre:s4 post:s3]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//             │       └── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//             │           ├── [util.go:257       util.go:257   ]  PreconditionLeaf | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//             │           └── [graph_test.go:119 util.go:537    pre:s1 post:s3]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//             └── [graph_test.go:119 util.go:537    pre:s3 post:sg]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	// 
 	// iteration = 4, status = running, err = <nil>, actor = s0
-	// [pabt.go:215       pabt.go:247   ]  github.com/joeycumines/go-pabt.Example_graph.(*Plan[...]).Node.func3 | github.com/joeycumines/go-pabt.(*Plan[...]).bt.func2
-	// └── [util.go:140       selector.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Selector
-	//     ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//     └── [util.go:140       memorize.go:34]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
-	//         ├── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   ├── [util.go:140       selector.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Selector
-	//         │   │   ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//         │   │   └── [util.go:140       memorize.go:34]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
-	//         │   │       ├── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │       │   ├── [util.go:140       selector.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Selector
-	//         │   │       │   │   ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//         │   │       │   │   └── [util.go:140       memorize.go:34]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
-	//         │   │       │   │       ├── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │       │   │       │   ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//         │   │       │   │       │   └── [graph_test.go:119 util.go:438    pre:s5 post:sg]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//         │   │       │   │       └── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │       │   │           ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//         │   │       │   │           └── [graph_test.go:119 util.go:438    pre:s3 post:sg]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//         │   │       │   └── [graph_test.go:119 util.go:438    pre:sg post:s5]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//         │   │       ├── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │       │   ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//         │   │       │   └── [graph_test.go:119 util.go:438    pre:s4 post:s5]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//         │   │       └── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │           ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//         │   │           └── [graph_test.go:119 util.go:438    pre:s2 post:s5]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//         │   └── [graph_test.go:119 util.go:438    pre:s5 post:sg]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//         └── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//             ├── [util.go:140       selector.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Selector
-	//             │   ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//             │   └── [util.go:140       memorize.go:34]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
-	//             │       ├── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//             │       │   ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//             │       │   └── [graph_test.go:119 util.go:438    pre:sg post:s3]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//             │       ├── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//             │       │   ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//             │       │   └── [graph_test.go:119 util.go:438    pre:s4 post:s3]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//             │       └── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//             │           ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//             │           └── [graph_test.go:119 util.go:438    pre:s1 post:s3]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//             └── [graph_test.go:119 util.go:438    pre:s3 post:sg]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//
+	// [pabt.go:215       pabt.go:247   ]  GoalRoot | github.com/joeycumines/go-pabt.(*Plan[...]).bt.func2
+	// └── [util.go:142       selector.go:21]  PPARoot | github.com/joeycumines/go-behaviortree.Selector
+	//     ├── [util.go:257       util.go:257   ]  Unknown | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//     └── [util.go:142       memorize.go:34]  Unknown | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
+	//         ├── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   ├── [util.go:142       selector.go:21]  PPARoot | github.com/joeycumines/go-behaviortree.Selector
+	//         │   │   ├── [util.go:257       util.go:257   ]  Unknown | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │   └── [util.go:142       memorize.go:34]  Unknown | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
+	//         │   │       ├── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │       │   ├── [util.go:142       selector.go:21]  PPARoot | github.com/joeycumines/go-behaviortree.Selector
+	//         │   │       │   │   ├── [util.go:257       util.go:257   ]  Unknown | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │       │   │   └── [util.go:142       memorize.go:34]  Unknown | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
+	//         │   │       │   │       ├── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │       │   │       │   ├── [util.go:257       util.go:257   ]  PreconditionLeaf | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │       │   │       │   └── [graph_test.go:119 util.go:537    pre:s5 post:sg]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//         │   │       │   │       └── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │       │   │           ├── [util.go:257       util.go:257   ]  PreconditionLeaf | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │       │   │           └── [graph_test.go:119 util.go:537    pre:s3 post:sg]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//         │   │       │   └── [graph_test.go:119 util.go:537    pre:sg post:s5]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//         │   │       ├── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │       │   ├── [util.go:257       util.go:257   ]  PreconditionLeaf | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │       │   └── [graph_test.go:119 util.go:537    pre:s4 post:s5]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//         │   │       └── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │           ├── [util.go:257       util.go:257   ]  PreconditionLeaf | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │           └── [graph_test.go:119 util.go:537    pre:s2 post:s5]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//         │   └── [graph_test.go:119 util.go:537    pre:s5 post:sg]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//         └── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//             ├── [util.go:142       selector.go:21]  PPARoot | github.com/joeycumines/go-behaviortree.Selector
+	//             │   ├── [util.go:257       util.go:257   ]  Unknown | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//             │   └── [util.go:142       memorize.go:34]  Unknown | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
+	//             │       ├── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//             │       │   ├── [util.go:257       util.go:257   ]  PreconditionLeaf | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//             │       │   └── [graph_test.go:119 util.go:537    pre:sg post:s3]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//             │       ├── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//             │       │   ├── [util.go:257       util.go:257   ]  PreconditionLeaf | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//             │       │   └── [graph_test.go:119 util.go:537    pre:s4 post:s3]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//             │       └── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//             │           ├── [util.go:257       util.go:257   ]  PreconditionLeaf | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//             │           └── [graph_test.go:119 util.go:537    pre:s1 post:s3]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//             └── [graph_test.go:119 util.go:537    pre:s3 post:sg]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	// 
 	// iteration = 5, status = running, err = <nil>, actor = s0
-	// [pabt.go:215       pabt.go:247   ]  github.com/joeycumines/go-pabt.Example_graph.(*Plan[...]).Node.func3 | github.com/joeycumines/go-pabt.(*Plan[...]).bt.func2
-	// └── [util.go:140       selector.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Selector
-	//     ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//     └── [util.go:140       memorize.go:34]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
-	//         ├── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   ├── [util.go:140       selector.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Selector
-	//         │   │   ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//         │   │   └── [util.go:140       memorize.go:34]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
-	//         │   │       ├── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │       │   ├── [util.go:140       selector.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Selector
-	//         │   │       │   │   ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//         │   │       │   │   └── [util.go:140       memorize.go:34]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
-	//         │   │       │   │       ├── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │       │   │       │   ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//         │   │       │   │       │   └── [graph_test.go:119 util.go:438    pre:s5 post:sg]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//         │   │       │   │       └── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │       │   │           ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//         │   │       │   │           └── [graph_test.go:119 util.go:438    pre:s3 post:sg]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//         │   │       │   └── [graph_test.go:119 util.go:438    pre:sg post:s5]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//         │   │       ├── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │       │   ├── [util.go:140       selector.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Selector
-	//         │   │       │   │   ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//         │   │       │   │   └── [util.go:140       memorize.go:34]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
-	//         │   │       │   │       ├── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │       │   │       │   ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//         │   │       │   │       │   └── [graph_test.go:119 util.go:438    pre:s5 post:s4]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//         │   │       │   │       ├── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │       │   │       │   ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//         │   │       │   │       │   └── [graph_test.go:119 util.go:438    pre:s3 post:s4]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//         │   │       │   │       └── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │       │   │           ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//         │   │       │   │           └── [graph_test.go:119 util.go:438    pre:s1 post:s4]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//         │   │       │   └── [graph_test.go:119 util.go:438    pre:s4 post:s5]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//         │   │       └── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │           ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//         │   │           └── [graph_test.go:119 util.go:438    pre:s2 post:s5]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//         │   └── [graph_test.go:119 util.go:438    pre:s5 post:sg]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//         └── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//             ├── [util.go:140       selector.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Selector
-	//             │   ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//             │   └── [util.go:140       memorize.go:34]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
-	//             │       ├── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//             │       │   ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//             │       │   └── [graph_test.go:119 util.go:438    pre:sg post:s3]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//             │       ├── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//             │       │   ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//             │       │   └── [graph_test.go:119 util.go:438    pre:s4 post:s3]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//             │       └── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//             │           ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//             │           └── [graph_test.go:119 util.go:438    pre:s1 post:s3]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//             └── [graph_test.go:119 util.go:438    pre:s3 post:sg]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//
+	// [pabt.go:215       pabt.go:247   ]  GoalRoot | github.com/joeycumines/go-pabt.(*Plan[...]).bt.func2
+	// └── [util.go:142       selector.go:21]  PPARoot | github.com/joeycumines/go-behaviortree.Selector
+	//     ├── [util.go:257       util.go:257   ]  Unknown | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//     └── [util.go:142       memorize.go:34]  Unknown | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
+	//         ├── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   ├── [util.go:142       selector.go:21]  PPARoot | github.com/joeycumines/go-behaviortree.Selector
+	//         │   │   ├── [util.go:257       util.go:257   ]  Unknown | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │   └── [util.go:142       memorize.go:34]  Unknown | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
+	//         │   │       ├── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │       │   ├── [util.go:142       selector.go:21]  PPARoot | github.com/joeycumines/go-behaviortree.Selector
+	//         │   │       │   │   ├── [util.go:257       util.go:257   ]  Unknown | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │       │   │   └── [util.go:142       memorize.go:34]  Unknown | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
+	//         │   │       │   │       ├── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │       │   │       │   ├── [util.go:257       util.go:257   ]  PreconditionLeaf | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │       │   │       │   └── [graph_test.go:119 util.go:537    pre:s5 post:sg]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//         │   │       │   │       └── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │       │   │           ├── [util.go:257       util.go:257   ]  PreconditionLeaf | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │       │   │           └── [graph_test.go:119 util.go:537    pre:s3 post:sg]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//         │   │       │   └── [graph_test.go:119 util.go:537    pre:sg post:s5]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//         │   │       ├── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │       │   ├── [util.go:142       selector.go:21]  PPARoot | github.com/joeycumines/go-behaviortree.Selector
+	//         │   │       │   │   ├── [util.go:257       util.go:257   ]  Unknown | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │       │   │   └── [util.go:142       memorize.go:34]  Unknown | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
+	//         │   │       │   │       ├── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │       │   │       │   ├── [util.go:257       util.go:257   ]  PreconditionLeaf | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │       │   │       │   └── [graph_test.go:119 util.go:537    pre:s5 post:s4]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//         │   │       │   │       ├── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │       │   │       │   ├── [util.go:257       util.go:257   ]  PreconditionLeaf | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │       │   │       │   └── [graph_test.go:119 util.go:537    pre:s3 post:s4]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//         │   │       │   │       └── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │       │   │           ├── [util.go:257       util.go:257   ]  PreconditionLeaf | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │       │   │           └── [graph_test.go:119 util.go:537    pre:s1 post:s4]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//         │   │       │   └── [graph_test.go:119 util.go:537    pre:s4 post:s5]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//         │   │       └── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │           ├── [util.go:257       util.go:257   ]  PreconditionLeaf | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │           └── [graph_test.go:119 util.go:537    pre:s2 post:s5]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//         │   └── [graph_test.go:119 util.go:537    pre:s5 post:sg]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//         └── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//             ├── [util.go:142       selector.go:21]  PPARoot | github.com/joeycumines/go-behaviortree.Selector
+	//             │   ├── [util.go:257       util.go:257   ]  Unknown | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//             │   └── [util.go:142       memorize.go:34]  Unknown | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
+	//             │       ├── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//             │       │   ├── [util.go:257       util.go:257   ]  PreconditionLeaf | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//             │       │   └── [graph_test.go:119 util.go:537    pre:sg post:s3]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//             │       ├── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//             │       │   ├── [util.go:257       util.go:257   ]  PreconditionLeaf | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//             │       │   └── [graph_test.go:119 util.go:537    pre:s4 post:s3]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//             │       └── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//             │           ├── [util.go:257       util.go:257   ]  PreconditionLeaf | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//             │           └── [graph_test.go:119 util.go:537    pre:s1 post:s3]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//             └── [graph_test.go:119 util.go:537    pre:s3 post:sg]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	// 
 	// iteration = 6, status = running, err = <nil>, actor = s0
-	// [pabt.go:215       pabt.go:247   ]  github.com/joeycumines/go-pabt.Example_graph.(*Plan[...]).Node.func3 | github.com/joeycumines/go-pabt.(*Plan[...]).bt.func2
-	// └── [util.go:140       selector.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Selector
-	//     ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//     └── [util.go:140       memorize.go:34]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
-	//         ├── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   ├── [util.go:140       selector.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Selector
-	//         │   │   ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//         │   │   └── [util.go:140       memorize.go:34]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
-	//         │   │       ├── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │       │   ├── [util.go:140       selector.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Selector
-	//         │   │       │   │   ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//         │   │       │   │   └── [util.go:140       memorize.go:34]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
-	//         │   │       │   │       ├── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │       │   │       │   ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//         │   │       │   │       │   └── [graph_test.go:119 util.go:438    pre:s5 post:sg]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//         │   │       │   │       └── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │       │   │           ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//         │   │       │   │           └── [graph_test.go:119 util.go:438    pre:s3 post:sg]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//         │   │       │   └── [graph_test.go:119 util.go:438    pre:sg post:s5]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//         │   │       ├── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │       │   ├── [util.go:140       selector.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Selector
-	//         │   │       │   │   ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//         │   │       │   │   └── [util.go:140       memorize.go:34]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
-	//         │   │       │   │       ├── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │       │   │       │   ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//         │   │       │   │       │   └── [graph_test.go:119 util.go:438    pre:s5 post:s4]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//         │   │       │   │       ├── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │       │   │       │   ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//         │   │       │   │       │   └── [graph_test.go:119 util.go:438    pre:s3 post:s4]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//         │   │       │   │       └── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │       │   │           ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//         │   │       │   │           └── [graph_test.go:119 util.go:438    pre:s1 post:s4]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//         │   │       │   └── [graph_test.go:119 util.go:438    pre:s4 post:s5]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//         │   │       └── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │           ├── [util.go:140       selector.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Selector
-	//         │   │           │   ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//         │   │           │   └── [util.go:140       memorize.go:34]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
-	//         │   │           │       ├── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │           │       │   ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//         │   │           │       │   └── [graph_test.go:119 util.go:438    pre:s5 post:s2]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//         │   │           │       └── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │           │           ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//         │   │           │           └── [graph_test.go:119 util.go:438    pre:s1 post:s2]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//         │   │           └── [graph_test.go:119 util.go:438    pre:s2 post:s5]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//         │   └── [graph_test.go:119 util.go:438    pre:s5 post:sg]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//         └── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//             ├── [util.go:140       selector.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Selector
-	//             │   ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//             │   └── [util.go:140       memorize.go:34]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
-	//             │       ├── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//             │       │   ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//             │       │   └── [graph_test.go:119 util.go:438    pre:sg post:s3]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//             │       ├── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//             │       │   ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//             │       │   └── [graph_test.go:119 util.go:438    pre:s4 post:s3]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//             │       └── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//             │           ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//             │           └── [graph_test.go:119 util.go:438    pre:s1 post:s3]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//             └── [graph_test.go:119 util.go:438    pre:s3 post:sg]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//
+	// [pabt.go:215       pabt.go:247   ]  GoalRoot | github.com/joeycumines/go-pabt.(*Plan[...]).bt.func2
+	// └── [util.go:142       selector.go:21]  PPARoot | github.com/joeycumines/go-behaviortree.Selector
+	//     ├── [util.go:257       util.go:257   ]  Unknown | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//     └── [util.go:142       memorize.go:34]  Unknown | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
+	//         ├── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   ├── [util.go:142       selector.go:21]  PPARoot | github.com/joeycumines/go-behaviortree.Selector
+	//         │   │   ├── [util.go:257       util.go:257   ]  Unknown | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │   └── [util.go:142       memorize.go:34]  Unknown | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
+	//         │   │       ├── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │       │   ├── [util.go:142       selector.go:21]  PPARoot | github.com/joeycumines/go-behaviortree.Selector
+	//         │   │       │   │   ├── [util.go:257       util.go:257   ]  Unknown | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │       │   │   └── [util.go:142       memorize.go:34]  Unknown | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
+	//         │   │       │   │       ├── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │       │   │       │   ├── [util.go:257       util.go:257   ]  PreconditionLeaf | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │       │   │       │   └── [graph_test.go:119 util.go:537    pre:s5 post:sg]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//         │   │       │   │       └── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │       │   │           ├── [util.go:257       util.go:257   ]  PreconditionLeaf | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │       │   │           └── [graph_test.go:119 util.go:537    pre:s3 post:sg]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//         │   │       │   └── [graph_test.go:119 util.go:537    pre:sg post:s5]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//         │   │       ├── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │       │   ├── [util.go:142       selector.go:21]  PPARoot | github.com/joeycumines/go-behaviortree.Selector
+	//         │   │       │   │   ├── [util.go:257       util.go:257   ]  Unknown | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │       │   │   └── [util.go:142       memorize.go:34]  Unknown | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
+	//         │   │       │   │       ├── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │       │   │       │   ├── [util.go:257       util.go:257   ]  PreconditionLeaf | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │       │   │       │   └── [graph_test.go:119 util.go:537    pre:s5 post:s4]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//         │   │       │   │       ├── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │       │   │       │   ├── [util.go:257       util.go:257   ]  PreconditionLeaf | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │       │   │       │   └── [graph_test.go:119 util.go:537    pre:s3 post:s4]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//         │   │       │   │       └── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │       │   │           ├── [util.go:257       util.go:257   ]  PreconditionLeaf | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │       │   │           └── [graph_test.go:119 util.go:537    pre:s1 post:s4]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//         │   │       │   └── [graph_test.go:119 util.go:537    pre:s4 post:s5]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//         │   │       └── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │           ├── [util.go:142       selector.go:21]  PPARoot | github.com/joeycumines/go-behaviortree.Selector
+	//         │   │           │   ├── [util.go:257       util.go:257   ]  Unknown | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │           │   └── [util.go:142       memorize.go:34]  Unknown | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
+	//         │   │           │       ├── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │           │       │   ├── [util.go:257       util.go:257   ]  PreconditionLeaf | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │           │       │   └── [graph_test.go:119 util.go:537    pre:s5 post:s2]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//         │   │           │       └── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │           │           ├── [util.go:257       util.go:257   ]  PreconditionLeaf | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │           │           └── [graph_test.go:119 util.go:537    pre:s1 post:s2]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//         │   │           └── [graph_test.go:119 util.go:537    pre:s2 post:s5]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//         │   └── [graph_test.go:119 util.go:537    pre:s5 post:sg]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//         └── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//             ├── [util.go:142       selector.go:21]  PPARoot | github.com/joeycumines/go-behaviortree.Selector
+	//             │   ├── [util.go:257       util.go:257   ]  Unknown | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//             │   └── [util.go:142       memorize.go:34]  Unknown | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
+	//             │       ├── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//             │       │   ├── [util.go:257       util.go:257   ]  PreconditionLeaf | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//             │       │   └── [graph_test.go:119 util.go:537    pre:sg post:s3]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//             │       ├── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//             │       │   ├── [util.go:257       util.go:257   ]  PreconditionLeaf | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//             │       │   └── [graph_test.go:119 util.go:537    pre:s4 post:s3]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//             │       └── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//             │           ├── [util.go:257       util.go:257   ]  PreconditionLeaf | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//             │           └── [graph_test.go:119 util.go:537    pre:s1 post:s3]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//             └── [graph_test.go:119 util.go:537    pre:s3 post:sg]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	// 
 	// iteration = 7, status = running, err = <nil>, actor = s0
-	// [pabt.go:215       pabt.go:247   ]  github.com/joeycumines/go-pabt.Example_graph.(*Plan[...]).Node.func3 | github.com/joeycumines/go-pabt.(*Plan[...]).bt.func2
-	// └── [util.go:140       selector.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Selector
-	//     ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//     └── [util.go:140       memorize.go:34]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
-	//         ├── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   ├── [util.go:140       selector.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Selector
-	//         │   │   ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//         │   │   └── [util.go:140       memorize.go:34]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
-	//         │   │       ├── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │       │   ├── [util.go:140       selector.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Selector
-	//         │   │       │   │   ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//         │   │       │   │   └── [util.go:140       memorize.go:34]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
-	//         │   │       │   │       ├── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │       │   │       │   ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//         │   │       │   │       │   └── [graph_test.go:119 util.go:438    pre:s5 post:sg]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//         │   │       │   │       └── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │       │   │           ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//         │   │       │   │           └── [graph_test.go:119 util.go:438    pre:s3 post:sg]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//         │   │       │   └── [graph_test.go:119 util.go:438    pre:sg post:s5]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//         │   │       ├── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │       │   ├── [util.go:140       selector.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Selector
-	//         │   │       │   │   ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//         │   │       │   │   └── [util.go:140       memorize.go:34]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
-	//         │   │       │   │       ├── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │       │   │       │   ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//         │   │       │   │       │   └── [graph_test.go:119 util.go:438    pre:s5 post:s4]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//         │   │       │   │       ├── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │       │   │       │   ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//         │   │       │   │       │   └── [graph_test.go:119 util.go:438    pre:s3 post:s4]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//         │   │       │   │       └── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │       │   │           ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//         │   │       │   │           └── [graph_test.go:119 util.go:438    pre:s1 post:s4]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//         │   │       │   └── [graph_test.go:119 util.go:438    pre:s4 post:s5]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//         │   │       └── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │           ├── [util.go:140       selector.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Selector
-	//         │   │           │   ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//         │   │           │   └── [util.go:140       memorize.go:34]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
-	//         │   │           │       ├── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │           │       │   ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//         │   │           │       │   └── [graph_test.go:119 util.go:438    pre:s5 post:s2]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//         │   │           │       └── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │           │           ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//         │   │           │           └── [graph_test.go:119 util.go:438    pre:s1 post:s2]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//         │   │           └── [graph_test.go:119 util.go:438    pre:s2 post:s5]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//         │   └── [graph_test.go:119 util.go:438    pre:s5 post:sg]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//         └── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//             ├── [util.go:140       selector.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Selector
-	//             │   ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//             │   └── [util.go:140       memorize.go:34]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
-	//             │       ├── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//             │       │   ├── [util.go:140       selector.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Selector
-	//             │       │   │   ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//             │       │   │   └── [util.go:140       memorize.go:34]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
-	//             │       │   │       ├── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//             │       │   │       │   ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//             │       │   │       │   └── [graph_test.go:119 util.go:438    pre:s5 post:sg]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//             │       │   │       └── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//             │       │   │           ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//             │       │   │           └── [graph_test.go:119 util.go:438    pre:s3 post:sg]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//             │       │   └── [graph_test.go:119 util.go:438    pre:sg post:s3]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//             │       ├── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//             │       │   ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//             │       │   └── [graph_test.go:119 util.go:438    pre:s4 post:s3]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//             │       └── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//             │           ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//             │           └── [graph_test.go:119 util.go:438    pre:s1 post:s3]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//             └── [graph_test.go:119 util.go:438    pre:s3 post:sg]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//
+	// [pabt.go:215       pabt.go:247   ]  GoalRoot | github.com/joeycumines/go-pabt.(*Plan[...]).bt.func2
+	// └── [util.go:142       selector.go:21]  PPARoot | github.com/joeycumines/go-behaviortree.Selector
+	//     ├── [util.go:257       util.go:257   ]  Unknown | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//     └── [util.go:142       memorize.go:34]  Unknown | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
+	//         ├── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   ├── [util.go:142       selector.go:21]  PPARoot | github.com/joeycumines/go-behaviortree.Selector
+	//         │   │   ├── [util.go:257       util.go:257   ]  Unknown | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │   └── [util.go:142       memorize.go:34]  Unknown | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
+	//         │   │       ├── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │       │   ├── [util.go:142       selector.go:21]  PPARoot | github.com/joeycumines/go-behaviortree.Selector
+	//         │   │       │   │   ├── [util.go:257       util.go:257   ]  Unknown | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │       │   │   └── [util.go:142       memorize.go:34]  Unknown | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
+	//         │   │       │   │       ├── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │       │   │       │   ├── [util.go:257       util.go:257   ]  PreconditionLeaf | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │       │   │       │   └── [graph_test.go:119 util.go:537    pre:s5 post:sg]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//         │   │       │   │       └── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │       │   │           ├── [util.go:257       util.go:257   ]  PreconditionLeaf | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │       │   │           └── [graph_test.go:119 util.go:537    pre:s3 post:sg]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//         │   │       │   └── [graph_test.go:119 util.go:537    pre:sg post:s5]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//         │   │       ├── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │       │   ├── [util.go:142       selector.go:21]  PPARoot | github.com/joeycumines/go-behaviortree.Selector
+	//         │   │       │   │   ├── [util.go:257       util.go:257   ]  Unknown | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │       │   │   └── [util.go:142       memorize.go:34]  Unknown | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
+	//         │   │       │   │       ├── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │       │   │       │   ├── [util.go:257       util.go:257   ]  PreconditionLeaf | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │       │   │       │   └── [graph_test.go:119 util.go:537    pre:s5 post:s4]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//         │   │       │   │       ├── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │       │   │       │   ├── [util.go:257       util.go:257   ]  PreconditionLeaf | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │       │   │       │   └── [graph_test.go:119 util.go:537    pre:s3 post:s4]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//         │   │       │   │       └── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │       │   │           ├── [util.go:257       util.go:257   ]  PreconditionLeaf | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │       │   │           └── [graph_test.go:119 util.go:537    pre:s1 post:s4]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//         │   │       │   └── [graph_test.go:119 util.go:537    pre:s4 post:s5]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//         │   │       └── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │           ├── [util.go:142       selector.go:21]  PPARoot | github.com/joeycumines/go-behaviortree.Selector
+	//         │   │           │   ├── [util.go:257       util.go:257   ]  Unknown | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │           │   └── [util.go:142       memorize.go:34]  Unknown | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
+	//         │   │           │       ├── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │           │       │   ├── [util.go:257       util.go:257   ]  PreconditionLeaf | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │           │       │   └── [graph_test.go:119 util.go:537    pre:s5 post:s2]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//         │   │           │       └── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │           │           ├── [util.go:257       util.go:257   ]  PreconditionLeaf | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │           │           └── [graph_test.go:119 util.go:537    pre:s1 post:s2]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//         │   │           └── [graph_test.go:119 util.go:537    pre:s2 post:s5]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//         │   └── [graph_test.go:119 util.go:537    pre:s5 post:sg]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//         └── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//             ├── [util.go:142       selector.go:21]  PPARoot | github.com/joeycumines/go-behaviortree.Selector
+	//             │   ├── [util.go:257       util.go:257   ]  Unknown | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//             │   └── [util.go:142       memorize.go:34]  Unknown | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
+	//             │       ├── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//             │       │   ├── [util.go:142       selector.go:21]  PPARoot | github.com/joeycumines/go-behaviortree.Selector
+	//             │       │   │   ├── [util.go:257       util.go:257   ]  Unknown | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//             │       │   │   └── [util.go:142       memorize.go:34]  Unknown | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
+	//             │       │   │       ├── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//             │       │   │       │   ├── [util.go:257       util.go:257   ]  PreconditionLeaf | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//             │       │   │       │   └── [graph_test.go:119 util.go:537    pre:s5 post:sg]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//             │       │   │       └── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//             │       │   │           ├── [util.go:257       util.go:257   ]  PreconditionLeaf | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//             │       │   │           └── [graph_test.go:119 util.go:537    pre:s3 post:sg]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//             │       │   └── [graph_test.go:119 util.go:537    pre:sg post:s3]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//             │       ├── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//             │       │   ├── [util.go:257       util.go:257   ]  PreconditionLeaf | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//             │       │   └── [graph_test.go:119 util.go:537    pre:s4 post:s3]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//             │       └── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//             │           ├── [util.go:257       util.go:257   ]  PreconditionLeaf | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//             │           └── [graph_test.go:119 util.go:537    pre:s1 post:s3]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//             └── [graph_test.go:119 util.go:537    pre:s3 post:sg]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	// 
 	// iteration = 8, status = running, err = <nil>, actor = s0
-	// [pabt.go:215       pabt.go:247   ]  github.com/joeycumines/go-pabt.Example_graph.(*Plan[...]).Node.func3 | github.com/joeycumines/go-pabt.(*Plan[...]).bt.func2
-	// └── [util.go:140       selector.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Selector
-	//     ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//     └── [util.go:140       memorize.go:34]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
-	//         ├── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   ├── [util.go:140       selector.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Selector
-	//         │   │   ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//         │   │   └── [util.go:140       memorize.go:34]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
-	//         │   │       ├── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │       │   ├── [util.go:140       selector.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Selector
-	//         │   │       │   │   ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//         │   │       │   │   └── [util.go:140       memorize.go:34]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
-	//         │   │       │   │       ├── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │       │   │       │   ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//         │   │       │   │       │   └── [graph_test.go:119 util.go:438    pre:s5 post:sg]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//         │   │       │   │       └── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │       │   │           ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//         │   │       │   │           └── [graph_test.go:119 util.go:438    pre:s3 post:sg]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//         │   │       │   └── [graph_test.go:119 util.go:438    pre:sg post:s5]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//         │   │       ├── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │       │   ├── [util.go:140       selector.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Selector
-	//         │   │       │   │   ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//         │   │       │   │   └── [util.go:140       memorize.go:34]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
-	//         │   │       │   │       ├── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │       │   │       │   ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//         │   │       │   │       │   └── [graph_test.go:119 util.go:438    pre:s5 post:s4]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//         │   │       │   │       ├── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │       │   │       │   ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//         │   │       │   │       │   └── [graph_test.go:119 util.go:438    pre:s3 post:s4]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//         │   │       │   │       └── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │       │   │           ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//         │   │       │   │           └── [graph_test.go:119 util.go:438    pre:s1 post:s4]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//         │   │       │   └── [graph_test.go:119 util.go:438    pre:s4 post:s5]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//         │   │       └── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │           ├── [util.go:140       selector.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Selector
-	//         │   │           │   ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//         │   │           │   └── [util.go:140       memorize.go:34]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
-	//         │   │           │       ├── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │           │       │   ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//         │   │           │       │   └── [graph_test.go:119 util.go:438    pre:s5 post:s2]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//         │   │           │       └── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │           │           ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//         │   │           │           └── [graph_test.go:119 util.go:438    pre:s1 post:s2]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//         │   │           └── [graph_test.go:119 util.go:438    pre:s2 post:s5]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//         │   └── [graph_test.go:119 util.go:438    pre:s5 post:sg]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//         └── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//             ├── [util.go:140       selector.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Selector
-	//             │   ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//             │   └── [util.go:140       memorize.go:34]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
-	//             │       ├── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//             │       │   ├── [util.go:140       selector.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Selector
-	//             │       │   │   ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//             │       │   │   └── [util.go:140       memorize.go:34]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
-	//             │       │   │       ├── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//             │       │   │       │   ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//             │       │   │       │   └── [graph_test.go:119 util.go:438    pre:s5 post:sg]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//             │       │   │       └── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//             │       │   │           ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//             │       │   │           └── [graph_test.go:119 util.go:438    pre:s3 post:sg]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//             │       │   └── [graph_test.go:119 util.go:438    pre:sg post:s3]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//             │       ├── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//             │       │   ├── [util.go:140       selector.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Selector
-	//             │       │   │   ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//             │       │   │   └── [util.go:140       memorize.go:34]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
-	//             │       │   │       ├── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//             │       │   │       │   ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//             │       │   │       │   └── [graph_test.go:119 util.go:438    pre:s5 post:s4]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//             │       │   │       ├── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//             │       │   │       │   ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//             │       │   │       │   └── [graph_test.go:119 util.go:438    pre:s3 post:s4]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//             │       │   │       └── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//             │       │   │           ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//             │       │   │           └── [graph_test.go:119 util.go:438    pre:s1 post:s4]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//             │       │   └── [graph_test.go:119 util.go:438    pre:s4 post:s3]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//             │       └── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//             │           ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//             │           └── [graph_test.go:119 util.go:438    pre:s1 post:s3]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//             └── [graph_test.go:119 util.go:438    pre:s3 post:sg]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//
+	// [pabt.go:215       pabt.go:247   ]  GoalRoot | github.com/joeycumines/go-pabt.(*Plan[...]).bt.func2
+	// └── [util.go:142       selector.go:21]  PPARoot | github.com/joeycumines/go-behaviortree.Selector
+	//     ├── [util.go:257       util.go:257   ]  Unknown | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//     └── [util.go:142       memorize.go:34]  Unknown | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
+	//         ├── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   ├── [util.go:142       selector.go:21]  PPARoot | github.com/joeycumines/go-behaviortree.Selector
+	//         │   │   ├── [util.go:257       util.go:257   ]  Unknown | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │   └── [util.go:142       memorize.go:34]  Unknown | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
+	//         │   │       ├── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │       │   ├── [util.go:142       selector.go:21]  PPARoot | github.com/joeycumines/go-behaviortree.Selector
+	//         │   │       │   │   ├── [util.go:257       util.go:257   ]  Unknown | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │       │   │   └── [util.go:142       memorize.go:34]  Unknown | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
+	//         │   │       │   │       ├── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │       │   │       │   ├── [util.go:257       util.go:257   ]  PreconditionLeaf | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │       │   │       │   └── [graph_test.go:119 util.go:537    pre:s5 post:sg]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//         │   │       │   │       └── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │       │   │           ├── [util.go:257       util.go:257   ]  PreconditionLeaf | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │       │   │           └── [graph_test.go:119 util.go:537    pre:s3 post:sg]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//         │   │       │   └── [graph_test.go:119 util.go:537    pre:sg post:s5]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//         │   │       ├── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │       │   ├── [util.go:142       selector.go:21]  PPARoot | github.com/joeycumines/go-behaviortree.Selector
+	//         │   │       │   │   ├── [util.go:257       util.go:257   ]  Unknown | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │       │   │   └── [util.go:142       memorize.go:34]  Unknown | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
+	//         │   │       │   │       ├── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │       │   │       │   ├── [util.go:257       util.go:257   ]  PreconditionLeaf | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │       │   │       │   └── [graph_test.go:119 util.go:537    pre:s5 post:s4]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//         │   │       │   │       ├── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │       │   │       │   ├── [util.go:257       util.go:257   ]  PreconditionLeaf | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │       │   │       │   └── [graph_test.go:119 util.go:537    pre:s3 post:s4]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//         │   │       │   │       └── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │       │   │           ├── [util.go:257       util.go:257   ]  PreconditionLeaf | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │       │   │           └── [graph_test.go:119 util.go:537    pre:s1 post:s4]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//         │   │       │   └── [graph_test.go:119 util.go:537    pre:s4 post:s5]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//         │   │       └── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │           ├── [util.go:142       selector.go:21]  PPARoot | github.com/joeycumines/go-behaviortree.Selector
+	//         │   │           │   ├── [util.go:257       util.go:257   ]  Unknown | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │           │   └── [util.go:142       memorize.go:34]  Unknown | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
+	//         │   │           │       ├── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │           │       │   ├── [util.go:257       util.go:257   ]  PreconditionLeaf | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │           │       │   └── [graph_test.go:119 util.go:537    pre:s5 post:s2]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//         │   │           │       └── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │           │           ├── [util.go:257       util.go:257   ]  PreconditionLeaf | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │           │           └── [graph_test.go:119 util.go:537    pre:s1 post:s2]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//         │   │           └── [graph_test.go:119 util.go:537    pre:s2 post:s5]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//         │   └── [graph_test.go:119 util.go:537    pre:s5 post:sg]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//         └── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//             ├── [util.go:142       selector.go:21]  PPARoot | github.com/joeycumines/go-behaviortree.Selector
+	//             │   ├── [util.go:257       util.go:257   ]  Unknown | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//             │   └── [util.go:142       memorize.go:34]  Unknown | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
+	//             │       ├── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//             │       │   ├── [util.go:142       selector.go:21]  PPARoot | github.com/joeycumines/go-behaviortree.Selector
+	//             │       │   │   ├── [util.go:257       util.go:257   ]  Unknown | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//             │       │   │   └── [util.go:142       memorize.go:34]  Unknown | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
+	//             │       │   │       ├── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//             │       │   │       │   ├── [util.go:257       util.go:257   ]  PreconditionLeaf | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//             │       │   │       │   └── [graph_test.go:119 util.go:537    pre:s5 post:sg]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//             │       │   │       └── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//             │       │   │           ├── [util.go:257       util.go:257   ]  PreconditionLeaf | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//             │       │   │           └── [graph_test.go:119 util.go:537    pre:s3 post:sg]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//             │       │   └── [graph_test.go:119 util.go:537    pre:sg post:s3]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//             │       ├── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//             │       │   ├── [util.go:142       selector.go:21]  PPARoot | github.com/joeycumines/go-behaviortree.Selector
+	//             │       │   │   ├── [util.go:257       util.go:257   ]  Unknown | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//             │       │   │   └── [util.go:142       memorize.go:34]  Unknown | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
+	//             │       │   │       ├── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//             │       │   │       │   ├── [util.go:257       util.go:257   ]  PreconditionLeaf | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//             │       │   │       │   └── [graph_test.go:119 util.go:537    pre:s5 post:s4]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//             │       │   │       ├── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//             │       │   │       │   ├── [util.go:257       util.go:257   ]  PreconditionLeaf | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//             │       │   │       │   └── [graph_test.go:119 util.go:537    pre:s3 post:s4]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//             │       │   │       └── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//             │       │   │           ├── [util.go:257       util.go:257   ]  PreconditionLeaf | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//             │       │   │           └── [graph_test.go:119 util.go:537    pre:s1 post:s4]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//             │       │   └── [graph_test.go:119 util.go:537    pre:s4 post:s3]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//             │       └── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//             │           ├── [util.go:257       util.go:257   ]  PreconditionLeaf | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//             │           └── [graph_test.go:119 util.go:537    pre:s1 post:s3]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//             └── [graph_test.go:119 util.go:537    pre:s3 post:sg]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	// 
 	// iteration = 9, status = running, err = <nil>, actor = s0
-	// [pabt.go:215       pabt.go:247   ]  github.com/joeycumines/go-pabt.Example_graph.(*Plan[...]).Node.func3 | github.com/joeycumines/go-pabt.(*Plan[...]).bt.func2
-	// └── [util.go:140       selector.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Selector
-	//     ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//     └── [util.go:140       memorize.go:34]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
-	//         ├── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   ├── [util.go:140       selector.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Selector
-	//         │   │   ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//         │   │   └── [util.go:140       memorize.go:34]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
-	//         │   │       ├── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │       │   ├── [util.go:140       selector.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Selector
-	//         │   │       │   │   ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//         │   │       │   │   └── [util.go:140       memorize.go:34]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
-	//         │   │       │   │       ├── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │       │   │       │   ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//         │   │       │   │       │   └── [graph_test.go:119 util.go:438    pre:s5 post:sg]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//         │   │       │   │       └── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │       │   │           ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//         │   │       │   │           └── [graph_test.go:119 util.go:438    pre:s3 post:sg]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//         │   │       │   └── [graph_test.go:119 util.go:438    pre:sg post:s5]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//         │   │       ├── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │       │   ├── [util.go:140       selector.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Selector
-	//         │   │       │   │   ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//         │   │       │   │   └── [util.go:140       memorize.go:34]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
-	//         │   │       │   │       ├── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │       │   │       │   ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//         │   │       │   │       │   └── [graph_test.go:119 util.go:438    pre:s5 post:s4]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//         │   │       │   │       ├── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │       │   │       │   ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//         │   │       │   │       │   └── [graph_test.go:119 util.go:438    pre:s3 post:s4]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//         │   │       │   │       └── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │       │   │           ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//         │   │       │   │           └── [graph_test.go:119 util.go:438    pre:s1 post:s4]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//         │   │       │   └── [graph_test.go:119 util.go:438    pre:s4 post:s5]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//         │   │       └── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │           ├── [util.go:140       selector.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Selector
-	//         │   │           │   ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//         │   │           │   └── [util.go:140       memorize.go:34]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
-	//         │   │           │       ├── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │           │       │   ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//         │   │           │       │   └── [graph_test.go:119 util.go:438    pre:s5 post:s2]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//         │   │           │       └── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │           │           ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//         │   │           │           └── [graph_test.go:119 util.go:438    pre:s1 post:s2]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//         │   │           └── [graph_test.go:119 util.go:438    pre:s2 post:s5]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//         │   └── [graph_test.go:119 util.go:438    pre:s5 post:sg]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//         └── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//             ├── [util.go:140       selector.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Selector
-	//             │   ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//             │   └── [util.go:140       memorize.go:34]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
-	//             │       ├── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//             │       │   ├── [util.go:140       selector.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Selector
-	//             │       │   │   ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//             │       │   │   └── [util.go:140       memorize.go:34]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
-	//             │       │   │       ├── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//             │       │   │       │   ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//             │       │   │       │   └── [graph_test.go:119 util.go:438    pre:s5 post:sg]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//             │       │   │       └── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//             │       │   │           ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//             │       │   │           └── [graph_test.go:119 util.go:438    pre:s3 post:sg]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//             │       │   └── [graph_test.go:119 util.go:438    pre:sg post:s3]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//             │       ├── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//             │       │   ├── [util.go:140       selector.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Selector
-	//             │       │   │   ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//             │       │   │   └── [util.go:140       memorize.go:34]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
-	//             │       │   │       ├── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//             │       │   │       │   ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//             │       │   │       │   └── [graph_test.go:119 util.go:438    pre:s5 post:s4]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//             │       │   │       ├── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//             │       │   │       │   ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//             │       │   │       │   └── [graph_test.go:119 util.go:438    pre:s3 post:s4]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//             │       │   │       └── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//             │       │   │           ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//             │       │   │           └── [graph_test.go:119 util.go:438    pre:s1 post:s4]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//             │       │   └── [graph_test.go:119 util.go:438    pre:s4 post:s3]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//             │       └── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//             │           ├── [util.go:140       selector.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Selector
-	//             │           │   ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//             │           │   └── [util.go:140       memorize.go:34]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
-	//             │           │       ├── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//             │           │       │   ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//             │           │       │   └── [graph_test.go:119 util.go:438    pre:s4 post:s1]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//             │           │       ├── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//             │           │       │   ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//             │           │       │   └── [graph_test.go:119 util.go:438    pre:s3 post:s1]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//             │           │       ├── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//             │           │       │   ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//             │           │       │   └── [graph_test.go:119 util.go:438    pre:s2 post:s1]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//             │           │       └── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//             │           │           ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//             │           │           └── [graph_test.go:119 util.go:438    pre:s0 post:s1]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//             │           └── [graph_test.go:119 util.go:438    pre:s1 post:s3]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//             └── [graph_test.go:119 util.go:438    pre:s3 post:sg]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//
+	// [pabt.go:215       pabt.go:247   ]  GoalRoot | github.com/joeycumines/go-pabt.(*Plan[...]).bt.func2
+	// └── [util.go:142       selector.go:21]  PPARoot | github.com/joeycumines/go-behaviortree.Selector
+	//     ├── [util.go:257       util.go:257   ]  Unknown | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//     └── [util.go:142       memorize.go:34]  Unknown | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
+	//         ├── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   ├── [util.go:142       selector.go:21]  PPARoot | github.com/joeycumines/go-behaviortree.Selector
+	//         │   │   ├── [util.go:257       util.go:257   ]  Unknown | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │   └── [util.go:142       memorize.go:34]  Unknown | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
+	//         │   │       ├── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │       │   ├── [util.go:142       selector.go:21]  PPARoot | github.com/joeycumines/go-behaviortree.Selector
+	//         │   │       │   │   ├── [util.go:257       util.go:257   ]  Unknown | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │       │   │   └── [util.go:142       memorize.go:34]  Unknown | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
+	//         │   │       │   │       ├── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │       │   │       │   ├── [util.go:257       util.go:257   ]  PreconditionLeaf | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │       │   │       │   └── [graph_test.go:119 util.go:537    pre:s5 post:sg]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//         │   │       │   │       └── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │       │   │           ├── [util.go:257       util.go:257   ]  PreconditionLeaf | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │       │   │           └── [graph_test.go:119 util.go:537    pre:s3 post:sg]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//         │   │       │   └── [graph_test.go:119 util.go:537    pre:sg post:s5]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//         │   │       ├── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │       │   ├── [util.go:142       selector.go:21]  PPARoot | github.com/joeycumines/go-behaviortree.Selector
+	//         │   │       │   │   ├── [util.go:257       util.go:257   ]  Unknown | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │       │   │   └── [util.go:142       memorize.go:34]  Unknown | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
+	//         │   │       │   │       ├── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │       │   │       │   ├── [util.go:257       util.go:257   ]  PreconditionLeaf | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │       │   │       │   └── [graph_test.go:119 util.go:537    pre:s5 post:s4]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//         │   │       │   │       ├── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │       │   │       │   ├── [util.go:257       util.go:257   ]  PreconditionLeaf | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │       │   │       │   └── [graph_test.go:119 util.go:537    pre:s3 post:s4]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//         │   │       │   │       └── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │       │   │           ├── [util.go:257       util.go:257   ]  PreconditionLeaf | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │       │   │           └── [graph_test.go:119 util.go:537    pre:s1 post:s4]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//         │   │       │   └── [graph_test.go:119 util.go:537    pre:s4 post:s5]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//         │   │       └── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │           ├── [util.go:142       selector.go:21]  PPARoot | github.com/joeycumines/go-behaviortree.Selector
+	//         │   │           │   ├── [util.go:257       util.go:257   ]  Unknown | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │           │   └── [util.go:142       memorize.go:34]  Unknown | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
+	//         │   │           │       ├── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │           │       │   ├── [util.go:257       util.go:257   ]  PreconditionLeaf | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │           │       │   └── [graph_test.go:119 util.go:537    pre:s5 post:s2]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//         │   │           │       └── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │           │           ├── [util.go:257       util.go:257   ]  PreconditionLeaf | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │           │           └── [graph_test.go:119 util.go:537    pre:s1 post:s2]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//         │   │           └── [graph_test.go:119 util.go:537    pre:s2 post:s5]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//         │   └── [graph_test.go:119 util.go:537    pre:s5 post:sg]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//         └── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//             ├── [util.go:142       selector.go:21]  PPARoot | github.com/joeycumines/go-behaviortree.Selector
+	//             │   ├── [util.go:257       util.go:257   ]  Unknown | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//             │   └── [util.go:142       memorize.go:34]  Unknown | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
+	//             │       ├── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//             │       │   ├── [util.go:142       selector.go:21]  PPARoot | github.com/joeycumines/go-behaviortree.Selector
+	//             │       │   │   ├── [util.go:257       util.go:257   ]  Unknown | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//             │       │   │   └── [util.go:142       memorize.go:34]  Unknown | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
+	//             │       │   │       ├── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//             │       │   │       │   ├── [util.go:257       util.go:257   ]  PreconditionLeaf | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//             │       │   │       │   └── [graph_test.go:119 util.go:537    pre:s5 post:sg]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//             │       │   │       └── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//             │       │   │           ├── [util.go:257       util.go:257   ]  PreconditionLeaf | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//             │       │   │           └── [graph_test.go:119 util.go:537    pre:s3 post:sg]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//             │       │   └── [graph_test.go:119 util.go:537    pre:sg post:s3]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//             │       ├── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//             │       │   ├── [util.go:142       selector.go:21]  PPARoot | github.com/joeycumines/go-behaviortree.Selector
+	//             │       │   │   ├── [util.go:257       util.go:257   ]  Unknown | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//             │       │   │   └── [util.go:142       memorize.go:34]  Unknown | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
+	//             │       │   │       ├── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//             │       │   │       │   ├── [util.go:257       util.go:257   ]  PreconditionLeaf | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//             │       │   │       │   └── [graph_test.go:119 util.go:537    pre:s5 post:s4]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//             │       │   │       ├── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//             │       │   │       │   ├── [util.go:257       util.go:257   ]  PreconditionLeaf | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//             │       │   │       │   └── [graph_test.go:119 util.go:537    pre:s3 post:s4]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//             │       │   │       └── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//             │       │   │           ├── [util.go:257       util.go:257   ]  PreconditionLeaf | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//             │       │   │           └── [graph_test.go:119 util.go:537    pre:s1 post:s4]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//             │       │   └── [graph_test.go:119 util.go:537    pre:s4 post:s3]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//             │       └── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//             │           ├── [util.go:142       selector.go:21]  PPARoot | github.com/joeycumines/go-behaviortree.Selector
+	//             │           │   ├── [util.go:257       util.go:257   ]  Unknown | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//             │           │   └── [util.go:142       memorize.go:34]  Unknown | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
+	//             │           │       ├── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//             │           │       │   ├── [util.go:257       util.go:257   ]  PreconditionLeaf | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//             │           │       │   └── [graph_test.go:119 util.go:537    pre:s4 post:s1]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//             │           │       ├── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//             │           │       │   ├── [util.go:257       util.go:257   ]  PreconditionLeaf | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//             │           │       │   └── [graph_test.go:119 util.go:537    pre:s3 post:s1]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//             │           │       ├── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//             │           │       │   ├── [util.go:257       util.go:257   ]  PreconditionLeaf | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//             │           │       │   └── [graph_test.go:119 util.go:537    pre:s2 post:s1]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//             │           │       └── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//             │           │           ├── [util.go:257       util.go:257   ]  PreconditionLeaf | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//             │           │           └── [graph_test.go:119 util.go:537    pre:s0 post:s1]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//             │           └── [graph_test.go:119 util.go:537    pre:s1 post:s3]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//             └── [graph_test.go:119 util.go:537    pre:s3 post:sg]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	// 
 	// actor s0 -> s1
-	//
+	// 
 	// actor s1 -> s3
-	//
+	// 
 	// actor s3 -> sg
-	//
+	// 
 	// iteration = 10, status = success, err = <nil>, actor = sg
-	// [pabt.go:215       pabt.go:247   ]  github.com/joeycumines/go-pabt.Example_graph.(*Plan[...]).Node.func3 | github.com/joeycumines/go-pabt.(*Plan[...]).bt.func2
-	// └── [util.go:140       selector.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Selector
-	//     ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//     └── [util.go:140       memorize.go:34]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
-	//         ├── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   ├── [util.go:140       selector.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Selector
-	//         │   │   ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//         │   │   └── [util.go:140       memorize.go:34]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
-	//         │   │       ├── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │       │   ├── [util.go:140       selector.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Selector
-	//         │   │       │   │   ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//         │   │       │   │   └── [util.go:140       memorize.go:34]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
-	//         │   │       │   │       ├── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │       │   │       │   ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//         │   │       │   │       │   └── [graph_test.go:119 util.go:438    pre:s5 post:sg]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//         │   │       │   │       └── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │       │   │           ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//         │   │       │   │           └── [graph_test.go:119 util.go:438    pre:s3 post:sg]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//         │   │       │   └── [graph_test.go:119 util.go:438    pre:sg post:s5]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//         │   │       ├── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │       │   ├── [util.go:140       selector.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Selector
-	//         │   │       │   │   ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//         │   │       │   │   └── [util.go:140       memorize.go:34]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
-	//         │   │       │   │       ├── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │       │   │       │   ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//         │   │       │   │       │   └── [graph_test.go:119 util.go:438    pre:s5 post:s4]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//         │   │       │   │       ├── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │       │   │       │   ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//         │   │       │   │       │   └── [graph_test.go:119 util.go:438    pre:s3 post:s4]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//         │   │       │   │       └── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │       │   │           ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//         │   │       │   │           └── [graph_test.go:119 util.go:438    pre:s1 post:s4]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//         │   │       │   └── [graph_test.go:119 util.go:438    pre:s4 post:s5]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//         │   │       └── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │           ├── [util.go:140       selector.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Selector
-	//         │   │           │   ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//         │   │           │   └── [util.go:140       memorize.go:34]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
-	//         │   │           │       ├── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │           │       │   ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//         │   │           │       │   └── [graph_test.go:119 util.go:438    pre:s5 post:s2]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//         │   │           │       └── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//         │   │           │           ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//         │   │           │           └── [graph_test.go:119 util.go:438    pre:s1 post:s2]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//         │   │           └── [graph_test.go:119 util.go:438    pre:s2 post:s5]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//         │   └── [graph_test.go:119 util.go:438    pre:s5 post:sg]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//         └── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//             ├── [util.go:140       selector.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Selector
-	//             │   ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//             │   └── [util.go:140       memorize.go:34]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
-	//             │       ├── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//             │       │   ├── [util.go:140       selector.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Selector
-	//             │       │   │   ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//             │       │   │   └── [util.go:140       memorize.go:34]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
-	//             │       │   │       ├── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//             │       │   │       │   ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//             │       │   │       │   └── [graph_test.go:119 util.go:438    pre:s5 post:sg]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//             │       │   │       └── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//             │       │   │           ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//             │       │   │           └── [graph_test.go:119 util.go:438    pre:s3 post:sg]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//             │       │   └── [graph_test.go:119 util.go:438    pre:sg post:s3]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//             │       ├── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//             │       │   ├── [util.go:140       selector.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Selector
-	//             │       │   │   ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//             │       │   │   └── [util.go:140       memorize.go:34]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
-	//             │       │   │       ├── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//             │       │   │       │   ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//             │       │   │       │   └── [graph_test.go:119 util.go:438    pre:s5 post:s4]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//             │       │   │       ├── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//             │       │   │       │   ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//             │       │   │       │   └── [graph_test.go:119 util.go:438    pre:s3 post:s4]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//             │       │   │       └── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//             │       │   │           ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//             │       │   │           └── [graph_test.go:119 util.go:438    pre:s1 post:s4]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//             │       │   └── [graph_test.go:119 util.go:438    pre:s4 post:s3]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//             │       └── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//             │           ├── [util.go:140       selector.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Selector
-	//             │           │   ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//             │           │   └── [util.go:140       memorize.go:34]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
-	//             │           │       ├── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//             │           │       │   ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//             │           │       │   └── [graph_test.go:119 util.go:438    pre:s4 post:s1]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//             │           │       ├── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//             │           │       │   ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//             │           │       │   └── [graph_test.go:119 util.go:438    pre:s3 post:s1]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//             │           │       ├── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//             │           │       │   ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//             │           │       │   └── [graph_test.go:119 util.go:438    pre:s2 post:s1]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//             │           │       └── [util.go:140       sequence.go:21]  github.com/joeycumines/go-pabt.(*node[...]).bt.func1 | github.com/joeycumines/go-behaviortree.Sequence
-	//             │           │           ├── [util.go:158       util.go:158   ]  github.com/joeycumines/go-pabt.newConditionNode[...] | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	//             │           │           └── [graph_test.go:119 util.go:438    pre:s0 post:s1]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//             │           └── [graph_test.go:119 util.go:438    pre:s1 post:s3]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//             └── [graph_test.go:119 util.go:438    pre:s3 post:sg]  github.com/joeycumines/go-pabt.(*graphState).Actions | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	//
+	// [pabt.go:215       pabt.go:247   ]  GoalRoot | github.com/joeycumines/go-pabt.(*Plan[...]).bt.func2
+	// └── [util.go:142       selector.go:21]  PPARoot | github.com/joeycumines/go-behaviortree.Selector
+	//     ├── [util.go:257       util.go:257   ]  Unknown | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//     └── [util.go:142       memorize.go:34]  Unknown | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
+	//         ├── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   ├── [util.go:142       selector.go:21]  PPARoot | github.com/joeycumines/go-behaviortree.Selector
+	//         │   │   ├── [util.go:257       util.go:257   ]  Unknown | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │   └── [util.go:142       memorize.go:34]  Unknown | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
+	//         │   │       ├── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │       │   ├── [util.go:142       selector.go:21]  PPARoot | github.com/joeycumines/go-behaviortree.Selector
+	//         │   │       │   │   ├── [util.go:257       util.go:257   ]  Unknown | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │       │   │   └── [util.go:142       memorize.go:34]  Unknown | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
+	//         │   │       │   │       ├── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │       │   │       │   ├── [util.go:257       util.go:257   ]  PreconditionLeaf | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │       │   │       │   └── [graph_test.go:119 util.go:537    pre:s5 post:sg]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//         │   │       │   │       └── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │       │   │           ├── [util.go:257       util.go:257   ]  PreconditionLeaf | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │       │   │           └── [graph_test.go:119 util.go:537    pre:s3 post:sg]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//         │   │       │   └── [graph_test.go:119 util.go:537    pre:sg post:s5]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//         │   │       ├── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │       │   ├── [util.go:142       selector.go:21]  PPARoot | github.com/joeycumines/go-behaviortree.Selector
+	//         │   │       │   │   ├── [util.go:257       util.go:257   ]  Unknown | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │       │   │   └── [util.go:142       memorize.go:34]  Unknown | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
+	//         │   │       │   │       ├── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │       │   │       │   ├── [util.go:257       util.go:257   ]  PreconditionLeaf | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │       │   │       │   └── [graph_test.go:119 util.go:537    pre:s5 post:s4]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//         │   │       │   │       ├── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │       │   │       │   ├── [util.go:257       util.go:257   ]  PreconditionLeaf | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │       │   │       │   └── [graph_test.go:119 util.go:537    pre:s3 post:s4]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//         │   │       │   │       └── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │       │   │           ├── [util.go:257       util.go:257   ]  PreconditionLeaf | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │       │   │           └── [graph_test.go:119 util.go:537    pre:s1 post:s4]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//         │   │       │   └── [graph_test.go:119 util.go:537    pre:s4 post:s5]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//         │   │       └── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │           ├── [util.go:142       selector.go:21]  PPARoot | github.com/joeycumines/go-behaviortree.Selector
+	//         │   │           │   ├── [util.go:257       util.go:257   ]  Unknown | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │           │   └── [util.go:142       memorize.go:34]  Unknown | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
+	//         │   │           │       ├── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │           │       │   ├── [util.go:257       util.go:257   ]  PreconditionLeaf | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │           │       │   └── [graph_test.go:119 util.go:537    pre:s5 post:s2]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//         │   │           │       └── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//         │   │           │           ├── [util.go:257       util.go:257   ]  PreconditionLeaf | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//         │   │           │           └── [graph_test.go:119 util.go:537    pre:s1 post:s2]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//         │   │           └── [graph_test.go:119 util.go:537    pre:s2 post:s5]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//         │   └── [graph_test.go:119 util.go:537    pre:s5 post:sg]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//         └── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//             ├── [util.go:142       selector.go:21]  PPARoot | github.com/joeycumines/go-behaviortree.Selector
+	//             │   ├── [util.go:257       util.go:257   ]  Unknown | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//             │   └── [util.go:142       memorize.go:34]  Unknown | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
+	//             │       ├── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//             │       │   ├── [util.go:142       selector.go:21]  PPARoot | github.com/joeycumines/go-behaviortree.Selector
+	//             │       │   │   ├── [util.go:257       util.go:257   ]  Unknown | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//             │       │   │   └── [util.go:142       memorize.go:34]  Unknown | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
+	//             │       │   │       ├── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//             │       │   │       │   ├── [util.go:257       util.go:257   ]  PreconditionLeaf | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//             │       │   │       │   └── [graph_test.go:119 util.go:537    pre:s5 post:sg]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//             │       │   │       └── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//             │       │   │           ├── [util.go:257       util.go:257   ]  PreconditionLeaf | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//             │       │   │           └── [graph_test.go:119 util.go:537    pre:s3 post:sg]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//             │       │   └── [graph_test.go:119 util.go:537    pre:sg post:s3]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//             │       ├── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//             │       │   ├── [util.go:142       selector.go:21]  PPARoot | github.com/joeycumines/go-behaviortree.Selector
+	//             │       │   │   ├── [util.go:257       util.go:257   ]  Unknown | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//             │       │   │   └── [util.go:142       memorize.go:34]  Unknown | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
+	//             │       │   │       ├── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//             │       │   │       │   ├── [util.go:257       util.go:257   ]  PreconditionLeaf | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//             │       │   │       │   └── [graph_test.go:119 util.go:537    pre:s5 post:s4]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//             │       │   │       ├── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//             │       │   │       │   ├── [util.go:257       util.go:257   ]  PreconditionLeaf | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//             │       │   │       │   └── [graph_test.go:119 util.go:537    pre:s3 post:s4]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//             │       │   │       └── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//             │       │   │           ├── [util.go:257       util.go:257   ]  PreconditionLeaf | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//             │       │   │           └── [graph_test.go:119 util.go:537    pre:s1 post:s4]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//             │       │   └── [graph_test.go:119 util.go:537    pre:s4 post:s3]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//             │       └── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//             │           ├── [util.go:142       selector.go:21]  PPARoot | github.com/joeycumines/go-behaviortree.Selector
+	//             │           │   ├── [util.go:257       util.go:257   ]  Unknown | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//             │           │   └── [util.go:142       memorize.go:34]  Unknown | github.com/joeycumines/go-pabt.(*precondition[...]).expand.Memorize.func1
+	//             │           │       ├── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//             │           │       │   ├── [util.go:257       util.go:257   ]  PreconditionLeaf | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//             │           │       │   └── [graph_test.go:119 util.go:537    pre:s4 post:s1]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//             │           │       ├── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//             │           │       │   ├── [util.go:257       util.go:257   ]  PreconditionLeaf | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//             │           │       │   └── [graph_test.go:119 util.go:537    pre:s3 post:s1]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//             │           │       ├── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//             │           │       │   ├── [util.go:257       util.go:257   ]  PreconditionLeaf | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//             │           │       │   └── [graph_test.go:119 util.go:537    pre:s2 post:s1]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//             │           │       └── [util.go:142       sequence.go:21]  ActionRoot | github.com/joeycumines/go-behaviortree.Sequence
+	//             │           │           ├── [util.go:257       util.go:257   ]  PreconditionLeaf | github.com/joeycumines/go-pabt.newConditionNode[...].func1
+	//             │           │           └── [graph_test.go:119 util.go:537    pre:s0 post:s1]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//             │           └── [graph_test.go:119 util.go:537    pre:s1 post:s3]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	//             └── [graph_test.go:119 util.go:537    pre:s3 post:sg]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
+	// 
 	// iteration = 10, status = success, err = <nil>, actor = sg
 	// DONE
 }

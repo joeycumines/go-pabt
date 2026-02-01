@@ -18,6 +18,8 @@ package pabt
 
 import (
 	"fmt"
+	"iter"
+
 	bt "github.com/joeycumines/go-behaviortree"
 )
 
@@ -138,15 +140,112 @@ func (n *node[T]) bt() (node bt.Node) {
 	node = n.node
 	if node == nil {
 		node = n.group
+	} else {
+		// Wrap leaf node to register ValueProviders
+		orig := node
+		node = func() (bt.Tick, []bt.Node) {
+			bt.UseValueProviders(
+				(*nodeValueProvider[T])(n),
+				bt.UseName(n.nodeType().String()),
+				bt.UseStructure(n.childrenSeq()),
+			)
+			return orig()
+		}
 	}
 	return
 }
+
 func (n *node[T]) group() (tick bt.Tick, children []bt.Node) {
+	bt.UseValueProviders(
+		(*nodeValueProvider[T])(n),
+		bt.UseName(n.nodeType().String()),
+		bt.UseStructure(n.childrenSeq()),
+	)
 	tick = n.tick
 	for node := n.first; node != nil; node = node.next {
 		children = append(children, node.bt())
 	}
 	return
+}
+
+// Value implements a value lookup for this node's metadata.
+func (n *node[T]) Value(key any) any {
+	switch key.(type) {
+	case nodeInfoKey:
+		return n.buildNodeInfo()
+	}
+	return nil
+}
+
+// childrenSeq returns an iter.Seq[bt.Metadata] for this node's children.
+// This is used by bt.UseStructure for bt.Walk compatibility.
+func (n *node[T]) childrenSeq() iter.Seq[bt.Metadata] {
+	return func(yield func(bt.Metadata) bool) {
+		for c := n.first; c != nil; c = c.next {
+			if !yield(c.buildNodeInfo()) {
+				return
+			}
+		}
+	}
+}
+
+func (n *node[T]) buildNodeInfo() *NodeInfo {
+	info := &NodeInfo{
+		Type:     n.nodeType(),
+		children: n.childrenSeq(),
+	}
+
+	// Add precondition info
+	if n.precondition != nil && n.precondition.root == n {
+		info.VariableKey = n.precondition.condition.Key()
+		info.Condition = n.precondition.condition
+	}
+
+	// Add action effects info
+	if n.action != nil && n.action.node == n {
+		info.Effects = n.buildEffects()
+	}
+
+	return info
+}
+
+func (n *node[T]) nodeType() NodeType {
+	switch {
+	case n.goal != nil && n.goal.root == n:
+		if len(n.goal.or) > 1 {
+			return NodeTypeGoalSelector
+		}
+		return NodeTypeGoalRoot
+	case n.ppa != nil && n.ppa.root == n:
+		return NodeTypePPARoot
+	case n.ppa != nil && n.ppa.post == n:
+		return NodeTypePPAPost
+	case n.action != nil && n.action.root == n:
+		return NodeTypeActionRoot
+	case n.action != nil && n.action.node == n:
+		return NodeTypeActionNode
+	case n.preconditions != nil && n.preconditions.root == n:
+		return NodeTypePreconditionsRoot
+	case n.precondition != nil && n.precondition.root == n:
+		return NodeTypePreconditionLeaf
+	default:
+		// Check if this is an intermediate selector node
+		if n.tick != nil && n.action != nil {
+			return NodeTypeActionSelector
+		}
+		return NodeTypeUnknown
+	}
+}
+
+func (n *node[T]) buildEffects() Effects {
+	if n.action == nil {
+		return nil
+	}
+	effects := make(Effects, 0, len(n.action.effects))
+	for _, e := range n.action.effects {
+		effects = append(effects, e)
+	}
+	return effects
 }
 
 func newConditionNode[T Condition](

@@ -1,0 +1,585 @@
+package behaviortree // import "github.com/joeycumines/go-behaviortree"
+
+Package behaviortree provides a simple and powerful Go implementation of
+behavior trees without fluff.
+
+VARIABLES
+
+var (
+	// ErrManagerStopped is returned by the manager implementation in this package (see also NewManager) in the case
+	// that Manager.Add is attempted after the manager has already started to stop. Use errors.Is to check this case.
+	ErrManagerStopped error = errManagerStopped{error: errors.New(`behaviortree.Manager.Add already stopped`)}
+)
+
+FUNCTIONS
+
+func All(children []Node) (Status, error)
+    All implements a tick which will tick all children sequentially until the
+    first running status or error is encountered (propagated), and will return
+    success only if all children were ticked and returned success (returns
+    success if there were no children, like sequence).
+
+func DefaultPrinterInspector(node Node, tick Tick) ([]any, any)
+    DefaultPrinterInspector is used by DefaultPrinter
+
+func GetName(n Valuer) string
+    GetName retrieves the name value from the Valuer, or returns an empty string
+    if not present.
+
+    This helper facilitates interoperability with external implementations of
+    the Valuer interface.
+
+func GetStructure(n Valuer) iter.Seq[Metadata]
+    GetStructure retrieves the logical structure sequence from the Valuer,
+    or nil if not present.
+
+    This helper facilitates interoperability with external implementations of
+    the Valuer interface.
+
+    See Node.Structure for more details on the semantic meaning of the return
+    value.
+
+func Selector(children []Node) (Status, error)
+    Selector is a tick implementation that ticks each child sequentially, until
+    the the first error (returning the error), the first non-failure status
+    (returning the status), or all children are ticked (returning failure)
+
+func Sequence(children []Node) (Status, error)
+    Sequence is a tick implementation that ticks each child sequentially, until
+    the the first error (returning the error), the first non-success status
+    (returning the status), or all children are ticked (returning success)
+
+func Switch(children []Node) (Status, error)
+    Switch is a tick implementation that provides switch-like functionality,
+    where each switch case is comprised of a condition and statement, formed by
+    a pair of (contiguous) children. If there are an odd number of children,
+    then the final child will be treated as a statement with an always-true
+    condition (used as the default case). The first error or first running
+    status will be returned (if any). Otherwise, the result will be either
+    that of the statement corresponding to the first successful condition,
+    or success.
+
+    This implementation is compatible with both Memorize and Sync.
+
+func UseValueHandler(fn func(key any) (any, bool))
+    UseValueHandler is a convenience wrapper for UseValueProvider that accepts a
+    function.
+
+func UseValueProvider(provider ValueProvider)
+    UseValueProvider may be called when expanding _any_ Node, and allows the
+    provided provider to respond to Node.Value queries for that node. If there
+    are multiple, called during node expansion, the outermost one that responds
+    with true will take precedence. In the absence of an in-progress Node.Value
+    call, the cost of this function is trivial. See also Node.WithValue,
+    which is implemented using this mechanism.
+
+    Use cases:
+      - Attaching metadata to custom nodes (e.g., frame/caller information)
+      - Efficiently handling large numbers of key-value pairs without wrapping
+        nodes repeatedly
+      - Debugging or inspection of custom node implementations during
+        development
+
+    The provider receives a key and should return (value, true) if it handles
+    that key, or (nil, false) otherwise. Only providers registered on nodes
+    appearing in the call stack from the Node.Value call will be considered.
+
+    Example: Register a custom metadata handler in a custom node factory
+
+        func customNode(logic bt.Tick) bt.Node {
+        	handler := func(key any) (any, bool) {
+        		if metadataKey, ok := key.(metadataKeyType); ok {
+        			return nodeMetadata{info: "custom"}, true
+        		}
+        		return nil, false
+        	}
+        	return func() (bt.Tick, []bt.Node) {
+        		bt.UseValueHandler(handler) // This "registers" the handler
+        		return logic, nil
+        	}
+        }
+
+func UseValueProviders(providers ...ValueProvider)
+    UseValueProviders is a convenience wrapper for UseValueProvider that accepts
+    multiple providers. They will be combined into a single ValueProviders
+    slice.
+
+func Walk(n Metadata, fn func(n Metadata) bool)
+    Walk traverses the "conceptual" tree structure starting from n, depth-first.
+
+    It uses the `Metadata` interface to determine children, preferring
+    `n.Structure()` (logical children) over physical node expansion if present.
+    This allows for rich, efficient introspection of complex or stateful trees.
+
+func WithFrame[T any](n ValueAttachable[T], frame *Frame) T
+    WithFrame returns the value attachable with the frame attached.
+
+    If frame is nil, it attaches a nil value for the frame key.
+
+    This helper facilitates interoperability with external implementations of
+    the ValueAttachable interface.
+
+func WithName[T any](n ValueAttachable[T], name string) T
+    WithName returns the value attachable with the name value attached.
+
+    Passing an empty string will "zero" the name value, effectively clearing any
+    previous name.
+
+    This helper facilitates interoperability with external implementations of
+    the ValueAttachable interface.
+
+func WithStructure[T any](n ValueAttachable[T], children iter.Seq[Metadata]) T
+    WithStructure returns the value attachable with the structure value
+    attached.
+
+    This helper facilitates interoperability with external implementations of
+    the ValueAttachable interface.
+
+    Passing a nil sequence will attach a nil value, effectively clearing any
+    previous structure. To explicitly mask children (making it appear as a
+    leaf), pass an empty sequence.
+
+
+TYPES
+
+type Context struct {
+	// Has unexported fields.
+}
+    Context provides support for tick(s) utilising context as a means of
+    cancelation, with cancelation triggered by either BT-driven logic or the
+    normal means (parent cancelation, deadline / timeout).
+
+    Note that it must be initialised by means of it's Init method (implements
+    a tick) prior to use (Context.Tick tick). Init may be ticked any number of
+    times (each time triggering cancelation of any prior context).
+
+func (c *Context) Cancel([]Node) (Status, error)
+    Cancel implements a tick that will cancel the receiver's context (noop if it
+    has none) then succeed
+
+func (c *Context) Done([]Node) (Status, error)
+    Done implements a tick that will block on the receiver's context being
+    canceled (noop if it has none) then succeed
+
+func (c *Context) Err([]Node) (Status, error)
+    Err implements a tick that will succeed if the receiver does not have a
+    context or it has been canceled
+
+func (c *Context) Init([]Node) (Status, error)
+    Init implements a tick that will cancel existing context, (re)initialise the
+    context, then succeed, note that it must not be called concurrently with any
+    other method, and it must be ticked prior to any Context.Tick tick
+
+func (c *Context) Tick(fn func(ctx context.Context, children []Node) (Status, error)) Tick
+    Tick returns a tick that will call fn with the receiver's context,
+    returning nil if fn is nil (for consistency with other implementations in
+    this package), note that a Init node must have already been ticked on all
+    possible execution paths, or a panic may occur, due to fn being passed a nil
+    context.Context
+
+func (c *Context) WithCancel(parent context.Context) *Context
+    WithCancel configures the receiver to initialise context like
+    context.WithCancel(parent), returning the receiver
+
+func (c *Context) WithDeadline(parent context.Context, deadline time.Time) *Context
+    WithDeadline configures the receiver to initialise context like
+    context.WithDeadline(parent, deadline), returning the receiver
+
+func (c *Context) WithTimeout(parent context.Context, timeout time.Duration) *Context
+    WithTimeout configures the receiver to initialise context like
+    context.WithTimeout(parent, timeout), returning the receiver
+
+type Frame struct {
+	// PC is the program counter for the location in this frame.
+	// For a frame that calls another frame, this will be the
+	// program counter of a call instruction. Because of inlining,
+	// multiple frames may have the same PC value, but different
+	// symbolic information.
+	PC uintptr
+	// Function is the package path-qualified function name of
+	// this call frame. If non-empty, this string uniquely
+	// identifies a single function in the program.
+	// This may be the empty string if not known.
+	Function string
+	// File and Line are the file name and line number of the
+	// location in this frame. For non-leaf frames, this will be
+	// the location of a call. These may be the empty string and
+	// zero, respectively, if not known.
+	File string
+	Line int
+	// Entry point program counter for the function; may be zero
+	// if not known.
+	Entry uintptr
+}
+    Frame is a partial copy of runtime.Frame.
+
+    This packages captures details about the caller of it's New and NewNode
+    functions, embedding them into the nodes themselves, for tree printing /
+    tracing purposes.
+
+func GetFrame(n Valuer) *Frame
+    GetFrame retrieves the attached frame from the Valuer, or nil if not
+    present.
+
+    This helper facilitates interoperability with external implementations of
+    the Valuer interface.
+
+func NewFrame(v runtime.Frame) Frame
+    NewFrame is an optional factory function initialize a Frame from a
+    runtime.Frame.
+
+type Manager interface {
+	Ticker
+
+	// Add will register a new ticker under this manager
+	Add(ticker Ticker) error
+}
+    Manager models an aggregate Ticker, which should stop gracefully on the
+    first failure
+
+func NewManager() Manager
+    NewManager will construct an implementation of the Manager interface,
+    which is a stateful set of Ticker implementations, aggregating the behavior
+    such that the Done channel will close when ALL tickers registered with Add
+    are done, Err will return a combined error if there are any, and Stop will
+    stop all registered tickers.
+
+    Note that any error (of any registered tickers) will also trigger stopping,
+    and stopping will prevent further Add calls from succeeding.
+
+    As of v1.8.0, any (combined) ticker error returned by the Manager can now
+    support error chaining (i.e. the use of errors.Is). Note that errors.Unwrap
+    isn't supported, since there may be more than one. See also Manager.Err and
+    Manager.Add.
+
+type Metadata interface {
+	Valuer
+
+	// Children yields the logical children of this metadata node.
+	// Returning false from the yield function stops iteration.
+	Children(yield func(Metadata) bool)
+}
+    Metadata represents the "conceptual" structure of a behavior tree or
+    subtree, which may or may not correspond to actual Node instances.
+
+    This interface allows for efficient traversal and introspection of tree
+    structures without necessarily incurring the overhead of Node.Value for
+    every single node, effectively allowing whole subtrees to be "virtualized"
+    or generated on demand.
+
+    Note: Node implements this interface.
+
+type Node func() (Tick, []Node)
+    Node represents an node in a tree, that can be ticked
+
+func New(tick Tick, children ...Node) Node
+    New constructs a new behavior tree and is equivalent to NewNode with vararg
+    support for less indentation
+
+func NewNode(tick Tick, children []Node) Node
+    NewNode constructs a new node out of a tick and children
+
+func Sync(nodes []Node) []Node
+    Sync will wrap a set of nodes in such a way that their real ticks will only
+    be triggered when either the node being ticked was previously running, or no
+    other nodes are running, synchronising calling their Node and Tick calls.
+
+    NOTE the Memorize function provides similar functionality, and should be
+    preferred, where both are suitable.
+
+func (n Node) Children(yield func(Metadata) bool)
+    Children yields the logical children of the node.
+
+    It prefers Node.Structure (logical children) over physical node expansion
+    if present. This allows for rich, efficient introspection of complex or
+    stateful trees.
+
+func (n Node) Frame() *Frame
+    Frame will return the call frame for the caller of New/NewNode, an
+    approximation based on the receiver, or nil.
+
+    This method uses the Value mechanism and is subject to the same warnings /
+    performance limitations.
+
+func (n Node) Name() string
+    Name returns the name value of the node, or an empty string.
+
+func (n Node) String() string
+    String implements fmt.Stringer using DefaultPrinter
+
+func (n Node) Structure() iter.Seq[Metadata]
+    Structure returns the structure value of the node, or nil.
+
+    A nil return indicates that no structure value was attached (and typically
+    the walker should fall back to expansion). A non-nil empty sequence
+    indicates that the structure is explicitly empty.
+
+func (n Node) Tick() (Status, error)
+    Tick runs the node's tick function with its children
+
+func (n Node) Value(key any) any
+    Value will return the value associated with this node for key, or nil if
+    there is none.
+
+    See also Node.WithValue, as well as the value mechanism provided by the
+    context package.
+
+func (n Node) WithFrame(frame *Frame) Node
+    WithFrame returns a copy of the receiver, wrapped with the frame attached.
+
+func (n Node) WithName(name string) Node
+    WithName returns a copy of the receiver, wrapped with the name value
+    attached, for access via Node.Name.
+
+func (n Node) WithStructure(children iter.Seq[Metadata]) Node
+    WithStructure returns a copy of the receiver, wrapped with the structure
+    value attached, for access via Node.Structure.
+
+    Structure provides the "logical" children of a node, allowing the tree's
+    conceptual structure to differ from its physical implementation (closures).
+    This is useful for:
+      - Decorators or wrappers that should appear as a single node or
+        transparent.
+      - Complex leaf nodes (like FSMs) that want to expose internal state as a
+        subtree.
+      - Optimizing traversal by providing a Metadata sequence that avoids the
+        Node.Value lock overhead for children.
+
+    Passing a nil sequence will cause Node.Structure to return nil, clearing any
+    previous structure and reverting to physical node expansion. To explicitly
+    mask children (making the node appear as a leaf), pass an empty sequence:
+    func(yield func(Metadata) bool) {}.
+
+func (n Node) WithValue(key, value any) Node
+    WithValue will return the receiver wrapped with a key-value pair, using
+    similar semantics to the context package.
+
+    Values should only be used to attach information to BTs in a way that
+    transits API boundaries, not for passing optional parameters to functions.
+    Some package-level synchronisation was necessary to facilitate this
+    mechanism. As such, this and the Node.Value method should be used with
+    caution, preferably only outside normal operation.
+
+    The same restrictions on the key apply as for context.WithValue.
+
+type Printer interface {
+	// Fprint writes a representation node to output
+	Fprint(output io.Writer, node Node) error
+}
+    Printer models something providing behavior tree printing capabilities
+
+var (
+	// DefaultPrinter is used to implement Node.String
+	DefaultPrinter Printer = TreePrinter{
+		Inspector: DefaultPrinterInspector,
+		Formatter: DefaultPrinterFormatter,
+	}
+)
+type Status int
+    Status is a type with three valid values, Running, Success, and Failure,
+    the three possible states for BTs
+
+const (
+
+	// Running indicates that the Tick for a given Node is currently running
+	Running Status
+	// Success indicates that the Tick for a given Node completed successfully
+	Success
+	// Failure indicates that the Tick for a given Node failed to complete successfully
+	Failure
+)
+func (s Status) Status() Status
+    Status returns the status value, but defaults to failure on out of bounds
+
+func (s Status) String() string
+    String returns a string representation of the status
+
+type Tick func(children []Node) (Status, error)
+    Tick represents the logic for a node, which may or may not be stateful
+
+func Any(tick Tick) Tick
+    Any wraps a tick such that non-error non-running statuses will be overridden
+    with a success if at least one child succeeded - which is achieved by
+    encapsulation of children, before passing them into the wrapped tick.
+    Nil will be returned if tick is nil, and nil children will be passed through
+    as such.
+
+func Async(tick Tick) Tick
+    Async wraps a tick so that it runs asynchronously, note nil ticks will
+    return nil
+
+func Background(tick func() Tick) Tick
+    Background pushes running nodes into the background, allowing multiple
+    concurrent ticks (potentially running independent children, depending on the
+    behavior of the node). It accepts a tick via closure, in order to support
+    stateful ticks. On tick, backgrounded nodes are ticked from oldest to
+    newest, until the first non-running status is returned, which will trigger
+    removal from the backgrounded node list, and propagating status and any
+    error, without modification. All other normal operation will result in a
+    new node being generated and ticked, backgrounding it on running, otherwise
+    discarding the node and propagating it's return values immediately.
+    Passing a nil value will cause nil to be returned. WARNING there is no
+    upper bound to the number of backgrounded nodes (the caller must manage that
+    externally).
+
+func Fork() Tick
+    Fork generates a stateful Tick which will tick all children at once,
+    returning after all children return a result, returning running if any
+    children did so, and ticking only those which returned running in subsequent
+    calls, until all children have returned a non-running status, combining any
+    errors, and returning success if there were no failures or errors (otherwise
+    failure), repeating this cycle for subsequent ticks
+
+func Memorize(tick Tick) Tick
+    Memorize encapsulates a tick, and will cache the first non-running status
+    for each child, per "execution", defined as the period until the first
+    non-running status, of the encapsulated tick, facilitating execution of
+    asynchronous nodes in serial with their siblings, using stateless tick
+    implementations, such as sequence and selector.
+
+    Sync provides a similar but more flexible mechanism, at the expense of
+    greater complexity, and more cumbersome usage. Sync supports modification
+    of children mid-execution, and may be used to implement complex guarding
+    behavior as children of a single Tick, equivalent to more complex structures
+    using multiple memorized sequence nodes.
+
+func Not(tick Tick) Tick
+    Not inverts a Tick, such that any failure cases will be success and success
+    cases will be failure, note that any error or invalid status will still
+    result in a failure
+
+func RateLimit(d time.Duration) Tick
+    RateLimit generates a stateful Tick that will return success at most once
+    per a given duration
+
+func Shuffle(tick Tick, source rand.Source) Tick
+    Shuffle implements randomised child execution order via encapsulation,
+    using the provided source to shuffle the children prior to passing through
+    to the provided tick (a nil source will use global math/rand), note that
+    this function will return nil if a nil tick is provided
+
+func (t Tick) Frame() *Frame
+    Frame will return an approximation of a call frame based on the receiver,
+    or nil.
+
+type Ticker interface {
+	// Done will close when the ticker is fully stopped.
+	Done() <-chan struct{}
+
+	// Err will return any error that occurs.
+	Err() error
+
+	// Stop shutdown the ticker asynchronously.
+	Stop()
+}
+    Ticker models a node runner
+
+func NewTicker(ctx context.Context, duration time.Duration, node Node) Ticker
+    NewTicker constructs a new Ticker, which simply uses time.Ticker to tick
+    the provided node periodically, note that a panic will occur if ctx is nil,
+    duration is <= 0, or node is nil.
+
+    The node will tick until the first error or Ticker.Stop is called,
+    or context is canceled, after which any error will be made available
+    via Ticker.Err, before closure of the done channel, indicating that all
+    resources have been freed, and any error is available.
+
+func NewTickerStopOnFailure(ctx context.Context, duration time.Duration, node Node) Ticker
+    NewTickerStopOnFailure returns a new Ticker that will exit on the first
+    Failure, but won't return a non-nil Err UNLESS there was an actual error
+    returned, it's built on top of the same core implementation provided by
+    NewTicker, and uses that function directly, note that it will panic if the
+    node is nil, the panic cases for NewTicker also apply.
+
+type TreePrinter struct {
+	// Inspector configures the meta and value for a node with a given tick
+	Inspector func(node Node, tick Tick) (meta []any, value any)
+	// Formatter initialises a new printer tree and returns it as a TreePrinterNode
+	Formatter func() TreePrinterNode
+}
+    TreePrinter provides a generalised implementation of Printer used as the
+    DefaultPrinter
+
+func (p TreePrinter) Fprint(output io.Writer, node Node) error
+    Fprint implements Printer.Fprint
+
+type TreePrinterNode interface {
+	// Add should wire up a new node to the receiver then return it
+	Add(meta []any, value any) TreePrinterNode
+	// Bytes should encode the node and all children in preparation for use within TreePrinter
+	Bytes() []byte
+}
+    TreePrinterNode models a BT node for printing and is used by the TreePrinter
+    implementation in this package
+
+func DefaultPrinterFormatter() TreePrinterNode
+    DefaultPrinterFormatter is used by DefaultPrinter
+
+type ValueAttachable[T any] interface {
+	WithValue(key, value any) T
+}
+    ValueAttachable is an interface for types that support attaching key-value
+    pairs.
+
+    This interface along with Valuer allows for generic handling of key-value
+    attachments without tying to a specific implementation. It is intended
+    for implementation of context.Context-style `With*` and `Get*` exported
+    functions, used to keep the keys private while allowing external packages to
+    attach and retrieve values.
+
+    Note: Node implements this interface.
+
+type ValueProvider interface {
+	// Value returns the value associated with the key, or (nil, false) if not found.
+	Value(key any) (any, bool)
+}
+    ValueProvider defines a mechanism to provide values for specific keys.
+
+func UseFrame(frame *Frame) ValueProvider
+    UseFrame returns a ValueProvider that provides the given frame.
+
+    If frame is nil, it provides an interface nil for the frame key.
+
+func UseName(name string) ValueProvider
+    UseName returns a ValueProvider that provides the given name.
+
+    Passing an empty string will "zero" the name value, effectively clearing any
+    previous name.
+
+func UseStructure(children iter.Seq[Metadata]) ValueProvider
+    UseStructure returns a ValueProvider that provides the given structure.
+
+    Passing a nil sequence will attach a nil value, effectively clearing any
+    previous structure. To explicitly mask children (making it appear as a
+    leaf), pass an empty sequence.
+
+type ValueProviderFunc func(key any) (any, bool)
+    ValueProviderFunc is a function type that implements ValueProvider.
+
+func (f ValueProviderFunc) Value(key any) (any, bool)
+    Value implements the ValueProvider interface.
+
+type ValueProviders []ValueProvider
+    ValueProviders is a slice of ValueProvider that implements ValueProvider
+    itself. It iterates over the providers in order and returns the first found
+    value.
+
+func (v ValueProviders) Value(key any) (any, bool)
+    Value implements the ValueProvider interface.
+
+type Valuer interface {
+	// Value returns the value associated with the given key, or nil if not present.
+	// This loosely corresponds to [context.Context]'s `Value` method.
+	Value(key any) any
+}
+    Valuer is an interface for types that can return values associated with
+    keys.
+
+    This interface along with ValueAttachable allows for generic handling of
+    key-value attachments without tying to a specific implementation. It is
+    intended for implementation of context.Context-style `With*` and `Get*`
+    exported functions, used to keep the keys private while allowing external
+    packages to attach and retrieve values.
+
+    Note: Node implements this interface.
+
