@@ -1,6 +1,6 @@
 module github.com/joeycumines/go-pabt
 
-go 1.25.6
+go 1.26.4
 
 require (
 	github.com/gdamore/tcell/v2 v2.1.0
