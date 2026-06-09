@@ -25,6 +25,7 @@ import (
 	bt "github.com/joeycumines/go-behaviortree"
 	"github.com/joeycumines/go-pabt/examples/tcell-pick-and-place/logic"
 	"github.com/joeycumines/go-pabt/examples/tcell-pick-and-place/sim"
+	"github.com/joeycumines/go-pabt/pabtdebug"
 	"io"
 	"io/ioutil"
 	"log"
@@ -46,10 +47,12 @@ func run(cmd string, args []string) (exitCode int) {
 		logfile  stringFlag
 		exit     bool
 		scenario stringFlag
+		debug    stringFlag
 	)
 	flags.Var(&logfile, `logfile`, `write log output to file`)
 	flags.BoolVar(&exit, `exit`, false, `exit once all plans succeed`)
 	flags.Var(&scenario, `scenario`, `specify scenario as one of (static, human-vs-robot) [default=static]`)
+	flags.Var(&debug, `debug`, `start debug server at given address (e.g. :8080)`)
 	if err := flags.Parse(args); err != nil {
 		return 1
 	}
@@ -160,31 +163,54 @@ func run(cmd string, args []string) (exitCode int) {
 			wg.Wait()
 			close(wgDone)
 		}()
+
+		var debugServer *pabtdebug.Server
 		for i, actor := range planConfig.Actors {
 			var (
-				name   = fmt.Sprintf(`actors[%d]`, i)
-				plan   = logic.PickAndPlace(ctx, simulation, actor)
-				ticker = newTicker(ctx, time.Millisecond*10, bt.New(
-					// if exit is true then this ticker will exit as soon as the bt succeeds
-					bt.Not(bt.All),
+				name      = fmt.Sprintf(`actors[%d]`, i)
+				pnpResult = logic.PickAndPlace(ctx, simulation, actor)
+				planNode = pnpResult.Node
+			)
+
+			if debug != `` && i == 0 {
+				tracker := pabtdebug.NewTracker(pnpResult.Plan)
+				planNode = bt.New(func(children []bt.Node) (bt.Status, error) {
+					status, err := pnpResult.Node.Tick()
+					tracker.Track(status, err)
+					return status, err
+				})
+				debugServer = pabtdebug.NewServer(tracker, string(debug))
+				go func() {
+					log.Printf("debug server: %s", debugServer.Start())
+				}()
+			} else if debug != `` {
+				tracker := pabtdebug.NewTracker(pnpResult.Plan)
+				origNode := planNode
+				planNode = bt.New(func(children []bt.Node) (bt.Status, error) {
+					status, err := origNode.Tick()
+					tracker.Track(status, err)
+					return status, err
+				})
+			}
+
+			ticker := newTicker(ctx, time.Millisecond*10, bt.New(
+				bt.Not(bt.All),
+				bt.New(
+					bt.Selector,
 					bt.New(
-						bt.Selector,
-						bt.New(
-							bt.Sequence,
-							plan,
-							bt.New(func([]bt.Node) (bt.Status, error) {
-								log.Printf("tick success for %s\n", name)
-								return bt.Success, nil
-							}),
-						),
+						bt.Sequence,
+						planNode,
 						bt.New(func([]bt.Node) (bt.Status, error) {
-							log.Printf("tick failure for %s\n", name)
-							return bt.Failure, nil
+							log.Printf("tick success for %s\n", name)
+							return bt.Success, nil
 						}),
 					),
-					//bt.New(logBT(name, plan)),
-				))
-			)
+					bt.New(func([]bt.Node) (bt.Status, error) {
+						log.Printf("tick failure for %s\n", name)
+						return bt.Failure, nil
+					}),
+				),
+			))
 			log.Printf("plan started for %s\n", name)
 			if err := manager.Add(ticker); err != nil {
 				panic(err)
@@ -220,6 +246,9 @@ func run(cmd string, args []string) (exitCode int) {
 			manager.Stop()
 			<-managerDone
 			<-wgDone
+			if debugServer != nil {
+				debugServer.Close()
+			}
 		}()
 	}
 

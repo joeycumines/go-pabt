@@ -405,3 +405,26 @@ func Test_node_append_panic(t *testing.T) {
 	(&node[Condition]{node: func() (bt.Tick, []bt.Node) { panic(`unexpected call`) }}).append(nil)
 	t.Error(`expected panic`)
 }
+
+func Test_node_copy(t *testing.T) {
+	src := &node[Condition]{
+		typ:    NodeTypeGoalRoot,
+		status: &NodeStatus{},
+	}
+	src.status.SetTickCount(3)
+	src.status.SetLastStatus(bt.Success)
+	dst := new(node[Condition]).copy(src)
+
+	if dst.typ != NodeTypeGoalRoot {
+		t.Errorf("dst.typ = %v, want NodeTypeGoalRoot", dst.typ)
+	}
+	if dst.status == nil {
+		t.Fatal("dst.status is nil")
+	}
+	if dst.status.TickCount() != 3 {
+		t.Errorf("dst.status.TickCount() = %d, want 3", dst.status.TickCount())
+	}
+	if dst.status.LastStatus() != bt.Success {
+		t.Errorf("dst.status.LastStatus() = %v, want Success", dst.status.LastStatus())
+	}
+}

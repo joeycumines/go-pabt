@@ -108,17 +108,17 @@ func TestNew_initialStructure(t *testing.T) {
 		{
 			Name:   `nil goal`,
 			Goal:   nil,
-			String: "[0x1 util.go:142 0x2 sequence.go:21]  GoalRoot | github.com/joeycumines/go-behaviortree.Sequence",
+			String: "[0x1 util.go:161 0x2 sequence.go:21]  GoalRoot | github.com/joeycumines/go-behaviortree.Sequence",
 		},
 		{
 			Name:   `case 0`,
 			Goal:   []IConditions{},
-			String: "[0x1 util.go:142 0x2 sequence.go:21]  GoalRoot | github.com/joeycumines/go-behaviortree.Sequence",
+			String: "[0x1 util.go:161 0x2 sequence.go:21]  GoalRoot | github.com/joeycumines/go-behaviortree.Sequence",
 		},
 		{
 			Name:   `precondition single condition`,
 			Goal:   []IConditions{{cond3}},
-			String: "[0x1 util.go:142 0x2 sequence.go:21]  GoalRoot | github.com/joeycumines/go-behaviortree.Sequence\n└── [0x3 util.go:257 0x4 util.go:257   ]  PreconditionLeaf | github.com/joeycumines/go-pabt.newConditionNode[...].func1",
+			String: "[0x1 util.go:161 0x2 sequence.go:21]  GoalRoot | github.com/joeycumines/go-behaviortree.Sequence\n└── [0x3 util.go:286 0x4 util.go:286   ]  PreconditionLeaf | github.com/joeycumines/go-pabt.newConditionNode[...].func1",
 			Plan: func(t *testing.T, p *IPlan) {
 				if p.root == nil ||
 					p.root.parent != nil ||
@@ -183,7 +183,7 @@ func TestNew_initialStructure(t *testing.T) {
 		{
 			Name:   `precondition multiple conditions`,
 			Goal:   []IConditions{{cond1, cond2, cond3}},
-			String: "[0x1 util.go:142 0x2 sequence.go:21]  GoalRoot | github.com/joeycumines/go-behaviortree.Sequence\n├── [0x3 util.go:257 0x4 util.go:257   ]  PreconditionLeaf | github.com/joeycumines/go-pabt.newConditionNode[...].func1\n├── [0x3 util.go:257 0x4 util.go:257   ]  PreconditionLeaf | github.com/joeycumines/go-pabt.newConditionNode[...].func1\n└── [0x3 util.go:257 0x4 util.go:257   ]  PreconditionLeaf | github.com/joeycumines/go-pabt.newConditionNode[...].func1",
+			String: "[0x1 util.go:161 0x2 sequence.go:21]  GoalRoot | github.com/joeycumines/go-behaviortree.Sequence\n├── [0x3 util.go:286 0x4 util.go:286   ]  PreconditionLeaf | github.com/joeycumines/go-pabt.newConditionNode[...].func1\n├── [0x3 util.go:286 0x4 util.go:286   ]  PreconditionLeaf | github.com/joeycumines/go-pabt.newConditionNode[...].func1\n└── [0x3 util.go:286 0x4 util.go:286   ]  PreconditionLeaf | github.com/joeycumines/go-pabt.newConditionNode[...].func1",
 			Plan: func(t *testing.T, p *IPlan) {
 				if p.root == nil ||
 					p.root.goal == nil ||
@@ -215,7 +215,7 @@ func TestNew_initialStructure(t *testing.T) {
 				{cond1, cond3},
 				{cond1, cond3},
 			},
-			String: "[0x1 util.go:142 0x2 selector.go:21]  GoalSelector | github.com/joeycumines/go-behaviortree.Selector\n├── [0x3 util.go:142 0x4 sequence.go:21]  PreconditionsRoot | github.com/joeycumines/go-behaviortree.Sequence\n│   └── [0x5 util.go:257 0x6 util.go:257   ]  PreconditionLeaf | github.com/joeycumines/go-pabt.newConditionNode[...].func1\n├── [0x3 util.go:142 0x4 sequence.go:21]  PreconditionsRoot | github.com/joeycumines/go-behaviortree.Sequence\n│   ├── [0x5 util.go:257 0x6 util.go:257   ]  PreconditionLeaf | github.com/joeycumines/go-pabt.newConditionNode[...].func1\n│   └── [0x5 util.go:257 0x6 util.go:257   ]  PreconditionLeaf | github.com/joeycumines/go-pabt.newConditionNode[...].func1\n└── [0x3 util.go:142 0x4 sequence.go:21]  PreconditionsRoot | github.com/joeycumines/go-behaviortree.Sequence\n    ├── [0x5 util.go:257 0x6 util.go:257   ]  PreconditionLeaf | github.com/joeycumines/go-pabt.newConditionNode[...].func1\n    └── [0x5 util.go:257 0x6 util.go:257   ]  PreconditionLeaf | github.com/joeycumines/go-pabt.newConditionNode[...].func1",
+			String: "[0x1 util.go:161 0x2 selector.go:21]  GoalSelector | github.com/joeycumines/go-behaviortree.Selector\n├── [0x3 util.go:161 0x4 sequence.go:21]  PreconditionsRoot | github.com/joeycumines/go-behaviortree.Sequence\n│   └── [0x5 util.go:286 0x6 util.go:286   ]  PreconditionLeaf | github.com/joeycumines/go-pabt.newConditionNode[...].func1\n├── [0x3 util.go:161 0x4 sequence.go:21]  PreconditionsRoot | github.com/joeycumines/go-behaviortree.Sequence\n│   ├── [0x5 util.go:286 0x6 util.go:286   ]  PreconditionLeaf | github.com/joeycumines/go-pabt.newConditionNode[...].func1\n│   └── [0x5 util.go:286 0x6 util.go:286   ]  PreconditionLeaf | github.com/joeycumines/go-pabt.newConditionNode[...].func1\n└── [0x3 util.go:161 0x4 sequence.go:21]  PreconditionsRoot | github.com/joeycumines/go-behaviortree.Sequence\n    ├── [0x5 util.go:286 0x6 util.go:286   ]  PreconditionLeaf | github.com/joeycumines/go-pabt.newConditionNode[...].func1\n    └── [0x5 util.go:286 0x6 util.go:286   ]  PreconditionLeaf | github.com/joeycumines/go-pabt.newConditionNode[...].func1",
 			Plan: func(t *testing.T, p *IPlan) {
 				if p.root == nil ||
 					p.root.parent != nil ||

@@ -141,7 +141,16 @@ type (
 		// tick will be set for all group nodes
 		tick bt.Tick
 
-		// these node links form the actual tree
+	// typ is the explicit node type, set at construction time, used by nodeType() as a fast path
+	// before falling back to heuristic detection. This field survives copy() and tree mutations,
+	// unlike the heuristic which relies on context pointers that become stale.
+	typ NodeType
+
+		status *NodeStatus
+
+		frame *FrameInfo
+
+	// these node links form the actual tree
 
 		parent, first, last, prev, next *node[T]
 	}
@@ -226,11 +235,17 @@ func (p *Plan[T]) Running() bool {
 }
 
 func (p *Plan[T]) init() (err error) {
-	p.root = &node[T]{goal: &goal[T]{state: p.state, running: &p.running}}
+	p.root = &node[T]{goal: &goal[T]{state: p.state, running: &p.running}, status: &NodeStatus{}}
 	p.root.goal.root = p.root
 	p.root.goal.or, err = p.root.generateOr(p.goal)
 	if err != nil {
 		p.root = nil
+		return
+	}
+	if len(p.root.goal.or) > 1 {
+		p.root.typ = NodeTypeGoalSelector
+	} else {
+		p.root.typ = NodeTypeGoalRoot
 	}
 	return
 }
@@ -245,6 +260,12 @@ func (p *Plan[T]) bt() (bt.Tick, []bt.Node) {
 		tick, children = node.bt()()
 	)
 	return func(children []bt.Node) (status bt.Status, err error) {
+		defer func() {
+			if p.root != nil && p.root.status != nil {
+				p.root.status.IncrTickCount()
+				p.root.status.SetLastStatus(status)
+			}
+		}()
 		p.running = false
 		status, err = tick(children)
 		if err != nil || status != bt.Failure {

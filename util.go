@@ -23,6 +23,20 @@ import (
 	bt "github.com/joeycumines/go-behaviortree"
 )
 
+func captureFrame(n bt.Node) *FrameInfo {
+	if n == nil {
+		return nil
+	}
+	if f := bt.GetFrame(n); f != nil {
+		return &FrameInfo{
+			File:     f.File,
+			Line:     f.Line,
+			Function: f.Function,
+		}
+	}
+	return nil
+}
+
 func (n *node[T]) append(next *node[T], children ...*node[T]) {
 	if n.node != nil {
 		panic(fmt.Errorf(`pabt: invalid append`))
@@ -80,6 +94,7 @@ func (n *node[T]) generateOr(goal []Conditions[T]) (or []*preconditions[T], err 
 		n.tick = bt.Sequence
 	case 1:
 		n.preconditions = &preconditions[T]{root: n}
+		n.typ = NodeTypePreconditionsRoot
 		or = []*preconditions[T]{n.preconditions}
 	default:
 		n.tick = bt.Selector
@@ -89,6 +104,7 @@ func (n *node[T]) generateOr(goal []Conditions[T]) (or []*preconditions[T], err 
 				ppa:           n.ppa,
 				action:        n.action,
 				preconditions: &preconditions[T]{},
+				typ:           NodeTypePreconditionsRoot,
 			}
 			node.preconditions.root = node
 			n.append(nil, node)
@@ -127,9 +143,12 @@ func (n *node[T]) generateAnd(conditions Conditions[T]) (and map[any]*preconditi
 			action:        n.action,
 			preconditions: n.preconditions,
 			precondition:  &precondition[T]{condition: condition},
+			typ:           NodeTypePreconditionLeaf,
+			status:        &NodeStatus{},
 		}
 		node.precondition.root = node
-		node.node = newConditionNode(n.goal.state, key, condition.Match, &node.precondition.status)
+		node.node = newConditionNode(n.goal.state, key, condition.Match, &node.precondition.status, node.status)
+		node.frame = captureFrame(node.node)
 		n.append(nil, node)
 		and[key] = node.precondition
 	}
@@ -141,7 +160,6 @@ func (n *node[T]) bt() (node bt.Node) {
 	if node == nil {
 		node = n.group
 	} else {
-		// Wrap leaf node to register ValueProviders
 		orig := node
 		node = func() (bt.Tick, []bt.Node) {
 			bt.UseValueProviders(
@@ -173,6 +191,8 @@ func (n *node[T]) Value(key any) any {
 	switch key.(type) {
 	case nodeInfoKey:
 		return n.buildNodeInfo()
+	case statusKey:
+		return n.status
 	}
 	return nil
 }
@@ -206,10 +226,18 @@ func (n *node[T]) buildNodeInfo() *NodeInfo {
 		info.Effects = n.buildEffects()
 	}
 
+	// Capture frame info for leaf nodes
+	if n.frame != nil {
+		info.Frame = n.frame
+	}
+
 	return info
 }
 
 func (n *node[T]) nodeType() NodeType {
+	if n.typ != NodeTypeUnknown {
+		return n.typ
+	}
 	switch {
 	case n.goal != nil && n.goal.root == n:
 		if len(n.goal.or) > 1 {
@@ -253,6 +281,7 @@ func newConditionNode[T Condition](
 	key any,
 	match func(value any) bool,
 	outcome *bt.Status,
+	nodeStatus *NodeStatus,
 ) bt.Node {
 	return bt.New(func([]bt.Node) (status bt.Status, err error) {
 		var value any
@@ -263,13 +292,16 @@ func newConditionNode[T Condition](
 			status = bt.Failure
 		}
 		*outcome = status
+		if nodeStatus != nil {
+			nodeStatus.IncrTickCount()
+			nodeStatus.SetLastStatus(status)
+		}
 		return
 	})
 }
 
 // copy updates all fields of the receiver from src except the tree links then returns the receiver
 func (n *node[T]) copy(src *node[T]) *node[T] {
-	// TODO test
 	n.goal = src.goal
 	n.ppa = src.ppa
 	n.action = src.action
@@ -277,6 +309,9 @@ func (n *node[T]) copy(src *node[T]) *node[T] {
 	n.precondition = src.precondition
 	n.node = src.node
 	n.tick = src.tick
+	n.typ = src.typ
+	n.status = src.status
+	n.frame = src.frame
 	return n
 }
 func (n *node[T]) search() (*precondition[T], bool) {
@@ -313,9 +348,14 @@ func (p *precondition[T]) expand() (err error) {
 			post: new(node[T]).copy(p.root),
 		},
 		tick: bt.Selector,
+		typ:  NodeTypePPARoot,
 	})
+	p.root.status = &NodeStatus{}
 	// first child of the selector is the post-condition
 	p.root.append(nil, p.root.ppa.post)
+	p.root.ppa.post.ppa = p.root.ppa
+	p.root.ppa.post.typ = NodeTypePPAPost
+	p.root.ppa.post.status = &NodeStatus{}
 
 	// need to build all actions as their own trees first
 	for _, act := range acts {
@@ -335,6 +375,7 @@ func (p *precondition[T]) expand() (err error) {
 			goal: p.root.goal,
 			ppa:  p.root.ppa,
 			tick: bt.Memorize(bt.Selector),
+			typ:  NodeTypeActionSelector,
 		}
 		for _, act := range p.root.ppa.actions {
 			node.append(nil, act.root)
@@ -379,12 +420,16 @@ func (n *node[T]) generateAction(post Condition, act Action[T]) (ok bool, err er
 	if actNode := act.Node(); actNode == nil {
 		return false, fmt.Errorf(`pabt: invalid action`)
 	} else {
-		actNode = wrapActionNodeHandleSetRunning(n.goal.running, actNode)
+		actionStatus := &NodeStatus{}
+		actNode = wrapActionNodeHandleSetRunning(n.goal.running, actNode, actionStatus)
 		r.node = &node[T]{
 			goal:   n.goal,
 			ppa:    n.ppa,
 			action: r,
 			node:   actNode,
+			typ:    NodeTypeActionNode,
+			status: actionStatus,
+			frame:  captureFrame(actNode),
 		}
 	}
 
@@ -393,6 +438,7 @@ func (n *node[T]) generateAction(post Condition, act Action[T]) (ok bool, err er
 		goal:   n.goal,
 		ppa:    n.ppa,
 		action: r,
+		typ:    NodeTypeActionRoot,
 	}
 	r.or, err = r.root.generateOr(act.Conditions())
 	if err != nil {
@@ -411,6 +457,7 @@ func (n *node[T]) generateAction(post Condition, act Action[T]) (ok bool, err er
 			ppa:    n.ppa,
 			action: r,
 			tick:   bt.Sequence,
+			typ:    NodeTypeActionRoot,
 		}
 		r.root.append(nil, condRoot)
 	}
@@ -528,7 +575,7 @@ func (p *ppa[T]) conflicts(o *ppa[T]) bool {
 	return false
 }
 
-func wrapActionNodeHandleSetRunning(running *bool, actNode bt.Node) bt.Node {
+func wrapActionNodeHandleSetRunning(running *bool, actNode bt.Node, nodeStatus *NodeStatus) bt.Node {
 	return func() (bt.Tick, []bt.Node) {
 		tick, children := actNode()
 		if tick == nil {
@@ -539,6 +586,10 @@ func wrapActionNodeHandleSetRunning(running *bool, actNode bt.Node) bt.Node {
 			if err == nil && status == bt.Running {
 				*running = true
 			}
+		if nodeStatus != nil {
+			nodeStatus.IncrTickCount()
+			nodeStatus.SetLastStatus(status)
+		}
 			return
 		}, children
 	}

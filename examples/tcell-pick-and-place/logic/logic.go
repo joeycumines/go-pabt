@@ -110,7 +110,16 @@ var (
 	_ pabt.IState = (*pickAndPlace)(nil)
 )
 
-func PickAndPlace(ctx context.Context, simulation sim.Simulation, actor sim.Actor) bt.Node {
+// PickAndPlaceResult holds the plan and its root behavior tree node.
+type PickAndPlaceResult struct {
+	Plan *pabt.IPlan
+	Node bt.Node
+}
+
+// PickAndPlace creates a PA-BT plan for the given actor to pick and place
+// objects according to their criteria. It returns both the plan (for
+// introspection/debugging) and the behavior tree node (for ticking).
+func PickAndPlace(ctx context.Context, simulation sim.Simulation, actor sim.Actor) PickAndPlaceResult {
 	state := &pickAndPlace{
 		ctx:        ctx,
 		simulation: simulation,
@@ -144,7 +153,7 @@ func PickAndPlace(ctx context.Context, simulation sim.Simulation, actor sim.Acto
 		panic(err)
 	}
 
-	return plan.Node()
+	return PickAndPlaceResult{Plan: plan, Node: plan.Node()}
 }
 
 func (p *pickAndPlace) Variable(key any) (any, error) {

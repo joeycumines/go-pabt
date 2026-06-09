@@ -261,3 +261,217 @@ func TestMetadata_WalkIntegration(t *testing.T) {
 	// Log the types found for debugging
 	t.Logf("Found %d nodes with metadata: %v", len(nodeTypes), nodeTypes)
 }
+
+func TestWalk(t *testing.T) {
+	state := &mockState{
+		variable: func(key any) (any, error) {
+			return "expected", nil
+		},
+		actions: func(failed Condition) ([]IAction, error) {
+			return nil, nil
+		},
+	}
+	cond := &mockCondition{
+		key:   func() any { return "test_key" },
+		match: func(value any) bool { return value == "expected" },
+	}
+
+	plan, err := INew(state, []IConditions{{cond}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var count int
+	Walk(plan.Node(), func(info *NodeInfo) bool {
+		count++
+		return true
+	})
+	if count == 0 {
+		t.Error("Walk should find at least one node with metadata")
+	}
+}
+
+func TestWalk_EarlyExit(t *testing.T) {
+	state := &mockState{
+		variable: func(key any) (any, error) {
+			return "expected", nil
+		},
+		actions: func(failed Condition) ([]IAction, error) {
+			return nil, nil
+		},
+	}
+	cond := &mockCondition{
+		key:   func() any { return "test_key" },
+		match: func(value any) bool { return value == "expected" },
+	}
+
+	plan, err := INew(state, []IConditions{{cond}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var count int
+	Walk(plan.Node(), func(info *NodeInfo) bool {
+		count++
+		return false // stop after first
+	})
+	if count != 1 {
+		t.Errorf("Walk early exit: got %d visits, want 1", count)
+	}
+}
+
+func TestGetNodeStatus(t *testing.T) {
+	state := &mockState{
+		variable: func(key any) (any, error) {
+			return "expected", nil
+		},
+		actions: func(failed Condition) ([]IAction, error) {
+			return nil, nil
+		},
+	}
+	cond := &mockCondition{
+		key:   func() any { return "test_key" },
+		match: func(value any) bool { return value == "expected" },
+	}
+
+	plan, err := INew(state, []IConditions{{cond}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	node := plan.Node()
+	status, err := node.Tick()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = status
+
+	rootStatus, ok := GetNodeStatus(node)
+	if !ok {
+		t.Fatal("expected root node to have status")
+	}
+	if rootStatus.TickCount() == 0 {
+		t.Error("expected TickCount > 0 after tick")
+	}
+
+	// Test with nil valuer
+	_, ok = GetNodeStatus(nil)
+	if ok {
+		t.Error("expected false for nil valuer")
+	}
+}
+
+func TestGetFrameInfo(t *testing.T) {
+	state := &mockState{
+		variable: func(key any) (any, error) {
+			return "expected", nil
+		},
+		actions: func(failed Condition) ([]IAction, error) {
+			return nil, nil
+		},
+	}
+	cond := &mockCondition{
+		key:   func() any { return "test_key" },
+		match: func(value any) bool { return value == "expected" },
+	}
+
+	plan, err := INew(state, []IConditions{{cond}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	node := plan.Node()
+	_, _ = node.Tick()
+
+	frameInfo := GetFrameInfo(node)
+	// Frame info may or may not be available depending on how bt.New captures it.
+	// The important thing is it doesn't panic and returns nil or a valid FrameInfo.
+	if frameInfo != nil {
+		if frameInfo.File == "" && frameInfo.Line == 0 && frameInfo.Function == "" {
+			t.Error("non-nil FrameInfo should have at least one populated field")
+		}
+	}
+}
+
+func TestGetFrameInfo_Nil(t *testing.T) {
+	if GetFrameInfo(nil) != nil {
+		t.Error("GetFrameInfo(nil) should return nil")
+	}
+}
+
+func TestNodeCount(t *testing.T) {
+	state := &mockState{
+		variable: func(key any) (any, error) {
+			return "expected", nil
+		},
+		actions: func(failed Condition) ([]IAction, error) {
+			return nil, nil
+		},
+	}
+	cond := &mockCondition{
+		key:   func() any { return "test_key" },
+		match: func(value any) bool { return value == "expected" },
+	}
+
+	plan, err := INew(state, []IConditions{{cond}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	count := NodeCount(plan.Node())
+	if count <= 0 {
+		t.Errorf("NodeCount should be > 0, got %d", count)
+	}
+}
+
+func TestNodeCount_Nil(t *testing.T) {
+	count := NodeCount(nil)
+	if count != 0 {
+		t.Errorf("NodeCount(nil) = %d, want 0", count)
+	}
+}
+
+func TestWalk_NodeTypes(t *testing.T) {
+	state := newGraphState()
+	plan, err := INew(state, state.Goal())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	node := plan.Node()
+	for i := 0; i < 10; i++ {
+		status, err := node.Tick()
+		if err != nil {
+			t.Fatalf("tick %d: %v", i, err)
+		}
+		if status != bt.Running {
+			break
+		}
+	}
+
+	var types []NodeType
+	Walk(node, func(info *NodeInfo) bool {
+		types = append(types, info.Type)
+		return true
+	})
+
+	if len(types) == 0 {
+		t.Fatal("Walk should find at least one node with metadata")
+	}
+
+	hasGoalRoot := false
+	for _, nt := range types {
+		if nt == NodeTypeGoalRoot {
+			hasGoalRoot = true
+		}
+	}
+	if !hasGoalRoot {
+		t.Errorf("expected NodeTypeGoalRoot in walked types, got %v", types)
+	}
+
+	for _, nt := range types {
+		if nt == NodeTypeUnknown {
+			t.Errorf("planner-created nodes should not have NodeTypeUnknown, got types %v", types)
+		}
+	}
+}

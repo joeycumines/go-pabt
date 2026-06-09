@@ -62,6 +62,13 @@ func (t NodeType) String() string {
 	return nodeTypeNames[0]
 }
 
+// FrameInfo holds call site information for a node.
+type FrameInfo struct {
+	File     string `json:"file"`
+	Line     int    `json:"line"`
+	Function string `json:"function,omitempty"`
+}
+
 // NodeInfo provides structured access to pabt node metadata.
 // It implements bt.Metadata for use with bt.Walk.
 type NodeInfo struct {
@@ -76,6 +83,9 @@ type NodeInfo struct {
 
 	// Effects is set for action nodes, containing the action's effects.
 	Effects Effects
+
+	// Frame holds call site information for leaf nodes, if available.
+	Frame *FrameInfo
 
 	// children yields bt.Metadata objects for Walk compatibility.
 	children iter.Seq[bt.Metadata]
@@ -159,6 +169,40 @@ func GetEffects(v bt.Valuer) (Effects, bool) {
 		return info.Effects, true
 	}
 	return nil, false
+}
+
+// GetFrameInfo retrieves the FrameInfo from a bt.Valuer, or nil if not present.
+func GetFrameInfo(v bt.Valuer) *FrameInfo {
+	if info := GetNodeInfo(v); info != nil {
+		return info.Frame
+	}
+	return nil
+}
+
+// NodeCount returns the total number of nodes in the tree rooted at node.
+// Returns 0 if node is nil.
+func NodeCount(node bt.Node) int {
+	if node == nil {
+		return 0
+	}
+	count := 0
+	bt.Walk(node, func(m bt.Metadata) bool {
+		count++
+		return true
+	})
+	return count
+}
+
+// Walk traverses the planning tree starting from node, calling fn for each node
+// that has pabt metadata. It uses bt.Walk internally. If fn returns false,
+// traversal stops.
+func Walk(node bt.Node, fn func(info *NodeInfo) bool) {
+	bt.Walk(node, func(m bt.Metadata) bool {
+		if info := GetNodeInfo(m); info != nil {
+			return fn(info)
+		}
+		return true
+	})
 }
 
 // nodeValueProvider is a type alias that makes *node[T] a bt.ValueProvider.
