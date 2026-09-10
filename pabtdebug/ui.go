@@ -493,9 +493,13 @@ body {
 
   let eventSource = null, reconnectDelay = 1000;
   let currentTree = null, selectedNodeId = null, highlightedIds = new Set();
+  const MAX_TIMELINE_EVENTS = 200;
   let timelineEvents = [], currentIteration = null;
+  let pendingTree = null, rafId = null;
   let liveMode = true, playback = false, playbackIdx = 0, playbackTimer = null;
   let pan = { x: 0, y: 0 }, zoom = 1, isDragging = false, dragStart = null, panStart = { x: 0, y: 0 };
+  let profileCache = null, profileCacheIter = null;
+  let lastSeq = 0;
 
   const svg = document.getElementById('tree-svg');
   const svgContainer = document.getElementById('svg-container');
@@ -521,17 +525,34 @@ body {
   function statusToString(s) { switch(s){ case 1: return 'Success'; case 2: return 'Failure'; case 3: return 'Running'; default: return 'Unknown'; } }
 
   function connect() {
-    const url = window.location.pathname.replace(/\/ui$/, '/0/events');
+    const url = window.location.pathname.replace(/\/ui$/, '/plans/0/events');
     eventSource = new EventSource(url);
     eventSource.onopen = function() {
       connDot.classList.add('connected');
+      connDot.style.background = '';
       connStatus.textContent = 'Connected';
       reconnectDelay = 1000;
+      lastSeq = 0;
     };
     eventSource.onmessage = function(e) {
       const event = JSON.parse(e.data);
+      if (event.seq && lastSeq > 0 && event.seq > lastSeq + 1) {
+        connDot.classList.remove('connected');
+        connDot.style.background = '#ff9800';
+        connStatus.textContent = 'Events missed (seq ' + lastSeq + ' to ' + event.seq + ')';
+      }
+      lastSeq = event.seq || 0;
       addTimelineEvent(event);
-      if (liveMode) renderTree(event.tree);
+      if (liveMode) {
+        pendingTree = event.tree;
+        if (!rafId) {
+          rafId = requestAnimationFrame(function() {
+            if (pendingTree) renderTree(pendingTree);
+            rafId = null;
+            pendingTree = null;
+          });
+        }
+      }
     };
     eventSource.onerror = function() {
       connDot.classList.remove('connected');
@@ -545,13 +566,48 @@ body {
   }
 
   function addTimelineEvent(event) {
-    timelineEvents.push(event);
+    var entry = {
+      iteration: event.iteration,
+      status: event.status,
+      durationMs: event.durationMs,
+      seq: event.seq,
+      nodeCount: event.nodeCount
+    };
+    timelineEvents.push(entry);
+    if (timelineEvents.length > MAX_TIMELINE_EVENTS) {
+      timelineEvents = timelineEvents.slice(timelineEvents.length - MAX_TIMELINE_EVENTS);
+      if (timelineList.firstChild) timelineList.removeChild(timelineList.firstChild);
+    }
     currentIteration = event.iteration;
-    renderTimeline();
+    appendTimelineRow(entry);
+    if (profileCacheIter !== currentIteration) { profileCache = null; }
     if (liveMode) {
       const rows = timelineList.querySelectorAll('.tl-row');
       if (rows.length) rows[rows.length - 1].scrollIntoView({ block: 'end' });
     }
+  }
+
+  function appendTimelineRow(ev) {
+    const row = document.createElement('div');
+    row.className = 'tl-row' + (ev.iteration === currentIteration ? ' selected' : '');
+    row.dataset.iter = ev.iteration;
+    const st = statusToString(ev.status);
+    const sc = STATUS_COLORS[ev.status] || '#888';
+    row.innerHTML = '<span class="tl-dot" style="background:' + escapeAttr(sc) + '"></span>' +
+                    '<span class="tl-iter">#' + escapeHtml(ev.iteration) + '</span>' +
+                    '<span class="tl-status" style="color:' + escapeAttr(sc) + '">' + escapeHtml(st) + '</span>' +
+                    '<span class="tl-duration">' + (ev.durationMs ? ev.durationMs.toFixed(1) + 'ms' : '') + '</span>';
+    row.addEventListener('click', function() {
+      currentIteration = ev.iteration;
+      updateTimelineSelection();
+      fetchTimelineIter(ev.iteration);
+    });
+    timelineList.appendChild(row);
+  }
+
+  function updateTimelineSelection() {
+    const rows = timelineList.querySelectorAll('.tl-row');
+    rows.forEach(function(r) { r.classList.toggle('selected', r.dataset.iter == currentIteration); });
   }
 
   function renderTimeline() {
@@ -559,6 +615,7 @@ body {
     for (const ev of timelineEvents) {
       const row = document.createElement('div');
       row.className = 'tl-row' + (ev.iteration === currentIteration ? ' selected' : '');
+      row.dataset.iter = ev.iteration;
       const st = statusToString(ev.status);
       const sc = STATUS_COLORS[ev.status] || '#888';
       row.innerHTML = '<span class="tl-dot" style="background:' + escapeAttr(sc) + '"></span>' +
@@ -567,7 +624,7 @@ body {
                       '<span class="tl-duration">' + (ev.durationMs ? ev.durationMs.toFixed(1) + 'ms' : '') + '</span>';
       row.addEventListener('click', function() {
         currentIteration = ev.iteration;
-        renderTimeline();
+        updateTimelineSelection();
         fetchTimelineIter(ev.iteration);
       });
       timelineList.appendChild(row);
@@ -576,8 +633,26 @@ body {
 
   function fetchTimelineIter(iter) {
     fetch(window.location.pathname.replace(/\/ui$/, '/timeline/' + iter))
-      .then(r => r.ok ? r.json() : null)
-      .then(data => { if (data && data.tree) renderTree(data.tree); });
+      .then(function(r) {
+        if (r.status === 404) {
+          var nodesLayer = svg.getElementById('nodes-layer');
+          var edgesLayer = svg.getElementById('edges-layer');
+          if (nodesLayer) nodesLayer.innerHTML = '';
+          if (edgesLayer) edgesLayer.innerHTML = '';
+          if (nodesLayer) {
+            var msgEl = document.createElementNS(SVG_NS, 'text');
+            msgEl.setAttribute('x', '50');
+            msgEl.setAttribute('y', '50');
+            msgEl.setAttribute('fill', '#888');
+            msgEl.setAttribute('font-size', '14');
+            msgEl.textContent = 'Tree snapshot no longer available for iteration ' + iter;
+            nodesLayer.appendChild(msgEl);
+          }
+          return null;
+        }
+        return r.ok ? r.json() : null;
+      })
+      .then(function(data) { if (data && data.tree) renderTree(data.tree); });
   }
 
   function computeLayout(node, level) {
@@ -613,25 +688,159 @@ body {
 
   function renderTree(tree) {
     if (!tree) return;
-    currentTree = tree;
-    svg.innerHTML = '';
+
+    const needsFullRebuild = currentTree === null ||
+      !svg.getElementById('nodes-layer') ||
+      currentTree.structureHash !== tree.structureHash;
+
     computeLayout(tree, 0);
     assignPositions(tree, 0);
 
-    const edgesG = document.createElementNS(SVG_NS, 'g');
-    const nodesG = document.createElementNS(SVG_NS, 'g');
-    edgesG.setAttribute('id', 'edges-layer');
-    nodesG.setAttribute('id', 'nodes-layer');
+    if (needsFullRebuild) {
+      currentTree = tree;
+      svg.innerHTML = '';
 
-    drawEdges(tree, edgesG);
-    drawNodes(tree, nodesG);
+      const edgesG = document.createElementNS(SVG_NS, 'g');
+      const nodesG = document.createElementNS(SVG_NS, 'g');
+      edgesG.setAttribute('id', 'edges-layer');
+      nodesG.setAttribute('id', 'nodes-layer');
 
-    svg.appendChild(edgesG);
-    svg.appendChild(nodesG);
+      drawEdges(tree, edgesG);
+      drawNodes(tree, nodesG);
+
+      svg.appendChild(edgesG);
+      svg.appendChild(nodesG);
+    } else {
+      const nodesG = svg.getElementById('nodes-layer');
+
+      const edgesG = svg.getElementById('edges-layer');
+      edgesG.innerHTML = '';
+      drawEdges(tree, edgesG);
+
+      diffAndUpdateNodes(tree, currentTree, nodesG);
+      currentTree = tree;
+    }
+
     updateSvgView();
     drawProfileBar();
     if (selectedNodeId) highlightNode(selectedNodeId);
     if (highlightedIds.size) highlightSearch();
+  }
+
+  function updateNodeGroup(group, newNode) {
+    const x = newNode._absX - NODE_W / 2;
+    const y = newNode._absY;
+    const typeColor = TYPE_COLORS[newNode.nodeType] || TYPE_COLORS.Unknown;
+    const status = newNode.status ? newNode.status.LastStatus : 0;
+    const statusColor = STATUS_COLORS[status] || '#555';
+    const isRunning = status === 3;
+    const hasEffects = newNode.effects && newNode.effects.length > 0;
+    const hasCondition = !!newNode.condition || !!newNode.postCondition;
+
+    group.setAttribute('class', isRunning ? 'node-running' : '');
+
+    const ring = group.querySelector('.node-ring');
+    if (ring) {
+      ring.setAttribute('x', x - 3);
+      ring.setAttribute('y', y - 3);
+    }
+
+    const rect = group.querySelector('.node-rect');
+    if (rect) {
+      rect.setAttribute('x', x);
+      rect.setAttribute('y', y);
+      rect.setAttribute('fill', typeColor);
+      if (!isRunning && status === 0) rect.setAttribute('opacity', '0.5');
+      else rect.setAttribute('opacity', '1');
+    }
+
+    const stripe = group.querySelector('.node-stripe');
+    if (stripe) {
+      stripe.setAttribute('x', x);
+      stripe.setAttribute('y', y);
+      stripe.setAttribute('fill', statusColor);
+    }
+
+    const typeText = group.querySelectorAll('.node-text')[0];
+    if (typeText) {
+      typeText.setAttribute('x', x + 10);
+      typeText.setAttribute('y', y + 18);
+      typeText.textContent = newNode.nodeType || 'Unknown';
+    }
+
+    const nameText = group.querySelectorAll('.node-text')[1];
+    if (nameText) {
+      nameText.setAttribute('x', x + 10);
+      nameText.setAttribute('y', y + 34);
+      nameText.textContent = newNode.name || '';
+    }
+
+    const existingBadges = group.querySelectorAll('.node-badge');
+    for (let i = 0; i < existingBadges.length; i++) {
+      existingBadges[i].remove();
+    }
+
+    if (hasEffects) {
+      const badge = document.createElementNS(SVG_NS, 'circle');
+      badge.setAttribute('cx', x + NODE_W - 8);
+      badge.setAttribute('cy', y + 10);
+      badge.setAttribute('r', '5');
+      badge.setAttribute('fill', '#4caf50');
+      badge.setAttribute('class', 'node-badge');
+      group.appendChild(badge);
+    }
+    if (hasCondition) {
+      const badge = document.createElementNS(SVG_NS, 'circle');
+      badge.setAttribute('cx', x + NODE_W - 8);
+      badge.setAttribute('cy', y + 22);
+      badge.setAttribute('r', '5');
+      badge.setAttribute('fill', '#00bcd4');
+      badge.setAttribute('class', 'node-badge');
+      group.appendChild(badge);
+    }
+
+    const newGroup = group.cloneNode(true);
+    group.parentNode.replaceChild(newGroup, group);
+
+    newGroup.addEventListener('click', function(e) { e.stopPropagation(); selectNode(newNode); });
+    newGroup.addEventListener('mouseenter', function(e) { showTooltip(e, newNode); });
+    newGroup.addEventListener('mouseleave', hideTooltip);
+
+    return newGroup;
+  }
+
+  function diffAndUpdateNodes(newNode, oldNode, container) {
+    if (!newNode) return;
+
+    const sid = safeId(newNode.id);
+    let existingGroup = document.getElementById(sid);
+
+    if (existingGroup && oldNode && oldNode.id === newNode.id) {
+      updateNodeGroup(existingGroup, newNode);
+
+      if (newNode.children) {
+        for (let i = 0; i < newNode.children.length; i++) {
+          const oldChild = (oldNode.children && i < oldNode.children.length) ? oldNode.children[i] : null;
+          diffAndUpdateNodes(newNode.children[i], oldChild, container);
+        }
+        if (oldNode.children) {
+          for (let i = newNode.children.length; i < oldNode.children.length; i++) {
+            const oldChildId = safeId(oldNode.children[i].id);
+            const oldChildGroup = document.getElementById(oldChildId);
+            if (oldChildGroup) oldChildGroup.remove();
+          }
+        }
+      } else if (oldNode.children) {
+        for (let i = 0; i < oldNode.children.length; i++) {
+          const oldChildId = safeId(oldNode.children[i].id);
+          const oldChildGroup = document.getElementById(oldChildId);
+          if (oldChildGroup) oldChildGroup.remove();
+        }
+      }
+    } else {
+      if (existingGroup) existingGroup.remove();
+      drawNodes(newNode, container);
+    }
   }
 
   function drawEdges(node, g) {
@@ -807,25 +1016,39 @@ body {
     if (ring) ring.classList.add('selected');
   }
 
+  function displayCachedProfile(nodeId, data) {
+    var wrap = document.getElementById('dtl-profile-wrap');
+    var prof = null;
+    for (var i = 0; i < data.length; i++) {
+      if (data[i].id === nodeId) { prof = data[i]; break; }
+    }
+    if (!prof) { wrap.style.display = 'none'; return; }
+    wrap.style.display = 'block';
+    var barMax = Math.max(prof.tickCount || 1, prof.successCount || 0, prof.failureCount || 0, prof.runningCount || 0);
+    var makeBar = function(label, val, color) {
+      var w = barMax > 0 ? Math.round((val / barMax) * 120) : 0;
+      return '<div style="display:flex;align-items:center;gap:4px;margin-bottom:3px;"><span style="width:50px;font-size:9px;color:var(--text-secondary);">' + label + '</span><div style="width:' + w + 'px;height:8px;background:' + color + ';border-radius:2px;"></div><span style="font-size:9px;">' + val + '</span></div>';
+    };
+    document.getElementById('dtl-profile').innerHTML =
+      makeBar('Ticks', prof.tickCount, '#888') +
+      makeBar('Success', prof.successCount || 0, '#4caf50') +
+      makeBar('Failure', prof.failureCount || 0, '#f44336') +
+      makeBar('Running', prof.runningCount || 0, '#ff9800');
+  }
+
   function fetchProfile(nodeId) {
-    const wrap = document.getElementById('dtl-profile-wrap');
+    var wrap = document.getElementById('dtl-profile-wrap');
+    if (profileCache && profileCacheIter === currentIteration) {
+      displayCachedProfile(nodeId, profileCache);
+      return;
+    }
     fetch(window.location.pathname.replace(/\/ui$/, '/profile'))
-      .then(r => r.ok ? r.json() : null)
-      .then(data => {
+      .then(function(r) { return r.ok ? r.json() : null; })
+      .then(function(data) {
         if (!data) { wrap.style.display = 'none'; return; }
-        const prof = data.find(p => p.id === nodeId);
-        if (!prof) { wrap.style.display = 'none'; return; }
-        wrap.style.display = 'block';
-        const barMax = Math.max(prof.tickCount || 1, prof.successCount || 0, prof.failureCount || 0, prof.runningCount || 0);
-        const makeBar = (label, val, color) => {
-          const w = barMax > 0 ? Math.round((val / barMax) * 120) : 0;
-          return '<div style="display:flex;align-items:center;gap:4px;margin-bottom:3px;"><span style="width:50px;font-size:9px;color:var(--text-secondary);">' + label + '</span><div style="width:' + w + 'px;height:8px;background:' + color + ';border-radius:2px;"></div><span style="font-size:9px;">' + val + '</span></div>';
-        };
-        document.getElementById('dtl-profile').innerHTML =
-          makeBar('Ticks', prof.tickCount, '#888') +
-          makeBar('Success', prof.successCount || 0, '#4caf50') +
-          makeBar('Failure', prof.failureCount || 0, '#f44336') +
-          makeBar('Running', prof.runningCount || 0, '#ff9800');
+        profileCache = data;
+        profileCacheIter = currentIteration;
+        displayCachedProfile(nodeId, data);
       });
   }
 
@@ -1065,7 +1288,7 @@ body {
       const ev = timelineEvents[playbackIdx];
       currentIteration = ev.iteration;
       renderTimeline();
-      if (ev.tree) renderTree(ev.tree);
+      fetchTimelineIter(ev.iteration);
       playbackIdx++;
     }, 1000 / speed);
   });
@@ -1144,6 +1367,10 @@ body {
 
   window.addEventListener('resize', function() {
     updateSvgView();
+  });
+
+  window.addEventListener('beforeunload', function() {
+    if (eventSource) eventSource.close();
   });
 
   connect();

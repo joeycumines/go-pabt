@@ -586,10 +586,10 @@ func wrapActionNodeHandleSetRunning(running *bool, actNode bt.Node, nodeStatus *
 			if err == nil && status == bt.Running {
 				*running = true
 			}
-		if nodeStatus != nil {
-			nodeStatus.IncrTickCount()
-			nodeStatus.SetLastStatus(status)
-		}
+			if nodeStatus != nil {
+				nodeStatus.IncrTickCount()
+				nodeStatus.SetLastStatus(status)
+			}
 			return
 		}, children
 	}

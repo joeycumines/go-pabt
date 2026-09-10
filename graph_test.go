@@ -188,10 +188,10 @@ func Example_graph() {
 	// sg -> s5, s3
 	// goal = sg
 	// actor = s0
-	// 
+	//
 	// [pabt.go:222 pabt.go:260]  GoalRoot | github.com/joeycumines/go-pabt.(*Plan[...]).bt.func2
 	// └── [util.go:266 util.go:266]  PreconditionLeaf | github.com/joeycumines/go-pabt.newConditionNode[...].func1
-	// 
+	//
 	// iteration = 1, status = running, err = <nil>, actor = s0
 	// [pabt.go:222       pabt.go:260   ]  GoalRoot | github.com/joeycumines/go-pabt.(*Plan[...]).bt.func2
 	// └── [util.go:146       selector.go:21]  PPARoot | github.com/joeycumines/go-behaviortree.Selector
@@ -203,7 +203,7 @@ func Example_graph() {
 	//         └── [util.go:146       sequence.go:21]  PreconditionsRoot | github.com/joeycumines/go-behaviortree.Sequence
 	//             ├── [util.go:266       util.go:266   ]  PreconditionLeaf | github.com/joeycumines/go-pabt.newConditionNode[...].func1
 	//             └── [graph_test.go:119 util.go:561    pre:s3 post:sg]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	// 
+	//
 	// iteration = 2, status = running, err = <nil>, actor = s0
 	// [pabt.go:222       pabt.go:260   ]  GoalRoot | github.com/joeycumines/go-pabt.(*Plan[...]).bt.func2
 	// └── [util.go:146       selector.go:21]  PPARoot | github.com/joeycumines/go-behaviortree.Selector
@@ -226,7 +226,7 @@ func Example_graph() {
 	//         └── [util.go:146       sequence.go:21]  PreconditionsRoot | github.com/joeycumines/go-behaviortree.Sequence
 	//             ├── [util.go:266       util.go:266   ]  PreconditionLeaf | github.com/joeycumines/go-pabt.newConditionNode[...].func1
 	//             └── [graph_test.go:119 util.go:561    pre:s3 post:sg]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	// 
+	//
 	// iteration = 3, status = running, err = <nil>, actor = s0
 	// [pabt.go:222       pabt.go:260   ]  GoalRoot | github.com/joeycumines/go-pabt.(*Plan[...]).bt.func2
 	// └── [util.go:146       selector.go:21]  PPARoot | github.com/joeycumines/go-behaviortree.Selector
@@ -260,7 +260,7 @@ func Example_graph() {
 	//             │           ├── [util.go:266       util.go:266   ]  PreconditionLeaf | github.com/joeycumines/go-pabt.newConditionNode[...].func1
 	//             │           └── [graph_test.go:119 util.go:561    pre:s1 post:s3]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
 	//             └── [graph_test.go:119 util.go:561    pre:s3 post:sg]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	// 
+	//
 	// iteration = 4, status = running, err = <nil>, actor = s0
 	// [pabt.go:222       pabt.go:260   ]  GoalRoot | github.com/joeycumines/go-pabt.(*Plan[...]).bt.func2
 	// └── [util.go:146       selector.go:21]  PPARoot | github.com/joeycumines/go-behaviortree.Selector
@@ -302,7 +302,7 @@ func Example_graph() {
 	//             │           ├── [util.go:266       util.go:266   ]  PreconditionLeaf | github.com/joeycumines/go-pabt.newConditionNode[...].func1
 	//             │           └── [graph_test.go:119 util.go:561    pre:s1 post:s3]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
 	//             └── [graph_test.go:119 util.go:561    pre:s3 post:sg]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	// 
+	//
 	// iteration = 5, status = running, err = <nil>, actor = s0
 	// [pabt.go:222       pabt.go:260   ]  GoalRoot | github.com/joeycumines/go-pabt.(*Plan[...]).bt.func2
 	// └── [util.go:146       selector.go:21]  PPARoot | github.com/joeycumines/go-behaviortree.Selector
@@ -355,7 +355,7 @@ func Example_graph() {
 	//             │           ├── [util.go:266       util.go:266   ]  PreconditionLeaf | github.com/joeycumines/go-pabt.newConditionNode[...].func1
 	//             │           └── [graph_test.go:119 util.go:561    pre:s1 post:s3]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
 	//             └── [graph_test.go:119 util.go:561    pre:s3 post:sg]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	// 
+	//
 	// iteration = 6, status = running, err = <nil>, actor = s0
 	// [pabt.go:222       pabt.go:260   ]  GoalRoot | github.com/joeycumines/go-pabt.(*Plan[...]).bt.func2
 	// └── [util.go:146       selector.go:21]  PPARoot | github.com/joeycumines/go-behaviortree.Selector
@@ -416,7 +416,7 @@ func Example_graph() {
 	//             │           ├── [util.go:266       util.go:266   ]  PreconditionLeaf | github.com/joeycumines/go-pabt.newConditionNode[...].func1
 	//             │           └── [graph_test.go:119 util.go:561    pre:s1 post:s3]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
 	//             └── [graph_test.go:119 util.go:561    pre:s3 post:sg]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	// 
+	//
 	// iteration = 7, status = running, err = <nil>, actor = s0
 	// [pabt.go:222       pabt.go:260   ]  GoalRoot | github.com/joeycumines/go-pabt.(*Plan[...]).bt.func2
 	// └── [util.go:146       selector.go:21]  PPARoot | github.com/joeycumines/go-behaviortree.Selector
@@ -485,7 +485,7 @@ func Example_graph() {
 	//             │           ├── [util.go:266       util.go:266   ]  PreconditionLeaf | github.com/joeycumines/go-pabt.newConditionNode[...].func1
 	//             │           └── [graph_test.go:119 util.go:561    pre:s1 post:s3]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
 	//             └── [graph_test.go:119 util.go:561    pre:s3 post:sg]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	// 
+	//
 	// iteration = 8, status = running, err = <nil>, actor = s0
 	// [pabt.go:222       pabt.go:260   ]  GoalRoot | github.com/joeycumines/go-pabt.(*Plan[...]).bt.func2
 	// └── [util.go:146       selector.go:21]  PPARoot | github.com/joeycumines/go-behaviortree.Selector
@@ -565,7 +565,7 @@ func Example_graph() {
 	//             │           ├── [util.go:266       util.go:266   ]  PreconditionLeaf | github.com/joeycumines/go-pabt.newConditionNode[...].func1
 	//             │           └── [graph_test.go:119 util.go:561    pre:s1 post:s3]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
 	//             └── [graph_test.go:119 util.go:561    pre:s3 post:sg]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	// 
+	//
 	// iteration = 9, status = running, err = <nil>, actor = s0
 	// [pabt.go:222       pabt.go:260   ]  GoalRoot | github.com/joeycumines/go-pabt.(*Plan[...]).bt.func2
 	// └── [util.go:146       selector.go:21]  PPARoot | github.com/joeycumines/go-behaviortree.Selector
@@ -659,13 +659,13 @@ func Example_graph() {
 	//             │           │           └── [graph_test.go:119 util.go:561    pre:s0 post:s1]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
 	//             │           └── [graph_test.go:119 util.go:561    pre:s1 post:s3]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
 	//             └── [graph_test.go:119 util.go:561    pre:s3 post:sg]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	// 
+	//
 	// actor s0 -> s1
-	// 
+	//
 	// actor s1 -> s3
-	// 
+	//
 	// actor s3 -> sg
-	// 
+	//
 	// iteration = 10, status = success, err = <nil>, actor = sg
 	// [pabt.go:222       pabt.go:260   ]  GoalRoot | github.com/joeycumines/go-pabt.(*Plan[...]).bt.func2
 	// └── [util.go:146       selector.go:21]  PPARoot | github.com/joeycumines/go-behaviortree.Selector
@@ -759,7 +759,7 @@ func Example_graph() {
 	//             │           │           └── [graph_test.go:119 util.go:561    pre:s0 post:s1]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
 	//             │           └── [graph_test.go:119 util.go:561    pre:s1 post:s3]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
 	//             └── [graph_test.go:119 util.go:561    pre:s3 post:sg]  ActionNode | github.com/joeycumines/go-pabt.(*node[...]).generateAction.wrapActionNodeHandleSetRunning.func2.1
-	// 
+	//
 	// iteration = 10, status = success, err = <nil>, actor = sg
 	// DONE
 }

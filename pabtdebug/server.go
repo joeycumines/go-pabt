@@ -67,8 +67,9 @@ func (s *Server) Start() error {
 	return s.server.ListenAndServe()
 }
 
-// Close gracefully shuts down the server.
+// Close gracefully shuts down the server, draining SSE connections first.
 func (s *Server) Close() error {
+	s.tracker.Hub().Close()
 	return s.server.Close()
 }
 

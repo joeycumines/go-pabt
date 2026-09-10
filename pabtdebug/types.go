@@ -45,13 +45,13 @@ type TreeNode struct {
 
 // TickEvent represents a single tick event for streaming and history.
 type TickEvent struct {
-	Iteration     int          `json:"iteration"`
-	Status        bt.Status    `json:"status"`
-	Tree          *TreeNode    `json:"tree,omitempty"`
-	Timestamp     time.Time    `json:"timestamp"`
-	DurationMs    float64      `json:"durationMs,omitempty"`
-	NodeCount     int          `json:"nodeCount,omitempty"`
-	BreakpointHit *Breakpoint  `json:"breakpointHit,omitempty"`
+	Iteration     int         `json:"iteration"`
+	Status        bt.Status   `json:"status"`
+	Tree          *TreeNode   `json:"tree,omitempty"`
+	Timestamp     time.Time   `json:"timestamp"`
+	DurationMs    float64     `json:"durationMs,omitempty"`
+	NodeCount     int         `json:"nodeCount,omitempty"`
+	BreakpointHit *Breakpoint `json:"breakpointHit,omitempty"`
 }
 
 // NodeProfile holds aggregated profiling data for a single node.
@@ -102,6 +102,19 @@ type DiffNode struct {
 	ChangeType string `json:"changeType"`
 	OldStatus  string `json:"oldStatus,omitempty"`
 	NewStatus  string `json:"newStatus,omitempty"`
+}
+
+// SSEEvent represents an event broadcast via Server-Sent Events, including
+// a sequence number for future SSE replay support.
+type SSEEvent struct {
+	Seq           int64       `json:"seq"`
+	Iteration     int         `json:"iteration"`
+	Status        bt.Status   `json:"status"`
+	Tree          *TreeNode   `json:"tree,omitempty"`
+	Timestamp     time.Time   `json:"timestamp"`
+	DurationMs    float64     `json:"durationMs,omitempty"`
+	NodeCount     int         `json:"nodeCount,omitempty"`
+	BreakpointHit *Breakpoint `json:"breakpointHit,omitempty"`
 }
 
 // Breakpoint represents a debug breakpoint on a node.

@@ -141,16 +141,16 @@ type (
 		// tick will be set for all group nodes
 		tick bt.Tick
 
-	// typ is the explicit node type, set at construction time, used by nodeType() as a fast path
-	// before falling back to heuristic detection. This field survives copy() and tree mutations,
-	// unlike the heuristic which relies on context pointers that become stale.
-	typ NodeType
+		// typ is the explicit node type, set at construction time, used by nodeType() as a fast path
+		// before falling back to heuristic detection. This field survives copy() and tree mutations,
+		// unlike the heuristic which relies on context pointers that become stale.
+		typ NodeType
 
 		status *NodeStatus
 
 		frame *FrameInfo
 
-	// these node links form the actual tree
+		// these node links form the actual tree
 
 		parent, first, last, prev, next *node[T]
 	}

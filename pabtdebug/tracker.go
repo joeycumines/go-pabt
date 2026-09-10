@@ -28,36 +28,51 @@ import (
 	"github.com/joeycumines/go-pabt"
 )
 
-// defaultMaxEvents is the default maximum number of events retained by a Tracker.
 const defaultMaxEvents = 1000
+const defaultMaxTrees = 100
 
-// Tracker wraps a pabt.IPlan and records TickEvents after each tick.
+type eventEntry struct {
+	Iteration     int
+	Status        bt.Status
+	Timestamp     time.Time
+	DurationMs    float64
+	NodeCount     int
+	BreakpointHit *Breakpoint
+}
+
 type Tracker struct {
 	plan          *pabt.IPlan
-	events        []TickEvent
+	entries       []eventEntry
+	treeStore     map[int]*TreeNode
+	treeOrder     []int
+	eventIndex    map[int]int
+	maxEvents     int
+	maxTrees      int
 	mu            sync.Mutex
 	iteration     atomic.Int64
 	hub           *Hub
-	maxEvents     int
 	lastTrackTime time.Time
 	breakpoints   map[string]*Breakpoint
 	breakpointMu  sync.RWMutex
+	profiles      map[string]*NodeProfile
+	profileSeq    int
 }
 
-// NewTracker creates a new Tracker for the given plan.
 func NewTracker(plan *pabt.IPlan) *Tracker {
-	t := &Tracker{
+	return &Tracker{
 		plan:        plan,
-		events:      make([]TickEvent, 0),
-		hub:         NewHub(),
+		entries:     make([]eventEntry, 0),
+		treeStore:   make(map[int]*TreeNode),
+		treeOrder:   make([]int, 0),
+		eventIndex:  make(map[int]int),
 		maxEvents:   defaultMaxEvents,
+		maxTrees:    defaultMaxTrees,
+		hub:         NewHub(),
 		breakpoints: make(map[string]*Breakpoint),
+		profiles:    make(map[string]*NodeProfile),
 	}
-	return t
 }
 
-// Track is called after each tick to record the event. It builds a snapshot
-// of the current tree and appends it to the event history.
 func (t *Tracker) Track(status bt.Status, err error) {
 	iter := int(t.iteration.Add(1))
 
@@ -88,41 +103,88 @@ func (t *Tracker) Track(status bt.Status, err error) {
 	}
 
 	t.mu.Lock()
-	t.events = append(t.events, event)
-	if t.maxEvents > 0 && len(t.events) > t.maxEvents {
-		t.events = t.events[len(t.events)-t.maxEvents:]
+	entry := eventEntry{
+		Iteration:     iter,
+		Status:        status,
+		Timestamp:     now,
+		DurationMs:    durationMs,
+		NodeCount:     nodeCount,
+		BreakpointHit: event.BreakpointHit,
 	}
+	t.entries = append(t.entries, entry)
+	if t.maxEvents > 0 && len(t.entries) > t.maxEvents {
+		t.entries = t.entries[len(t.entries)-t.maxEvents:]
+		t.eventIndex = make(map[int]int, len(t.entries))
+		for i, e := range t.entries {
+			t.eventIndex[e.Iteration] = i
+		}
+	} else {
+		t.eventIndex[iter] = len(t.entries) - 1
+	}
+
+	if tree != nil {
+		t.treeStore[iter] = tree
+		t.treeOrder = append(t.treeOrder, iter)
+		if t.maxTrees > 0 && len(t.treeStore) > t.maxTrees {
+			oldest := t.treeOrder[0]
+			t.treeOrder = t.treeOrder[1:]
+			delete(t.treeStore, oldest)
+		}
+	}
+
+	if tree != nil {
+		walkTreeForProfile(tree, t.profiles, durationMs)
+		t.profileSeq++
+	}
+
 	t.mu.Unlock()
-	t.hub.Broadcast(event)
+
+	sseEvent := SSEEvent{
+		Iteration:     event.Iteration,
+		Status:        event.Status,
+		Tree:          event.Tree,
+		Timestamp:     event.Timestamp,
+		DurationMs:    event.DurationMs,
+		NodeCount:     event.NodeCount,
+		BreakpointHit: event.BreakpointHit,
+	}
+	t.hub.Broadcast(sseEvent)
 }
 
-// Events returns all recorded tick events.
 func (t *Tracker) Events() []TickEvent {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	result := make([]TickEvent, len(t.events))
-	copy(result, t.events)
+	result := make([]TickEvent, len(t.entries))
+	for i, e := range t.entries {
+		result[i] = TickEvent{
+			Iteration:     e.Iteration,
+			Status:        e.Status,
+			Timestamp:     e.Timestamp,
+			DurationMs:    e.DurationMs,
+			NodeCount:     e.NodeCount,
+			BreakpointHit: e.BreakpointHit,
+		}
+		if tree, ok := t.treeStore[e.Iteration]; ok {
+			result[i].Tree = tree
+		}
+	}
 	return result
 }
 
-// Hub returns the SSE hub for this tracker.
 func (t *Tracker) Hub() *Hub {
 	return t.hub
 }
 
-// BuildTree walks the plan's bt.Node tree using bt.Walk and builds a
-// TreeNode hierarchy with node types, names, and statuses.
 func (t *Tracker) BuildTree() *TreeNode {
 	node := t.plan.Node()
 	return buildTreeFromMetadata(node, "0")
 }
 
-// Timeline returns lightweight timeline entries for all recorded events.
 func (t *Tracker) Timeline() []TimelineEntry {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	entries := make([]TimelineEntry, len(t.events))
-	for i, e := range t.events {
+	entries := make([]TimelineEntry, len(t.entries))
+	for i, e := range t.entries {
 		entries[i] = TimelineEntry{
 			Iteration:  e.Iteration,
 			Status:     statusString(e.Status),
@@ -134,44 +196,41 @@ func (t *Tracker) Timeline() []TimelineEntry {
 	return entries
 }
 
-// EventAt returns the tick event for the given iteration number, if it exists.
 func (t *Tracker) EventAt(iteration int) (*TickEvent, bool) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	for i := range t.events {
-		if t.events[i].Iteration == iteration {
-			return &t.events[i], true
-		}
+	idx, ok := t.eventIndex[iteration]
+	if !ok {
+		return nil, false
 	}
-	return nil, false
+	entry := t.entries[idx]
+	event := &TickEvent{
+		Iteration:     entry.Iteration,
+		Status:        entry.Status,
+		Timestamp:     entry.Timestamp,
+		DurationMs:    entry.DurationMs,
+		NodeCount:     entry.NodeCount,
+		BreakpointHit: entry.BreakpointHit,
+	}
+	if tree, ok := t.treeStore[iteration]; ok {
+		event.Tree = tree
+	}
+	return event, true
 }
 
-// Profile returns aggregated profiling data for all nodes across all events.
 func (t *Tracker) Profile() []NodeProfile {
 	t.mu.Lock()
-	events := make([]TickEvent, len(t.events))
-	copy(events, t.events)
-	t.mu.Unlock()
-
-	if len(events) == 0 {
+	defer t.mu.Unlock()
+	if len(t.profiles) == 0 {
 		return nil
 	}
-
-	profiles := make(map[string]*NodeProfile)
-
-	for _, event := range events {
-		if event.Tree == nil {
-			continue
-		}
-		walkTreeForProfile(event.Tree, profiles, event.DurationMs)
-	}
-
-	result := make([]NodeProfile, 0, len(profiles))
-	for _, p := range profiles {
+	result := make([]NodeProfile, 0, len(t.profiles))
+	for _, p := range t.profiles {
 		if p.TickCount > 0 {
-			p.AvgDurationMs = p.TotalDurationMs / float64(p.TickCount)
+			cp := *p
+			cp.AvgDurationMs = cp.TotalDurationMs / float64(cp.TickCount)
+			result = append(result, cp)
 		}
-		result = append(result, *p)
 	}
 	sort.Slice(result, func(i, j int) bool {
 		return result[i].ID < result[j].ID
@@ -179,7 +238,6 @@ func (t *Tracker) Profile() []NodeProfile {
 	return result
 }
 
-// Search searches the current tree for nodes matching the query (case-insensitive).
 func (t *Tracker) Search(query string) []SearchResult {
 	tree := t.BuildTree()
 	if tree == nil {
@@ -191,15 +249,20 @@ func (t *Tracker) Search(query string) []SearchResult {
 	return results
 }
 
-// Diff compares two tree snapshots and returns the differences.
 func (t *Tracker) Diff(fromIter, toIter int) (*DiffResult, error) {
 	fromEvent, ok := t.EventAt(fromIter)
 	if !ok {
 		return nil, fmt.Errorf("iteration %d not found", fromIter)
 	}
+	if fromEvent.Tree == nil {
+		return nil, fmt.Errorf("tree snapshot no longer available for iteration %d", fromIter)
+	}
 	toEvent, ok := t.EventAt(toIter)
 	if !ok {
 		return nil, fmt.Errorf("iteration %d not found", toIter)
+	}
+	if toEvent.Tree == nil {
+		return nil, fmt.Errorf("tree snapshot no longer available for iteration %d", toIter)
 	}
 
 	result := &DiffResult{
@@ -210,7 +273,6 @@ func (t *Tracker) Diff(fromIter, toIter int) (*DiffResult, error) {
 	fromNodes := flattenTree(fromEvent.Tree)
 	toNodes := flattenTree(toEvent.Tree)
 
-	// Find added and changed nodes
 	for id, toNode := range toNodes {
 		if fromNode, exists := fromNodes[id]; !exists {
 			result.Added = append(result.Added, DiffNode{
@@ -235,7 +297,6 @@ func (t *Tracker) Diff(fromIter, toIter int) (*DiffResult, error) {
 		}
 	}
 
-	// Find removed nodes
 	for id, fromNode := range fromNodes {
 		if _, exists := toNodes[id]; !exists {
 			result.Removed = append(result.Removed, DiffNode{
@@ -250,21 +311,18 @@ func (t *Tracker) Diff(fromIter, toIter int) (*DiffResult, error) {
 	return result, nil
 }
 
-// SetBreakpoint adds or updates a breakpoint.
 func (t *Tracker) SetBreakpoint(bp Breakpoint) {
 	t.breakpointMu.Lock()
 	defer t.breakpointMu.Unlock()
 	t.breakpoints[bp.NodePath] = &bp
 }
 
-// RemoveBreakpoint removes a breakpoint by node path.
 func (t *Tracker) RemoveBreakpoint(nodePath string) {
 	t.breakpointMu.Lock()
 	defer t.breakpointMu.Unlock()
 	delete(t.breakpoints, nodePath)
 }
 
-// Breakpoints returns all configured breakpoints.
 func (t *Tracker) Breakpoints() []Breakpoint {
 	t.breakpointMu.RLock()
 	defer t.breakpointMu.RUnlock()
@@ -275,7 +333,20 @@ func (t *Tracker) Breakpoints() []Breakpoint {
 	return result
 }
 
-// checkBreakpoints walks the event tree and checks if any node matches a breakpoint.
+func (t *Tracker) WithMaxEvents(n int) *Tracker {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.maxEvents = n
+	return t
+}
+
+func (t *Tracker) WithMaxTrees(n int) *Tracker {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.maxTrees = n
+	return t
+}
+
 func (t *Tracker) checkBreakpoints(event *TickEvent) *Breakpoint {
 	if event.Tree == nil {
 		return nil
@@ -305,7 +376,6 @@ func (t *Tracker) checkBreakpoints(event *TickEvent) *Breakpoint {
 	return hit
 }
 
-// buildTreeFromMetadata recursively builds a TreeNode from a bt.Metadata node.
 func buildTreeFromMetadata(m bt.Metadata, path string) *TreeNode {
 	if m == nil {
 		return nil
@@ -329,7 +399,6 @@ func buildTreeFromMetadata(m bt.Metadata, path string) *TreeNode {
 		Status:   status,
 	}
 
-	// Set Frame field from bt.GetFrame
 	if frame != nil {
 		tn.Frame = fmt.Sprintf("%s:%d", frame.File, frame.Line)
 	}
@@ -362,13 +431,11 @@ func buildTreeFromMetadata(m bt.Metadata, path string) *TreeNode {
 		return true
 	})
 
-	// Set StructureHash after building children
 	tn.StructureHash = fmt.Sprintf("%s:%d", tn.NodeType, len(tn.Children))
 
 	return tn
 }
 
-// countNodes counts all nodes in a tree recursively.
 func countNodes(tree *TreeNode) int {
 	if tree == nil {
 		return 0
@@ -380,7 +447,6 @@ func countNodes(tree *TreeNode) int {
 	return count
 }
 
-// statusString converts a bt.Status to a human-readable string.
 func statusString(s bt.Status) string {
 	switch s {
 	case bt.Success:
@@ -394,7 +460,6 @@ func statusString(s bt.Status) string {
 	}
 }
 
-// nodeStatusString converts a *pabt.NodeStatus to a string representation.
 func nodeStatusString(s *pabt.NodeStatus) string {
 	if s == nil {
 		return ""
@@ -402,7 +467,6 @@ func nodeStatusString(s *pabt.NodeStatus) string {
 	return statusString(s.LastStatus())
 }
 
-// walkTreeForProfile aggregates profiling data from a tree into the profiles map.
 func walkTreeForProfile(tree *TreeNode, profiles map[string]*NodeProfile, durationMs float64) {
 	if tree == nil {
 		return
@@ -437,7 +501,6 @@ func walkTreeForProfile(tree *TreeNode, profiles map[string]*NodeProfile, durati
 	}
 }
 
-// searchTree recursively searches tree nodes for matches against the query.
 func searchTree(tree *TreeNode, parentPath, lowerQuery string, results *[]SearchResult) {
 	if tree == nil {
 		return
@@ -466,7 +529,6 @@ func searchTree(tree *TreeNode, parentPath, lowerQuery string, results *[]Search
 	}
 }
 
-// containsEffect checks if any effect contains the query string.
 func containsEffect(effects []EffectInfo, lowerQuery string) bool {
 	for _, e := range effects {
 		if strings.Contains(strings.ToLower(e.Key), lowerQuery) ||
@@ -477,7 +539,6 @@ func containsEffect(effects []EffectInfo, lowerQuery string) bool {
 	return false
 }
 
-// flattenTree flattens a TreeNode hierarchy into a map keyed by ID.
 func flattenTree(tree *TreeNode) map[string]*TreeNode {
 	result := make(map[string]*TreeNode)
 	if tree == nil {
@@ -497,7 +558,6 @@ func flattenTreeInto(tree *TreeNode, m map[string]*TreeNode) {
 	}
 }
 
-// effectsDiffer compares two effect slices for differences.
 func effectsDiffer(a, b []EffectInfo) bool {
 	if len(a) != len(b) {
 		return true
@@ -510,8 +570,6 @@ func effectsDiffer(a, b []EffectInfo) bool {
 	return false
 }
 
-// walkTreeNode walks a TreeNode hierarchy calling fn for each node.
-// If fn returns false, traversal stops.
 func walkTreeNode(tree *TreeNode, fn func(*TreeNode) bool) {
 	if tree == nil {
 		return
