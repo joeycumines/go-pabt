@@ -1084,9 +1084,35 @@ func TestHub_ReplayOnReconnect(t *testing.T) {
 	}
 
 	body := w.Body.String()
-	dataLines := strings.Count(body, "data: ")
-	if dataLines != 3 {
-		t.Errorf("expected 3 replayed data lines for reconnecting client, got %d", dataLines)
+	// Client last saw seq 2, so only seq 3 should be replayed (filtered resume).
+	if c := strings.Count(body, "data: "); c != 1 {
+		t.Errorf("expected 1 replayed data line for Last-Event-ID=2, got %d body=%q", c, body)
+	}
+	if !strings.Contains(body, "id: 3") {
+		t.Errorf("expected replayed msg to contain id: 3, got %q", body)
+	}
+
+	// Full replay when no Last-Event-ID: new client receives only latest event.
+	ctx2, cancel2 := context.WithCancel(context.Background())
+	defer cancel2()
+	req2 := httptest.NewRequest(http.MethodGet, "/debug/pabt/plans/0/events", nil)
+	req2 = req2.WithContext(ctx2)
+	w2 := httptest.NewRecorder()
+	done2 := make(chan struct{})
+	go func() {
+		hub.ServeHTTP(w2, req2)
+		close(done2)
+	}()
+	time.Sleep(80 * time.Millisecond)
+	cancel2()
+	select {
+	case <-done2:
+	case <-time.After(2 * time.Second):
+		t.Fatal("second reconnect handler did not exit")
+	}
+	body2 := w2.Body.String()
+	if c := strings.Count(body2, "data: "); c != 1 {
+		t.Errorf("new client (no Last-Event-ID) expected 1 latest data line, got %d body=%q", c, body2)
 	}
 }
 
@@ -1121,6 +1147,261 @@ func TestHub_GracefulClose(t *testing.T) {
 	hub.mu.Unlock()
 	if remaining != 0 {
 		t.Errorf("expected 0 clients after Close, got %d", remaining)
+	}
+}
+
+func TestHub_BackpressureDisconnect(t *testing.T) {
+	hub := NewHub()
+	hub.keepAliveInterval = 0 // disable keep-alive for determinism
+	// Use small channel notion: hub uses 256 but we simulate slow client by not draining.
+	// Verify slow client is disconnected on Broadcast backpressure while other clients remain.
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	req := httptest.NewRequest(http.MethodGet, "/debug/pabt/plans/0/events", nil)
+	req = req.WithContext(ctx)
+	w := httptest.NewRecorder()
+	done := make(chan struct{})
+	go func() {
+		hub.ServeHTTP(w, req)
+		close(done)
+	}()
+	time.Sleep(40 * time.Millisecond)
+
+	hub.mu.Lock()
+	// Find the live channel.
+	var slowCh chan string
+	for ch := range hub.clients {
+		slowCh = ch
+		break
+	}
+	if slowCh == nil {
+		hub.mu.Unlock()
+		t.Fatalf("expected 1 client after ServeHTTP")
+	}
+	// Replace it with a blocking channel of capacity 1 that is full.
+	// For the test we simulate slow by filling a 256 buffer: we fill it without draining.
+	// Instead, inject a channel of cap 1 that is full, and register second fast client.
+	// Create slow scenario: make a dedicated hub with injected client.
+	hub.mu.Unlock()
+
+	// New hub for direct buffer-fill test.
+	hub2 := NewHub()
+	hub2.keepAliveInterval = 0
+	slow := make(chan string, 1)
+	slow <- "fill"
+	hub2.mu.Lock()
+	hub2.clients[slow] = struct{}{}
+	hub2.mu.Unlock()
+
+	fast := make(chan string, 256)
+	hub2.mu.Lock()
+	hub2.clients[fast] = struct{}{}
+	hub2.mu.Unlock()
+
+	hub2.Broadcast(SSEEvent{Iteration: 1, Status: bt.Success, Timestamp: time.Now()})
+
+	// slow should have been closed and removed.
+	hub2.mu.Lock()
+	_, stillSlow := hub2.clients[slow]
+	_, stillFast := hub2.clients[fast]
+	hub2.mu.Unlock()
+	if stillSlow {
+		t.Errorf("slow client should have been disconnected on backpressure")
+	}
+	if !stillFast {
+		t.Errorf("fast client should not have been disconnected")
+	}
+	// fast should have received the event.
+	select {
+	case msg := <-fast:
+		if !strings.Contains(msg, "data:") {
+			t.Errorf("fast client msg missing data: %q", msg)
+		}
+	default:
+		t.Errorf("fast client should have received broadcast")
+	}
+	// slow should be closed (with its buffered "fill" still readable, then closed).
+	select {
+	case v, ok := <-slow:
+		if !ok {
+			// Closed empty (no buffered fill) — also acceptable.
+		} else {
+			if v != "fill" {
+				t.Errorf("slow channel buffered value = %q want %q", v, "fill")
+			}
+			// Now channel should be closed; second read must report ok==false.
+			select {
+			case _, ok2 := <-slow:
+				if ok2 {
+					t.Errorf("slow channel should be closed after draining fill")
+				}
+			default:
+				t.Errorf("slow channel should be closed after draining fill (second read blocked)")
+			}
+		}
+	default:
+		t.Errorf("slow channel should contain buffered fill or be closed, but read blocked")
+	}
+
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("ServeHTTP did not exit after cancel")
+	}
+}
+
+func TestHub_ReconnectResumeFiltered(t *testing.T) {
+	hub := NewHub()
+	hub.keepAliveInterval = 0
+	for i := 0; i < 5; i++ {
+		hub.Broadcast(SSEEvent{Iteration: i + 1, Status: bt.Running, Timestamp: time.Now()})
+	}
+	// Client last saw 2, should get 3,4,5 only.
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	req := httptest.NewRequest(http.MethodGet, "/debug/pabt/plans/0/events", nil)
+	req.Header.Set("Last-Event-ID", "2")
+	req = req.WithContext(ctx)
+	w := httptest.NewRecorder()
+	done := make(chan struct{})
+	go func() {
+		hub.ServeHTTP(w, req)
+		close(done)
+	}()
+	time.Sleep(80 * time.Millisecond)
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("handler did not exit")
+	}
+	body := w.Body.String()
+	if c := strings.Count(body, "data: "); c != 3 {
+		t.Errorf("Last-Event-ID=2 should replay 3 events (3,4,5), got %d body=%q", c, body)
+	}
+	if !strings.Contains(body, "id: 3") || !strings.Contains(body, "id: 5") {
+		t.Errorf("expected ids 3 and 5 in body %q", body)
+	}
+	if strings.Contains(body, "id: 2") {
+		t.Errorf("body should not contain id: 2 (already seen), got %q", body)
+	}
+
+	// Already up-to-date client (Last-Event-ID = 5) gets no replay.
+	ctx2, cancel2 := context.WithCancel(context.Background())
+	defer cancel2()
+	req2 := httptest.NewRequest(http.MethodGet, "/debug/pabt/plans/0/events", nil)
+	req2.Header.Set("Last-Event-ID", "5")
+	req2 = req2.WithContext(ctx2)
+	w2 := httptest.NewRecorder()
+	done2 := make(chan struct{})
+	go func() {
+		hub.ServeHTTP(w2, req2)
+		close(done2)
+	}()
+	time.Sleep(60 * time.Millisecond)
+	cancel2()
+	select {
+	case <-done2:
+	case <-time.After(2 * time.Second):
+		t.Fatal("second handler did not exit")
+	}
+	body2 := w2.Body.String()
+	if c := strings.Count(body2, "data: "); c != 0 {
+		t.Errorf("Last-Event-ID=5 up-to-date should get 0 replay, got %d body=%q", c, body2)
+	}
+
+	// Invalid Last-Event-ID replays all buffered (fallback).
+	ctx3, cancel3 := context.WithCancel(context.Background())
+	defer cancel3()
+	req3 := httptest.NewRequest(http.MethodGet, "/debug/pabt/plans/0/events", nil)
+	req3.Header.Set("Last-Event-ID", "not-a-number")
+	req3 = req3.WithContext(ctx3)
+	w3 := httptest.NewRecorder()
+	done3 := make(chan struct{})
+	go func() {
+		hub.ServeHTTP(w3, req3)
+		close(done3)
+	}()
+	time.Sleep(60 * time.Millisecond)
+	cancel3()
+	select {
+	case <-done3:
+	case <-time.After(2 * time.Second):
+		t.Fatal("third handler did not exit")
+	}
+	body3 := w3.Body.String()
+	if c := strings.Count(body3, "data: "); c != 5 {
+		t.Errorf("invalid Last-Event-ID should replay all 5, got %d body=%q", c, body3)
+	}
+}
+
+func TestHub_KeepAlive(t *testing.T) {
+	hub := NewHub()
+	hub.keepAliveInterval = 80 * time.Millisecond
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	req := httptest.NewRequest(http.MethodGet, "/debug/pabt/plans/0/events", nil)
+	req = req.WithContext(ctx)
+	w := httptest.NewRecorder()
+	done := make(chan struct{})
+	go func() {
+		hub.ServeHTTP(w, req)
+		close(done)
+	}()
+	time.Sleep(220 * time.Millisecond)
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("ServeHTTP did not exit")
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, ":keep-alive") {
+		t.Errorf("expected keep-alive comment, got %q", body)
+	}
+}
+
+func TestHub_NoSilentDropOtherClients(t *testing.T) {
+	hub := NewHub()
+	hub.keepAliveInterval = 0
+	fast1 := make(chan string, 256)
+	fast2 := make(chan string, 256)
+	hub.mu.Lock()
+	hub.clients[fast1] = struct{}{}
+	hub.clients[fast2] = struct{}{}
+	hub.mu.Unlock()
+
+	slow := make(chan string, 1)
+	slow <- "fill"
+	hub.mu.Lock()
+	hub.clients[slow] = struct{}{}
+	hub.mu.Unlock()
+
+	hub.Broadcast(SSEEvent{Iteration: 42, Status: bt.Success, Timestamp: time.Now()})
+
+	hub.mu.Lock()
+	_, hasSlow := hub.clients[slow]
+	_, has1 := hub.clients[fast1]
+	_, has2 := hub.clients[fast2]
+	hub.mu.Unlock()
+
+	if hasSlow {
+		t.Errorf("slow should be evicted")
+	}
+	if !has1 || !has2 {
+		t.Errorf("fast clients should remain has1=%v has2=%v", has1, has2)
+	}
+	for i, ch := range []chan string{fast1, fast2} {
+		select {
+		case msg := <-ch:
+			if !strings.Contains(msg, "42") {
+				t.Errorf("fast %d msg should contain iteration 42: %q", i, msg)
+			}
+		default:
+			t.Errorf("fast %d should have received msg", i)
+		}
 	}
 }
 
