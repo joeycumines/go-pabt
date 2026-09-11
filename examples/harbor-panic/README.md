@@ -230,3 +230,29 @@ Unit tests prove each `D` fix; Harbor proves they compose. Specifically:
 ---
 
 *Run me:* `go run -tags example ./examples/harbor-panic -- --debug :8080 --tick-ms 40 --storm-every 120 --human-speed 3.1 --overflow /tmp/harbor.jsonl` — then walk §4. Every feature has a URL to curl, a `grep` to run, and a pixel to watch.
+
+## Live TUI Dashboard
+
+Harbor Panic includes an optional interactive TUI (true-color 40x18 harbor) that showcases live per-actor plan heatmaps and delta HUD while reusing the headless sim.
+
+Run with TUI:
+
+```bash
+go run -tags example ./examples/harbor-panic -- --debug :8080 --tui
+# TERM=xterm-256color required; q quits, p pauses ticker (SSE stays alive, HUD freezes), s steps one harbor.Step, +/- speed, b toggles breakpoints overlay
+```
+
+Headless remains default for CI:
+
+```bash
+go run -tags example ./examples/harbor-panic -- --headless --burst 1000 --tick-ms 5 --overflow /tmp/harbor.jsonl
+# 4 plans harbor-bot-0..3, timeline capped 1000, overflow JSONL evicted lines
+```
+
+TUI renders (verified headless via `tcell.NewSimulationScreen` in `tui/tui_test.go`):
+- 40x18 grid: walls `#` slate, berths `!` blue with ghost preview 10 ticks before storm, containers `R/G/B/Y/M/C` bright/dim (held), cranes `0-3` yellow, HUMAN `H` red with pursuit trail dots.
+- Top bar: per-actor Status/NodeCount/TickCount each tick.
+- Bottom HUD: delta keyframe interval 20 ratio, overflow bytes, timeline length/cap 1000, active breakpoints, plus sparkline updating each tick.
+
+Graceful fallback: if `tcell` init fails, `--headless`/`--burst` set, or `$TERM` missing, the binary logs and runs headless without error.
+

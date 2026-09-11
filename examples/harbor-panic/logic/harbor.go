@@ -79,6 +79,43 @@ type (
 
 var _ pabt.IState = (*harborState)(nil)
 
+var rankByCost bool
+
+func SetRankByCost(enabled bool) {
+	rankByCost = enabled
+}
+
+func actionCost(act *simpleAction) float64 {
+	if act == nil {
+		return 0
+	}
+	// default costs; will be refined per template type via condition keys
+	// pick 1.0, place 2.0 + distance/10, move 0.5 + distance/10
+	// Heuristic: detect heldItemVar and positionVar conditions
+	hasHeldItem := false
+	hasPos := false
+	for _, conds := range act.conditions {
+		for _, c := range conds {
+			if _, ok := c.Key().(heldItemVar); ok {
+				hasHeldItem = true
+			}
+			if _, ok := c.Key().(positionVar); ok {
+				hasPos = true
+			}
+		}
+	}
+	// simple heuristic based on number of effects/conditions to approximate type
+	if hasHeldItem && hasPos {
+		// pick or place - differentiate by number of conditions
+		// this will be overridden by explicit cost field when we add it
+		return 1.5
+	}
+	if hasPos && !hasHeldItem {
+		return 0.8
+	}
+	return 1.0
+}
+
 type HarborPlanResult struct {
 	Plan *pabt.IPlan
 	Node bt.Node
@@ -97,14 +134,16 @@ func HarborPlan(ctx context.Context, harbor *hsim.Harbor, actorID string) Harbor
 
 	// Assign each actor exactly 2 cube->goal pairs matching tcell pattern.
 	var successConditions []pabt.IConditions
-	actorIdx := 0
-	for _, sp := range st.Sprites {
-		if sp.Kind == hsim.KindActor && sp.ID == actorID {
+	actorIdx := -1
+	actorsSorted := st.Actors()
+	for i, a := range actorsSorted {
+		if a.ID == actorID {
+			actorIdx = i
 			break
 		}
-		if sp.Kind == hsim.KindActor {
-			actorIdx++
-		}
+	}
+	if actorIdx == -1 {
+		panic(fmt.Sprintf("harbor plan actor %s not found among %d actors", actorID, len(actorsSorted)))
 	}
 
 	pairsPerActor := 1
