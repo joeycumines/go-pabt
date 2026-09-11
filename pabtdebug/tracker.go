@@ -31,6 +31,8 @@ import (
 const defaultMaxEvents = 1000
 const defaultMaxTrees = 100
 
+const defaultKeyframeInterval = 20
+
 type eventEntry struct {
 	Iteration     int
 	Status        bt.Status
@@ -41,22 +43,25 @@ type eventEntry struct {
 }
 
 type Tracker struct {
-	id            string
-	plan          *pabt.IPlan
-	entries       []eventEntry
-	treeStore     map[int]*TreeNode
-	treeOrder     []int
-	eventIndex    map[int]int
-	maxEvents     int
-	maxTrees      int
-	mu            sync.Mutex
-	iteration     atomic.Int64
-	hub           *Hub
-	lastTrackTime time.Time
-	breakpoints   map[string]*Breakpoint
-	breakpointMu  sync.RWMutex
-	profiles      map[string]*NodeProfile
-	profileSeq    int
+	id               string
+	plan             *pabt.IPlan
+	entries          []eventEntry
+	treeStore        map[int]*TreeNode
+	treeOrder        []int
+	eventIndex       map[int]int
+	maxEvents        int
+	maxTrees         int
+	mu               sync.Mutex
+	iteration        atomic.Int64
+	hub              *Hub
+	lastTrackTime    time.Time
+	breakpoints      map[string]*Breakpoint
+	breakpointMu     sync.RWMutex
+	profiles         map[string]*NodeProfile
+	profileSeq       int
+	keyframeInterval int
+	lastTree         *TreeNode
+	deltaStore       map[int]*TreeDelta
 }
 
 func NewTracker(plan *pabt.IPlan) *Tracker {
@@ -71,17 +76,19 @@ func NewTrackerWithID(plan *pabt.IPlan, id string) *Tracker {
 		id = "0"
 	}
 	return &Tracker{
-		id:          id,
-		plan:        plan,
-		entries:     make([]eventEntry, 0),
-		treeStore:   make(map[int]*TreeNode),
-		treeOrder:   make([]int, 0),
-		eventIndex:  make(map[int]int),
-		maxEvents:   defaultMaxEvents,
-		maxTrees:    defaultMaxTrees,
-		hub:         NewHub(),
-		breakpoints: make(map[string]*Breakpoint),
-		profiles:    make(map[string]*NodeProfile),
+		id:               id,
+		plan:             plan,
+		entries:          make([]eventEntry, 0),
+		treeStore:        make(map[int]*TreeNode),
+		treeOrder:        make([]int, 0),
+		eventIndex:       make(map[int]int),
+		maxEvents:        defaultMaxEvents,
+		maxTrees:         defaultMaxTrees,
+		hub:              NewHub(),
+		breakpoints:      make(map[string]*Breakpoint),
+		profiles:         make(map[string]*NodeProfile),
+		keyframeInterval: defaultKeyframeInterval,
+		deltaStore:       make(map[int]*TreeDelta),
 	}
 }
 
@@ -169,17 +176,70 @@ func (t *Tracker) Track(status bt.Status, err error) {
 		t.profileSeq++
 	}
 
+	// Delta computation for SSE broadcast (keyframe every N).
+	// We keep full tree in treeStore for backward compatibility and test stability,
+	// but SSE payload is delta-optimized.
+	var sseEvent SSEEvent
+	isKeyframe := false
+	if tree != nil {
+		if t.lastTree == nil || iter == 1 || (t.keyframeInterval > 0 && iter%t.keyframeInterval == 1) {
+			isKeyframe = true
+		}
+		// Also treat structural changes that add/remove many nodes as keyframe if delta would be large?
+		// For now strict interval-based.
+		if isKeyframe {
+			sseEvent = SSEEvent{
+				Iteration:     iter,
+				Status:        status,
+				Tree:          tree,
+				IsKeyframe:    true,
+				Timestamp:     now,
+				DurationMs:    durationMs,
+				NodeCount:     nodeCount,
+				BreakpointHit: event.BreakpointHit,
+			}
+		} else {
+			delta := ComputeDelta(t.lastTree, tree)
+			if delta != nil {
+				delta.BaseIteration = iter - 1
+				delta.TargetIteration = iter
+				// Store delta for potential reconstruction tests (optional).
+				if t.deltaStore != nil {
+					t.deltaStore[iter] = delta
+				}
+			}
+			sseEvent = SSEEvent{
+				Iteration:     iter,
+				Status:        status,
+				Delta:         delta,
+				IsKeyframe:    false,
+				Timestamp:     now,
+				DurationMs:    durationMs,
+				NodeCount:     nodeCount,
+				BreakpointHit: event.BreakpointHit,
+			}
+			if delta == nil {
+				sseEvent.Tree = tree
+				sseEvent.IsKeyframe = true
+				sseEvent.Delta = nil
+			}
+		}
+		// Update lastTree snapshot for next delta.
+		t.lastTree = CloneTree(tree)
+		// Also update lastIter implicitly via iteration counter.
+	} else {
+		sseEvent = SSEEvent{
+			Iteration:     iter,
+			Status:        status,
+			Timestamp:     now,
+			DurationMs:    durationMs,
+			NodeCount:     nodeCount,
+			BreakpointHit: event.BreakpointHit,
+		}
+	}
+
 	t.mu.Unlock()
 
-	sseEvent := SSEEvent{
-		Iteration:     event.Iteration,
-		Status:        event.Status,
-		Tree:          event.Tree,
-		Timestamp:     event.Timestamp,
-		DurationMs:    event.DurationMs,
-		NodeCount:     event.NodeCount,
-		BreakpointHit: event.BreakpointHit,
-	}
 	t.hub.Broadcast(sseEvent)
 }
 
@@ -426,12 +486,17 @@ func buildTreeFromMetadata(m bt.Metadata, path string) *TreeNode {
 	}
 
 	status, _ := pabt.GetNodeStatus(m)
-
+	var clonedStatus *pabt.NodeStatus
+	if status != nil {
+		clonedStatus = &pabt.NodeStatus{}
+		clonedStatus.SetTickCount(status.TickCount())
+		clonedStatus.SetLastStatus(status.LastStatus())
+	}
 	tn := &TreeNode{
 		ID:       path,
 		Name:     displayName,
 		NodeType: nodeType.String(),
-		Status:   status,
+		Status:   clonedStatus,
 	}
 
 	if frame != nil {
@@ -615,4 +680,363 @@ func walkTreeNode(tree *TreeNode, fn func(*TreeNode) bool) {
 	for i := range tree.Children {
 		walkTreeNode(&tree.Children[i], fn)
 	}
+}
+
+// CloneTree performs a deep copy of a TreeNode tree.
+func CloneTree(tree *TreeNode) *TreeNode {
+	if tree == nil {
+		return nil
+	}
+	cp := *tree
+	if tree.Status != nil {
+		s := &pabt.NodeStatus{}
+		s.SetTickCount(tree.Status.TickCount())
+		s.SetLastStatus(tree.Status.LastStatus())
+		cp.Status = s
+	}
+	if len(tree.Children) > 0 {
+		cp.Children = make([]TreeNode, len(tree.Children))
+		for i := range tree.Children {
+			child := CloneTree(&tree.Children[i])
+			if child != nil {
+				cp.Children[i] = *child
+			}
+		}
+	}
+	if len(tree.Effects) > 0 {
+		cp.Effects = make([]EffectInfo, len(tree.Effects))
+		copy(cp.Effects, tree.Effects)
+	}
+	return &cp
+}
+
+// WithKeyframeInterval sets the keyframe interval for delta encoding.
+// Every Nth tick (1-indexed) will be a keyframe (full tree). 0 disables interval-based keyframes.
+func (t *Tracker) WithKeyframeInterval(n int) *Tracker {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.keyframeInterval = n
+	return t
+}
+
+// KeyframeInterval returns the current keyframe interval.
+func (t *Tracker) KeyframeInterval() int {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.keyframeInterval
+}
+
+// DeltaForIteration returns the delta stored for the given iteration, if any.
+func (t *Tracker) DeltaForIteration(iter int) (*TreeDelta, bool) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	d, ok := t.deltaStore[iter]
+	return d, ok
+}
+
+// ComputeDelta computes the incremental delta from prev to cur.
+// Returns nil if either tree is nil.
+func ComputeDelta(prev, cur *TreeNode) *TreeDelta {
+	if prev == nil || cur == nil {
+		return nil
+	}
+	prevMap := flattenTree(prev)
+	curMap := flattenTree(cur)
+
+	delta := &TreeDelta{}
+
+	// Collect added IDs (in cur not in prev).
+	addedIDs := make(map[string]struct{})
+	for id := range curMap {
+		if _, exists := prevMap[id]; !exists {
+			addedIDs[id] = struct{}{}
+		}
+	}
+	// Filter to top-most added (parent not also added).
+	for id := range addedIDs {
+		parent := parentID(id)
+		if parent != "" {
+			if _, parentAdded := addedIDs[parent]; parentAdded {
+				continue
+			}
+		}
+		if node, ok := curMap[id]; ok {
+			clone := CloneTree(node)
+			if clone != nil {
+				delta.Added = append(delta.Added, *clone)
+			}
+		}
+	}
+
+	// Removed: in prev not in cur, top-most only.
+	removedIDs := make(map[string]struct{})
+	for id := range prevMap {
+		if _, exists := curMap[id]; !exists {
+			removedIDs[id] = struct{}{}
+		}
+	}
+	for id := range removedIDs {
+		parent := parentID(id)
+		if parent != "" {
+			if _, parentRemoved := removedIDs[parent]; parentRemoved {
+				continue
+			}
+		}
+		delta.Removed = append(delta.Removed, id)
+	}
+
+	// Changed: present in both but fields differ.
+	for id, curNode := range curMap {
+		prevNode, exists := prevMap[id]
+		if !exists {
+			continue
+		}
+		if nodesDiffer(prevNode, curNode) {
+			dc := DeltaChangedNode{
+				ID:            curNode.ID,
+				Name:          curNode.Name,
+				NodeType:      curNode.NodeType,
+				Condition:     curNode.Condition,
+				PostCondition: curNode.PostCondition,
+				Frame:         curNode.Frame,
+				StructureHash: curNode.StructureHash,
+			}
+			if curNode.Status != nil {
+				s := &pabt.NodeStatus{}
+				s.SetTickCount(curNode.Status.TickCount())
+				s.SetLastStatus(curNode.Status.LastStatus())
+				dc.Status = s
+			}
+			if len(curNode.Effects) > 0 {
+				dc.Effects = make([]EffectInfo, len(curNode.Effects))
+				copy(dc.Effects, curNode.Effects)
+			}
+			delta.Changed = append(delta.Changed, dc)
+		}
+	}
+
+	if len(delta.Added) == 0 && len(delta.Removed) == 0 && len(delta.Changed) == 0 {
+		return delta
+	}
+	return delta
+}
+
+func parentID(id string) string {
+	idx := -1
+	for i := len(id) - 1; i >= 0; i-- {
+		if id[i] == '.' {
+			idx = i
+			break
+		}
+	}
+	if idx == -1 {
+		return ""
+	}
+	return id[:idx]
+}
+
+func nodesDiffer(a, b *TreeNode) bool {
+	if a.Name != b.Name || a.NodeType != b.NodeType || a.Condition != b.Condition || a.PostCondition != b.PostCondition || a.Frame != b.Frame || a.StructureHash != b.StructureHash {
+		return true
+	}
+	if a.Status == nil && b.Status != nil || a.Status != nil && b.Status == nil {
+		return true
+	}
+	if a.Status != nil && b.Status != nil {
+		if a.Status.LastStatus() != b.Status.LastStatus() || a.Status.TickCount() != b.Status.TickCount() {
+			return true
+		}
+	}
+	if effectsDiffer(a.Effects, b.Effects) {
+		return true
+	}
+	return false
+}
+
+// ApplyDelta reconstructs a tree by applying delta to base.
+// Returns a new cloned tree; base is not mutated. If delta is nil, returns CloneTree(base).
+func ApplyDelta(base *TreeNode, delta *TreeDelta) *TreeNode {
+	if delta == nil {
+		return CloneTree(base)
+	}
+	if base == nil {
+		// If base is nil but delta has Added root, use it.
+		if len(delta.Added) > 0 {
+			// Find root (ID "0")
+			for i := range delta.Added {
+				if delta.Added[i].ID == "0" {
+					return CloneTree(&delta.Added[i])
+				}
+			}
+		}
+		return nil
+	}
+	result := CloneTree(base)
+	if result == nil {
+		return nil
+	}
+	// Build ID map for mutable result.
+	idMap := flattenTree(result)
+
+	// Apply Removed (deepest first).
+	// Sort removed by length descending to remove leaves first.
+	// Simple: iterate multiple times already top-most filtered; order doesn't matter much if top-most.
+	for _, id := range delta.Removed {
+		parent := parentID(id)
+		if parent == "" {
+			continue
+		}
+		parentNode, ok := idMap[parent]
+		if !ok {
+			continue
+		}
+		suffix := id[len(parent)+1:]
+		idx := parseIndex(suffix)
+		if idx < 0 || idx >= len(parentNode.Children) {
+			continue
+		}
+		// Verify child ID matches before removal.
+		if parentNode.Children[idx].ID != id {
+			// Fallback: linear search.
+			found := -1
+			for i := range parentNode.Children {
+				if parentNode.Children[i].ID == id {
+					found = i
+					break
+				}
+			}
+			if found == -1 {
+				continue
+			}
+			idx = found
+		}
+		// Remove child.
+		parentNode.Children = append(parentNode.Children[:idx], parentNode.Children[idx+1:]...)
+		// Rebuild map after structural change for subsequent ops.
+		idMap = flattenTree(result)
+	}
+
+	// Apply Added.
+	for i := range delta.Added {
+		added := &delta.Added[i]
+		parent := parentID(added.ID)
+		if parent == "" {
+			// Adding root: replace entire tree.
+			result = CloneTree(added)
+			idMap = flattenTree(result)
+			continue
+		}
+		parentNode, ok := idMap[parent]
+		if !ok {
+			continue
+		}
+		suffix := added.ID[len(parent)+1:]
+		idx := parseIndex(suffix)
+		if idx < 0 {
+			continue
+		}
+		cloneAdded := CloneTree(added)
+		if cloneAdded == nil {
+			continue
+		}
+		if idx >= len(parentNode.Children) {
+			// Append if index beyond current length (handles append).
+			parentNode.Children = append(parentNode.Children, *cloneAdded)
+		} else {
+			// Insert at idx.
+			parentNode.Children = append(parentNode.Children[:idx+1], parentNode.Children[idx:]...)
+			parentNode.Children[idx] = *cloneAdded
+		}
+		idMap = flattenTree(result)
+	}
+
+	// Apply Changed.
+	for i := range delta.Changed {
+		ch := &delta.Changed[i]
+		node, ok := idMap[ch.ID]
+		if !ok {
+			continue
+		}
+		node.Name = ch.Name
+		node.NodeType = ch.NodeType
+		node.Condition = ch.Condition
+		node.PostCondition = ch.PostCondition
+		node.Frame = ch.Frame
+		node.StructureHash = ch.StructureHash
+		if ch.Status != nil {
+			s := &pabt.NodeStatus{}
+			s.SetTickCount(ch.Status.TickCount())
+			s.SetLastStatus(ch.Status.LastStatus())
+			node.Status = s
+		} else {
+			node.Status = nil
+		}
+		if len(ch.Effects) > 0 {
+			node.Effects = make([]EffectInfo, len(ch.Effects))
+			copy(node.Effects, ch.Effects)
+		} else {
+			node.Effects = nil
+		}
+	}
+
+	return result
+}
+
+func parseIndex(s string) int {
+	n := 0
+	if s == "" {
+		return -1
+	}
+	for i := 0; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return -1
+		}
+		n = n*10 + int(s[i]-'0')
+	}
+	return n
+}
+
+// TreesEqual compares two trees for deep equality (ignoring pointer identity).
+func TreesEqual(a, b *TreeNode) bool {
+	if a == nil && b == nil {
+		return true
+	}
+	if a == nil || b == nil {
+		return false
+	}
+	if a.ID != b.ID || a.Name != b.Name || a.NodeType != b.NodeType || a.Condition != b.Condition || a.PostCondition != b.PostCondition || a.Frame != b.Frame || a.StructureHash != b.StructureHash {
+		return false
+	}
+	if a.Status == nil && b.Status != nil || a.Status != nil && b.Status == nil {
+		return false
+	}
+	if a.Status != nil && b.Status != nil {
+		if a.Status.LastStatus() != b.Status.LastStatus() || a.Status.TickCount() != b.Status.TickCount() {
+			return false
+		}
+	}
+	if !effectsEqual(a.Effects, b.Effects) {
+		return false
+	}
+	if len(a.Children) != len(b.Children) {
+		return false
+	}
+	for i := range a.Children {
+		if !TreesEqual(&a.Children[i], &b.Children[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+func effectsEqual(a, b []EffectInfo) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }

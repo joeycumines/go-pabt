@@ -496,6 +496,7 @@ body {
   const MAX_TIMELINE_EVENTS = 200;
   let timelineEvents = [], currentIteration = null;
   let pendingTree = null, rafId = null;
+  let keyframeTree = null, lastReconstructedTree = null, lastReconstructedIteration = null;
   let liveMode = true, playback = false, playbackIdx = 0, playbackTimer = null;
   let pan = { x: 0, y: 0 }, zoom = 1, isDragging = false, dragStart = null, panStart = { x: 0, y: 0 };
   let profileCache = null, profileCacheIter = null;
@@ -523,6 +524,99 @@ body {
   }
   function safeId(id) { return 'node-' + String(id).replace(/\./g, '-'); }
   function statusToString(s) { switch(s){ case 1: return 'Success'; case 2: return 'Failure'; case 3: return 'Running'; default: return 'Unknown'; } }
+  function cloneTreeJS(tree) { return tree ? JSON.parse(JSON.stringify(tree)) : null; }
+  function parentIdJS(id) { var idx = id.lastIndexOf('.'); return idx === -1 ? '' : id.substring(0, idx); }
+  function parseIndexJS(s) { if (!s) return -1; for (var i=0;i<s.length;i++){ var c=s.charCodeAt(i); if(c<48||c>57) return -1;} return parseInt(s,10); }
+  function nodesDifferJS(a,b){
+    if (a.name!==b.name || a.nodeType!==b.nodeType || a.condition!==b.condition || a.postCondition!==b.postCondition || a.frame!==b.frame || a.structureHash!==b.structureHash) return true;
+    var sa=a.status, sb=b.status;
+    if (!sa && sb || sa && !sb) return true;
+    if (sa && sb) { if (sa.LastStatus!==sb.LastStatus || sa.TickCount!==sb.TickCount) return true; }
+    var ea=a.effects||[], eb=b.effects||[];
+    if (ea.length!==eb.length) return true;
+    for (var i=0;i<ea.length;i++){ if(ea[i].key!==eb[i].key || ea[i].value!==eb[i].value) return true; }
+    return false;
+  }
+  function flattenTreeMapJS(tree, map){
+    if(!tree) return;
+    map[tree.id]=tree;
+    if(tree.children){ for(var i=0;i<tree.children.length;i++) flattenTreeMapJS(tree.children[i], map); }
+  }
+  function applyDeltaJS(base, delta){
+    if(!delta) return cloneTreeJS(base);
+    if(!base){
+      if(delta.added && delta.added.length){
+        for(var i=0;i<delta.added.length;i++){ if(delta.added[i].id==='0') return cloneTreeJS(delta.added[i]); }
+      }
+      return null;
+    }
+    var result=cloneTreeJS(base);
+    var idMap={}; flattenTreeMapJS(result, idMap);
+    // Removed
+    if(delta.removed){
+      for(var r=0;r<delta.removed.length;r++){
+        var rid=delta.removed[r];
+        var parent=parentIdJS(rid);
+        if(!parent) continue;
+        var parentNode=idMap[parent];
+        if(!parentNode||!parentNode.children) continue;
+        var suffix=rid.substring(parent.length+1);
+        var idx=parseIndexJS(suffix);
+        if(idx<0||idx>=parentNode.children.length) {
+          var found=-1;
+          for(var k=0;k<parentNode.children.length;k++){ if(parentNode.children[k].id===rid){ found=k; break; } }
+          if(found===-1) continue;
+          idx=found;
+        } else if(parentNode.children[idx].id!==rid){
+          var found2=-1;
+          for(var k2=0;k2<parentNode.children.length;k2++){ if(parentNode.children[k2].id===rid){ found2=k2; break; } }
+          if(found2===-1) continue;
+          idx=found2;
+        }
+        parentNode.children.splice(idx,1);
+        idMap={}; flattenTreeMapJS(result, idMap);
+      }
+    }
+    // Added
+    if(delta.added){
+      for(var a=0;a<delta.added.length;a++){
+        var added=delta.added[a];
+        var parentA=parentIdJS(added.id);
+        if(!parentA){
+          result=cloneTreeJS(added);
+          idMap={}; flattenTreeMapJS(result, idMap);
+          continue;
+        }
+        var pNode=idMap[parentA];
+        if(!pNode) continue;
+        if(!pNode.children) pNode.children=[];
+        var suffixA=added.id.substring(parentA.length+1);
+        var idxA=parseIndexJS(suffixA);
+        if(idxA<0) continue;
+        var cloneA=cloneTreeJS(added);
+        if(idxA>=pNode.children.length){ pNode.children.push(cloneA); }
+        else { pNode.children.splice(idxA,0,cloneA); }
+        idMap={}; flattenTreeMapJS(result, idMap);
+      }
+    }
+    // Changed
+    if(delta.changed){
+      for(var c=0;c<delta.changed.length;c++){
+        var ch=delta.changed[c];
+        var node=idMap[ch.id];
+        if(!node) continue;
+        node.name=ch.name||'';
+        node.nodeType=ch.nodeType||node.nodeType;
+        if(ch.hasOwnProperty('condition')) node.condition=ch.condition;
+        if(ch.hasOwnProperty('postCondition')) node.postCondition=ch.postCondition;
+        if(ch.hasOwnProperty('frame')) node.frame=ch.frame;
+        if(ch.hasOwnProperty('structureHash')) node.structureHash=ch.structureHash;
+        if(ch.status) node.status=ch.status; else if(ch.hasOwnProperty('status')) node.status=ch.status;
+        if(ch.effects) node.effects=ch.effects; else if(ch.hasOwnProperty('effects')) node.effects=ch.effects;
+      }
+    }
+    return result;
+  }
 
   function connect() {
     const url = window.location.pathname.replace(/\/ui$/, '/plans/0/events');
@@ -544,13 +638,45 @@ body {
       lastSeq = event.seq || 0;
       addTimelineEvent(event);
       if (liveMode) {
-        pendingTree = event.tree;
-        if (!rafId) {
-          rafId = requestAnimationFrame(function() {
-            if (pendingTree) renderTree(pendingTree);
-            rafId = null;
-            pendingTree = null;
-          });
+        var treeToRender = null;
+        if (event.tree) {
+          keyframeTree = cloneTreeJS(event.tree);
+          lastReconstructedTree = cloneTreeJS(event.tree);
+          lastReconstructedIteration = event.iteration;
+          treeToRender = event.tree;
+        } else if (event.delta) {
+          if (!lastReconstructedTree || lastReconstructedIteration == null) {
+            fetchTimelineIter(event.iteration);
+            return;
+          }
+          if (event.delta.baseIteration != null && event.delta.baseIteration !== lastReconstructedIteration) {
+            // Base mismatch (missed intermediate deltas) — fetch full snapshot.
+            fetchTimelineIter(event.iteration);
+            return;
+          }
+          treeToRender = applyDeltaJS(lastReconstructedTree, event.delta);
+          if (!treeToRender) {
+            fetchTimelineIter(event.iteration);
+            return;
+          }
+          lastReconstructedTree = cloneTreeJS(treeToRender);
+          lastReconstructedIteration = event.iteration;
+          if (event.isKeyframe && event.tree) {
+            keyframeTree = cloneTreeJS(event.tree);
+          }
+        } else if (event.isKeyframe) {
+          fetchTimelineIter(event.iteration);
+          return;
+        }
+        if (treeToRender) {
+          pendingTree = treeToRender;
+          if (!rafId) {
+            rafId = requestAnimationFrame(function() {
+              if (pendingTree) renderTree(pendingTree);
+              rafId = null;
+              pendingTree = null;
+            });
+          }
         }
       }
     };

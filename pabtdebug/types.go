@@ -104,6 +104,30 @@ type DiffNode struct {
 	NewStatus  string `json:"newStatus,omitempty"`
 }
 
+// TreeDelta represents the incremental difference between two tree snapshots.
+// It is used for delta encoding to reduce SSE payload size.
+type TreeDelta struct {
+	BaseIteration   int                `json:"baseIteration"`
+	TargetIteration int                `json:"targetIteration"`
+	Added           []TreeNode         `json:"added,omitempty"`
+	Removed         []string           `json:"removed,omitempty"`
+	Changed         []DeltaChangedNode `json:"changed,omitempty"`
+}
+
+// DeltaChangedNode represents a node whose fields changed between two snapshots.
+// Fields are intentionally without omitempty so empty/cleared values round-trip explicitly.
+type DeltaChangedNode struct {
+	ID            string           `json:"id"`
+	Name          string           `json:"name"`
+	NodeType      string           `json:"nodeType"`
+	Status        *pabt.NodeStatus `json:"status"`
+	Effects       []EffectInfo     `json:"effects"`
+	Condition     string           `json:"condition"`
+	PostCondition string           `json:"postCondition"`
+	Frame         string           `json:"frame"`
+	StructureHash string           `json:"structureHash"`
+}
+
 // SSEEvent represents an event broadcast via Server-Sent Events, including
 // a sequence number for future SSE replay support.
 type SSEEvent struct {
@@ -111,6 +135,8 @@ type SSEEvent struct {
 	Iteration     int         `json:"iteration"`
 	Status        bt.Status   `json:"status"`
 	Tree          *TreeNode   `json:"tree,omitempty"`
+	Delta         *TreeDelta  `json:"delta,omitempty"`
+	IsKeyframe    bool        `json:"isKeyframe,omitempty"`
 	Timestamp     time.Time   `json:"timestamp"`
 	DurationMs    float64     `json:"durationMs,omitempty"`
 	NodeCount     int         `json:"nodeCount,omitempty"`
