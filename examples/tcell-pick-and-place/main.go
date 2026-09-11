@@ -173,25 +173,22 @@ func run(cmd string, args []string) (exitCode int) {
 				planNode  = pnpResult.Node
 			)
 
-			if debug != `` && i == 0 {
-				tracker := pabtdebug.NewTracker(pnpResult.Plan)
-				planNode = bt.New(func(children []bt.Node) (bt.Status, error) {
-					status, err := pnpResult.Node.Tick()
-					tracker.Track(status, err)
-					return status, err
-				})
-				debugServer = pabtdebug.NewServer(tracker, string(debug))
-				go func() {
-					log.Printf("debug server: %s", debugServer.Start())
-				}()
-			} else if debug != `` {
-				tracker := pabtdebug.NewTracker(pnpResult.Plan)
+			if debug != `` {
+				tracker := pabtdebug.NewTrackerWithID(pnpResult.Plan, name)
 				origNode := planNode
 				planNode = bt.New(func(children []bt.Node) (bt.Status, error) {
 					status, err := origNode.Tick()
 					tracker.Track(status, err)
 					return status, err
 				})
+				if i == 0 {
+					debugServer = pabtdebug.NewServer(tracker, string(debug))
+					go func() {
+						log.Printf("debug server: %s", debugServer.Start())
+					}()
+				} else {
+					debugServer.RegisterTracker(tracker)
+				}
 			}
 
 			ticker := newTicker(ctx, time.Millisecond*10, bt.New(

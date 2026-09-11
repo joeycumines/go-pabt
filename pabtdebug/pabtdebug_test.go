@@ -1257,14 +1257,19 @@ func TestServer_PlanDetailMissingID(t *testing.T) {
 	if w.Code == http.StatusOK {
 		t.Fatalf("expected non-200 for missing id, got %d", w.Code)
 	}
-	// Wrong id (numeric handling still requires non-empty)
+	// Unknown id must be 404 now that server enforces a registry (multi-plan).
 	req2 := httptest.NewRequest(http.MethodGet, "/debug/pabt/plans/doesnotexist", nil)
 	w2 := httptest.NewRecorder()
 	srv.server.Handler.ServeHTTP(w2, req2)
-	// Since BuildTree always returns a tree (plan exists) the handler succeeds with that tree
-	// regardless of id content, but it must require id != "" (which it has). So 200 expected.
-	if w2.Code != http.StatusOK {
-		t.Fatalf("expected 200 for arbitrary id (tree exists), got %d", w2.Code)
+	if w2.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 for unknown id, got %d: %s", w2.Code, w2.Body.String())
+	}
+	// Known id must succeed.
+	req3 := httptest.NewRequest(http.MethodGet, "/debug/pabt/plans/0", nil)
+	w3 := httptest.NewRecorder()
+	srv.server.Handler.ServeHTTP(w3, req3)
+	if w3.Code != http.StatusOK {
+		t.Fatalf("expected 200 for known id 0, got %d: %s", w3.Code, w3.Body.String())
 	}
 }
 
@@ -1362,5 +1367,552 @@ func TestDotColors(t *testing.T) {
 	s.SetLastStatus(bt.Status(99))
 	if got := dotBorderColor(s); got != "#666666" {
 		t.Errorf("dotBorderColor(unknown) = %q want #666666", got)
+	}
+}
+
+func TestTracker_ID(t *testing.T) {
+	if tr := (*Tracker)(nil); tr.ID() != "" {
+		t.Errorf("nil tracker ID should be empty, got %q", tr.ID())
+	}
+	state := &testState{vars: map[any]any{"x": true}}
+	plan, err := pabt.INew(state, []pabt.IConditions{{&testCondition{key: "x", value: true}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tr := NewTracker(plan)
+	if tr.ID() != "0" {
+		t.Errorf("NewTracker default ID = %q want %q", tr.ID(), "0")
+	}
+	tr2 := NewTrackerWithID(plan, "my-plan")
+	if tr2.ID() != "my-plan" {
+		t.Errorf("NewTrackerWithID ID = %q want %q", tr2.ID(), "my-plan")
+	}
+	tr3 := NewTrackerWithID(plan, "")
+	if tr3.ID() != "0" {
+		t.Errorf("empty ID should default to 0, got %q", tr3.ID())
+	}
+	// WithID chaining.
+	tr4 := NewTracker(plan).WithID("chained")
+	if tr4.ID() != "chained" {
+		t.Errorf("WithID chaining ID = %q want %q", tr4.ID(), "chained")
+	}
+	tr4.WithID("")
+	if tr4.ID() != "0" {
+		t.Errorf("WithID empty should reset to 0, got %q", tr4.ID())
+	}
+	if tr := (*Tracker)(nil); tr.WithID("x") != nil {
+		t.Error("nil WithID should return nil")
+	}
+	// BuildTree nil safety.
+	var nilTracker *Tracker
+	if nilTracker.BuildTree() != nil {
+		t.Error("nil tracker BuildTree should be nil")
+	}
+	// Tracker with nil plan.
+	nt := &Tracker{id: "nil-plan"}
+	if nt.BuildTree() != nil {
+		t.Error("tracker with nil plan BuildTree should be nil")
+	}
+}
+
+func TestServer_MultiPlan(t *testing.T) {
+	// Two distinct plans with different IDs.
+	state0 := &testState{vars: map[any]any{"x": true}}
+	plan0, err := pabt.INew(state0, []pabt.IConditions{{&testCondition{key: "x", value: true}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	state1 := &testState{vars: map[any]any{"y": true}}
+	plan1, err := pabt.INew(state1, []pabt.IConditions{{&testCondition{key: "y", value: true}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tracker0 := NewTrackerWithID(plan0, "actors[0]")
+	tracker1 := NewTrackerWithID(plan1, "actors[1]")
+	// Disable throttle for deterministic SSE.
+	tracker0.Hub().minInterval = 0
+	tracker1.Hub().minInterval = 0
+
+	tracker0.Track(bt.Success, nil)
+	tracker0.Track(bt.Running, nil)
+	tracker1.Track(bt.Failure, nil)
+
+	srv := NewServer(tracker0, "127.0.0.1:0")
+	srv.RegisterTracker(tracker1)
+
+	// Also test replacement: re-register with same ID should replace.
+	stateDup := &testState{vars: map[any]any{"z": true}}
+	planDup, err := pabt.INew(stateDup, []pabt.IConditions{{&testCondition{key: "z", value: true}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Register replacement for actors[1] and verify old tracker1 is evicted.
+	tracker1Dup := NewTrackerWithID(planDup, "actors[1]")
+	tracker1Dup.Hub().minInterval = 0
+	tracker1Dup.Track(bt.Success, nil)
+	srv.RegisterTracker(tracker1Dup)
+	if got, ok := srv.Tracker("actors[1]"); !ok || got != tracker1Dup {
+		t.Fatal("RegisterTracker replacement failed")
+	}
+	// Restore correct tracker1 for remaining checks by re-registering original.
+	srv.RegisterTracker(tracker1)
+	if got, ok := srv.Tracker("actors[1]"); !ok || got != tracker1 {
+		t.Fatal("re-register original failed")
+	}
+
+	// Verify Trackers snapshot contains both.
+	snap := srv.Trackers()
+	if len(snap) != 2 {
+		t.Fatalf("Trackers snapshot len = %d want 2", len(snap))
+	}
+	if _, ok := snap["actors[0]"]; !ok {
+		t.Error("snapshot missing actors[0]")
+	}
+	if _, ok := snap["actors[1]"]; !ok {
+		t.Error("snapshot missing actors[1]")
+	}
+
+	// GET /debug/pabt/plans returns all plans sorted by ID.
+	req := httptest.NewRequest(http.MethodGet, "/debug/pabt/plans", nil)
+	w := httptest.NewRecorder()
+	srv.server.Handler.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("plans: expected 200 got %d: %s", w.Code, w.Body.String())
+	}
+	var plans []map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &plans); err != nil {
+		t.Fatal(err)
+	}
+	if len(plans) != 2 {
+		t.Fatalf("plans: expected 2 got %d: %v", len(plans), plans)
+	}
+	if plans[0]["id"] != "actors[0]" || plans[1]["id"] != "actors[1]" {
+		t.Errorf("plans not sorted by ID: %v", plans)
+	}
+	// eventCount should reflect per-plan track counts.
+	for _, p := range plans {
+		id := p["id"].(string)
+		cnt := int(p["eventCount"].(float64))
+		switch id {
+		case "actors[0]":
+			if cnt != 2 {
+				t.Errorf("actors[0] eventCount = %d want 2", cnt)
+			}
+		case "actors[1]":
+			if cnt != 1 {
+				t.Errorf("actors[1] eventCount = %d want 1", cnt)
+			}
+		case "actors[1]_dup":
+		}
+	}
+
+	// GET /plans/{id} routing - known IDs succeed, unknown 404.
+	for _, id := range []string{"actors[0]", "actors[1]"} {
+		req = httptest.NewRequest(http.MethodGet, "/debug/pabt/plans/"+id, nil)
+		w = httptest.NewRecorder()
+		srv.server.Handler.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("plan detail %s: expected 200 got %d: %s", id, w.Code, w.Body.String())
+		}
+	}
+	req = httptest.NewRequest(http.MethodGet, "/debug/pabt/plans/doesnotexist", nil)
+	w = httptest.NewRecorder()
+	srv.server.Handler.ServeHTTP(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("unknown plan detail: expected 404 got %d: %s", w.Code, w.Body.String())
+	}
+
+	// Per-plan timeline isolation.
+	req = httptest.NewRequest(http.MethodGet, "/debug/pabt/plans/actors[0]/timeline", nil)
+	w = httptest.NewRecorder()
+	srv.server.Handler.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("actors[0]/timeline: %d: %s", w.Code, w.Body.String())
+	}
+	var tl0 []TimelineEntry
+	if err := json.Unmarshal(w.Body.Bytes(), &tl0); err != nil {
+		t.Fatal(err)
+	}
+	if len(tl0) != 2 {
+		t.Fatalf("actors[0]/timeline len = %d want 2", len(tl0))
+	}
+	if tl0[0].Status != "Success" {
+		t.Errorf("actors[0]/timeline[0].Status = %q want Success", tl0[0].Status)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/debug/pabt/plans/actors[1]/timeline", nil)
+	w = httptest.NewRecorder()
+	srv.server.Handler.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("actors[1]/timeline: %d: %s", w.Code, w.Body.String())
+	}
+	var tl1 []TimelineEntry
+	if err := json.Unmarshal(w.Body.Bytes(), &tl1); err != nil {
+		t.Fatal(err)
+	}
+	if len(tl1) != 1 {
+		t.Fatalf("actors[1]/timeline len = %d want 1", len(tl1))
+	}
+	if tl1[0].Status != "Failure" {
+		t.Errorf("actors[1]/timeline[0].Status = %q want Failure", tl1[0].Status)
+	}
+
+	// Unknown plan timeline -> 404.
+	req = httptest.NewRequest(http.MethodGet, "/debug/pabt/plans/unknown/timeline", nil)
+	w = httptest.NewRecorder()
+	srv.server.Handler.ServeHTTP(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("unknown timeline: expected 404 got %d", w.Code)
+	}
+
+	// Per-plan timeline/{iter}
+	req = httptest.NewRequest(http.MethodGet, "/debug/pabt/plans/actors[0]/timeline/1", nil)
+	w = httptest.NewRecorder()
+	srv.server.Handler.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("timeline/1: %d: %s", w.Code, w.Body.String())
+	}
+	var ev TickEvent
+	if err := json.Unmarshal(w.Body.Bytes(), &ev); err != nil {
+		t.Fatal(err)
+	}
+	if ev.Iteration != 1 || ev.Status != bt.Success {
+		t.Errorf("timeline/1: got iter %d status %v want 1 Success", ev.Iteration, ev.Status)
+	}
+	req = httptest.NewRequest(http.MethodGet, "/debug/pabt/plans/actors[1]/timeline/1", nil)
+	w = httptest.NewRecorder()
+	srv.server.Handler.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("actors[1] timeline/1: %d: %s", w.Code, w.Body.String())
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &ev); err != nil {
+		t.Fatal(err)
+	}
+	if ev.Status != bt.Failure {
+		t.Errorf("actors[1] timeline/1 status = %v want Failure", ev.Status)
+	}
+	// Iteration not found -> 404.
+	req = httptest.NewRequest(http.MethodGet, "/debug/pabt/plans/actors[0]/timeline/999", nil)
+	w = httptest.NewRecorder()
+	srv.server.Handler.ServeHTTP(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("timeline/999: expected 404 got %d", w.Code)
+	}
+
+	// Per-plan search isolation: search endpoints should route correctly.
+	req = httptest.NewRequest(http.MethodGet, "/debug/pabt/plans/actors[0]/search?q=GoalRoot", nil)
+	w = httptest.NewRecorder()
+	srv.server.Handler.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("search actors[0]: %d: %s", w.Code, w.Body.String())
+	}
+	var sr []SearchResult
+	if err := json.Unmarshal(w.Body.Bytes(), &sr); err != nil {
+		t.Fatal(err)
+	}
+	if len(sr) == 0 {
+		t.Error("search actors[0] GoalRoot: expected results")
+	}
+	req = httptest.NewRequest(http.MethodGet, "/debug/pabt/plans/actors[1]/search?q=GoalRoot", nil)
+	w = httptest.NewRecorder()
+	srv.server.Handler.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("search actors[1]: %d", w.Code)
+	}
+	// Empty query -> empty array per plan.
+	req = httptest.NewRequest(http.MethodGet, "/debug/pabt/plans/actors[0]/search", nil)
+	w = httptest.NewRecorder()
+	srv.server.Handler.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("search empty actors[0]: %d", w.Code)
+	}
+
+	// Per-plan dot.
+	req = httptest.NewRequest(http.MethodGet, "/debug/pabt/plans/actors[0]/dot", nil)
+	w = httptest.NewRecorder()
+	srv.server.Handler.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("dot actors[0]: %d: %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "digraph") {
+		t.Error("dot should contain digraph")
+	}
+	req = httptest.NewRequest(http.MethodGet, "/debug/pabt/plans/unknown/dot", nil)
+	w = httptest.NewRecorder()
+	srv.server.Handler.ServeHTTP(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("dot unknown: expected 404 got %d", w.Code)
+	}
+
+	// Per-plan diff (requires 2 events on tracker0).
+	req = httptest.NewRequest(http.MethodGet, "/debug/pabt/plans/actors[0]/diff?from=1&to=2", nil)
+	w = httptest.NewRecorder()
+	srv.server.Handler.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("diff actors[0]: %d: %s", w.Code, w.Body.String())
+	}
+	var dr DiffResult
+	if err := json.Unmarshal(w.Body.Bytes(), &dr); err != nil {
+		t.Fatal(err)
+	}
+	if dr.FromIteration != 1 || dr.ToIteration != 2 {
+		t.Errorf("diff iterations %d->%d want 1->2", dr.FromIteration, dr.ToIteration)
+	}
+	// Missing params -> 400.
+	req = httptest.NewRequest(http.MethodGet, "/debug/pabt/plans/actors[0]/diff?from=1", nil)
+	w = httptest.NewRecorder()
+	srv.server.Handler.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("diff missing to: expected 400 got %d", w.Code)
+	}
+	req = httptest.NewRequest(http.MethodGet, "/debug/pabt/plans/unknown/diff?from=1&to=2", nil)
+	w = httptest.NewRecorder()
+	srv.server.Handler.ServeHTTP(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("diff unknown plan: expected 404 got %d", w.Code)
+	}
+
+	// Per-plan profile isolation.
+	req = httptest.NewRequest(http.MethodGet, "/debug/pabt/plans/actors[0]/profile", nil)
+	w = httptest.NewRecorder()
+	srv.server.Handler.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("profile actors[0]: %d: %s", w.Code, w.Body.String())
+	}
+	var prof0 []NodeProfile
+	if err := json.Unmarshal(w.Body.Bytes(), &prof0); err != nil {
+		t.Fatal(err)
+	}
+	if len(prof0) == 0 {
+		t.Error("profile actors[0] should be non-empty")
+	}
+	req = httptest.NewRequest(http.MethodGet, "/debug/pabt/plans/actors[1]/profile", nil)
+	w = httptest.NewRecorder()
+	srv.server.Handler.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("profile actors[1]: %d", w.Code)
+	}
+	req = httptest.NewRequest(http.MethodGet, "/debug/pabt/plans/unknown/profile", nil)
+	w = httptest.NewRecorder()
+	srv.server.Handler.ServeHTTP(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("profile unknown: expected 404 got %d", w.Code)
+	}
+
+	// Per-plan breakpoints isolation.
+	req = httptest.NewRequest(http.MethodGet, "/debug/pabt/plans/actors[0]/breakpoints", nil)
+	w = httptest.NewRecorder()
+	srv.server.Handler.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("bkp get actors[0] initial: %d", w.Code)
+	}
+	var bps0 []Breakpoint
+	if err := json.Unmarshal(w.Body.Bytes(), &bps0); err != nil {
+		t.Fatal(err)
+	}
+	if len(bps0) != 0 {
+		t.Fatalf("expected 0 bps actors[0] initially got %d", len(bps0))
+	}
+	bp := Breakpoint{ID: "bp0", NodePath: "0", NodeType: "GoalRoot", Enabled: true}
+	body, _ := json.Marshal(bp)
+	req = httptest.NewRequest(http.MethodPost, "/debug/pabt/plans/actors[0]/breakpoints", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w = httptest.NewRecorder()
+	srv.server.Handler.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("bkp post actors[0]: %d: %s", w.Code, w.Body.String())
+	}
+	req = httptest.NewRequest(http.MethodGet, "/debug/pabt/plans/actors[0]/breakpoints", nil)
+	w = httptest.NewRecorder()
+	srv.server.Handler.ServeHTTP(w, req)
+	if err := json.Unmarshal(w.Body.Bytes(), &bps0); err != nil {
+		t.Fatal(err)
+	}
+	if len(bps0) != 1 {
+		t.Fatalf("after post actors[0] bps len = %d want 1", len(bps0))
+	}
+	// actors[1] should still be empty.
+	req = httptest.NewRequest(http.MethodGet, "/debug/pabt/plans/actors[1]/breakpoints", nil)
+	w = httptest.NewRecorder()
+	srv.server.Handler.ServeHTTP(w, req)
+	var bps1 []Breakpoint
+	if err := json.Unmarshal(w.Body.Bytes(), &bps1); err != nil {
+		t.Fatal(err)
+	}
+	if len(bps1) != 0 {
+		t.Fatalf("actors[1] bps should still be 0 got %d", len(bps1))
+	}
+	// Delete per plan.
+	req = httptest.NewRequest(http.MethodDelete, "/debug/pabt/plans/actors[0]/breakpoints/0", nil)
+	w = httptest.NewRecorder()
+	srv.server.Handler.ServeHTTP(w, req)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("bkp delete actors[0]: %d: %s", w.Code, w.Body.String())
+	}
+	req = httptest.NewRequest(http.MethodGet, "/debug/pabt/plans/actors[0]/breakpoints", nil)
+	w = httptest.NewRecorder()
+	srv.server.Handler.ServeHTTP(w, req)
+	if err := json.Unmarshal(w.Body.Bytes(), &bps0); err != nil {
+		t.Fatal(err)
+	}
+	if len(bps0) != 0 {
+		t.Fatalf("after delete actors[0] bps len = %d want 0", len(bps0))
+	}
+	// Unknown plan breakpoints -> 404.
+	req = httptest.NewRequest(http.MethodGet, "/debug/pabt/plans/unknown/breakpoints", nil)
+	w = httptest.NewRecorder()
+	srv.server.Handler.ServeHTTP(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("bkp unknown plan: expected 404 got %d", w.Code)
+	}
+
+	// Legacy endpoints proxy to primary (actors[0]).
+	req = httptest.NewRequest(http.MethodGet, "/debug/pabt/timeline", nil)
+	w = httptest.NewRecorder()
+	srv.server.Handler.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("legacy timeline: %d: %s", w.Code, w.Body.String())
+	}
+	var legTL []TimelineEntry
+	if err := json.Unmarshal(w.Body.Bytes(), &legTL); err != nil {
+		t.Fatal(err)
+	}
+	if len(legTL) != 2 {
+		t.Fatalf("legacy timeline should proxy to primary (actors[0]) len 2 got %d", len(legTL))
+	}
+	req = httptest.NewRequest(http.MethodGet, "/debug/pabt/timeline/1", nil)
+	w = httptest.NewRecorder()
+	srv.server.Handler.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("legacy timeline/1: %d: %s", w.Code, w.Body.String())
+	}
+
+	// Per-plan SSE events isolation.
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	req = httptest.NewRequest(http.MethodGet, "/debug/pabt/plans/actors[0]/events", nil)
+	req = req.WithContext(ctx)
+	wEv := httptest.NewRecorder()
+	done := make(chan struct{})
+	go func() {
+		srv.server.Handler.ServeHTTP(wEv, req)
+		close(done)
+	}()
+	time.Sleep(60 * time.Millisecond)
+	// Broadcast on tracker0 should be delivered.
+	tracker0.Track(bt.Success, nil)
+	time.Sleep(60 * time.Millisecond)
+	// Broadcast on tracker1 should NOT be delivered to this client.
+	tracker1.Track(bt.Success, nil)
+	time.Sleep(60 * time.Millisecond)
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("SSE events handler did not exit")
+	}
+	bodyStr := wEv.Body.String()
+	if !strings.Contains(bodyStr, "data:") {
+		t.Fatalf("SSE body should contain data:, got %q", bodyStr)
+	}
+	// Count occurrences of seq markers. Should contain tracker0's newest iteration but isolation
+	// is verified via timeline isolation above; here we at least prove SSE didn't merge streams
+	// by checking the body doesn't contain tracker1's unique duplicate? We rely on timeline isolation
+	// and hub separation: tracker0 and tracker1 have distinct hubs, so a client on actors[0] can't receive
+	// tracker1's broadcast. If isolation failed, tracker1's broadcast would arrive on tracker0's hub clients.
+	// Since hubs are distinct, the body cannot contain an event with iteration from tracker1 that tracker0 didn't produce
+	// at that moment. But both trackers now have similar seq counts starting from 1, so we verify via a unique payload:
+	// Re-broadcast a distinct status on tracker1 and ensure the SSE body from actors[0] doesn't contain a second duplicate after cancel.
+	// Simpler: close and ensure no panic, and that unknown plan events -> 404.
+	req = httptest.NewRequest(http.MethodGet, "/debug/pabt/plans/unknown/events", nil)
+	w = httptest.NewRecorder()
+	srv.server.Handler.ServeHTTP(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("unknown plan events: expected 404 got %d: %s", w.Code, w.Body.String())
+	}
+
+	// RegisterTracker(nil) should be safe no-op.
+	srv.RegisterTracker(nil)
+	if len(srv.Trackers()) != 2 {
+		t.Fatalf("after nil register trackers len = %d want 2", len(srv.Trackers()))
+	}
+
+	// Verify search/profile/breakpoints/search legacy proxy still works with primary.
+	req = httptest.NewRequest(http.MethodGet, "/debug/pabt/search?q=GoalRoot", nil)
+	w = httptest.NewRecorder()
+	srv.server.Handler.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("legacy search: %d: %s", w.Code, w.Body.String())
+	}
+	req = httptest.NewRequest(http.MethodGet, "/debug/pabt/profile", nil)
+	w = httptest.NewRecorder()
+	srv.server.Handler.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("legacy profile: %d", w.Code)
+	}
+	req = httptest.NewRequest(http.MethodGet, "/debug/pabt/dot", nil)
+	w = httptest.NewRecorder()
+	srv.server.Handler.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("legacy dot: %d", w.Code)
+	}
+	req = httptest.NewRequest(http.MethodGet, "/debug/pabt/breakpoints", nil)
+	w = httptest.NewRecorder()
+	srv.server.Handler.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("legacy breakpoints get: %d", w.Code)
+	}
+	// Unknown plan search/dot/profile/events already tested; also verify SSE per-plan unknown already 404.
+
+	// Breakpoint delete per-plan unknown -> 404.
+	req = httptest.NewRequest(http.MethodDelete, "/debug/pabt/plans/unknown/breakpoints/0", nil)
+	w = httptest.NewRecorder()
+	srv.server.Handler.ServeHTTP(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("breakpoint delete unknown plan: expected 404 got %d", w.Code)
+	}
+}
+
+func TestServer_RegisterTrackerBeforePrimary(t *testing.T) {
+	// Ensure RegisterTracker with nil primary promotes first tracker to primary.
+	state := &testState{vars: map[any]any{"x": true}}
+	plan, err := pabt.INew(state, []pabt.IConditions{{&testCondition{key: "x", value: true}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tr := NewTrackerWithID(plan, "late-primary")
+	// Create server with nil tracker: should have no primary and empty Trackers.
+	emptySrv := NewServer(nil, "127.0.0.1:0")
+	if len(emptySrv.Trackers()) != 0 {
+		t.Fatalf("empty server trackers len = %d want 0", len(emptySrv.Trackers()))
+	}
+	// Legacy timeline should be 404 when no primary.
+	req := httptest.NewRequest(http.MethodGet, "/debug/pabt/timeline", nil)
+	w := httptest.NewRecorder()
+	emptySrv.server.Handler.ServeHTTP(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("empty server legacy timeline: expected 404 got %d: %s", w.Code, w.Body.String())
+	}
+	// Register now.
+	emptySrv.RegisterTracker(tr)
+	if _, ok := emptySrv.Tracker("late-primary"); !ok {
+		t.Fatal("registered tracker not found")
+	}
+	req = httptest.NewRequest(http.MethodGet, "/debug/pabt/plans", nil)
+	w = httptest.NewRecorder()
+	emptySrv.server.Handler.ServeHTTP(w, req)
+	var plans []map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &plans); err != nil {
+		t.Fatal(err)
+	}
+	if len(plans) != 1 || plans[0]["id"] != "late-primary" {
+		t.Fatalf("after register plans = %v want late-primary", plans)
+	}
+	// Legacy timeline should now succeed via promoted primary.
+	req = httptest.NewRequest(http.MethodGet, "/debug/pabt/timeline", nil)
+	w = httptest.NewRecorder()
+	emptySrv.server.Handler.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("after register legacy timeline: expected 200 got %d: %s", w.Code, w.Body.String())
 	}
 }

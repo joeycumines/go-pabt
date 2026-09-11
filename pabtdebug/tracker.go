@@ -41,6 +41,7 @@ type eventEntry struct {
 }
 
 type Tracker struct {
+	id            string
 	plan          *pabt.IPlan
 	entries       []eventEntry
 	treeStore     map[int]*TreeNode
@@ -59,7 +60,18 @@ type Tracker struct {
 }
 
 func NewTracker(plan *pabt.IPlan) *Tracker {
+	return NewTrackerWithID(plan, "0")
+}
+
+// NewTrackerWithID creates a tracker for the given plan with the specified ID.
+// The ID is used to distinguish multiple plans in a multi-plan debug server.
+// If id is empty, it defaults to "0" for backward compatibility.
+func NewTrackerWithID(plan *pabt.IPlan, id string) *Tracker {
+	if id == "" {
+		id = "0"
+	}
 	return &Tracker{
+		id:          id,
 		plan:        plan,
 		entries:     make([]eventEntry, 0),
 		treeStore:   make(map[int]*TreeNode),
@@ -71,6 +83,26 @@ func NewTracker(plan *pabt.IPlan) *Tracker {
 		breakpoints: make(map[string]*Breakpoint),
 		profiles:    make(map[string]*NodeProfile),
 	}
+}
+
+// ID returns the plan identifier for this tracker.
+func (t *Tracker) ID() string {
+	if t == nil {
+		return ""
+	}
+	return t.id
+}
+
+// WithID sets the tracker ID and returns the tracker for chaining.
+// This allows NewTracker(plan).WithID("my-plan") construction.
+func (t *Tracker) WithID(id string) *Tracker {
+	if t != nil {
+		if id == "" {
+			id = "0"
+		}
+		t.id = id
+	}
+	return t
 }
 
 func (t *Tracker) Track(status bt.Status, err error) {
@@ -176,6 +208,9 @@ func (t *Tracker) Hub() *Hub {
 }
 
 func (t *Tracker) BuildTree() *TreeNode {
+	if t == nil || t.plan == nil {
+		return nil
+	}
 	node := t.plan.Node()
 	return buildTreeFromMetadata(node, "0")
 }
