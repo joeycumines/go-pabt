@@ -273,20 +273,15 @@ func (p *Plan[T]) bt() (bt.Tick, []bt.Node) {
 		}
 		cf, ok := p.root.search()
 		if !ok {
-			// Relevant excerpt:
-			//
-			// If no such condition is found (Algorithm 7 Line 5) that means that an action returned Failure due to
-			// an old refinement that is no longer valid. In that case, at the next loop of Algorithm 5 a new
-			// refinement is found (Algorithm 5 Line 5), assuming that such a refinement always exists.
-			// ..
-			// Moreover, note that PA-BT refines the BT every time it returns Failure. This is to encompass the case
-			// where an older refinement is no longer valid. Is such cases an action will return Failure. This Failure
-			// is propagated up to the root. The function ExpandTree (Algorithm 5 Line 10) will return the very same
-			// tree (the tree needs no extension as there is no failed condition of an action) which gets re-refined
-			// in the next loop (Algorithm 5 Line 5). For example, if the robot planned to place the object in a
-			// particular position on the desk but this position was no longer feasible (e.g. another object was
-			// placed in that position by an external agent).
-			p.root = nil
+			// No failed unexpanded precondition found. The tree is fully expanded.
+			// Return Failure so the caller can handle convergence or retry.
+			// We intentionally do NOT set p.root = nil here because doing so would
+			// trigger init() on the next Tick(), which calls generateOr()->generateAnd()
+			// ->captureFrame()->node.Value(). Since go-behaviortree v1.11.0's Value()
+			// uses a non-reentrant sync.Mutex (valueSync), re-init during or after a
+			// tree traversal causes a re-entrant deadlock. Keeping p.root intact allows
+			// subsequent Ticks to re-search the existing tree safely.
+			status = bt.Failure
 			return
 		}
 		err = cf.expand()
