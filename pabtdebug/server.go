@@ -70,6 +70,10 @@ func NewServer(tracker *Tracker, addr string) *Server {
 	mux.HandleFunc("/debug/pabt/plans/{id}/breakpoints", s.handlePlanBreakpoints)
 	mux.HandleFunc("/debug/pabt/plans/{id}/breakpoints/{path}", s.handlePlanBreakpointDelete)
 	mux.HandleFunc("/debug/pabt/ui", s.handleUI)
+	mux.HandleFunc("/debug/pabt/export", s.handleExport)
+	mux.HandleFunc("/debug/pabt/import", s.handleImport)
+	mux.HandleFunc("/debug/pabt/plans/{id}/export", s.handlePlanExport)
+	mux.HandleFunc("/debug/pabt/plans/{id}/import", s.handlePlanImport)
 	mux.HandleFunc("/debug/pabt/timeline", s.handleTimeline)
 	mux.HandleFunc("/debug/pabt/timeline/{iter}", s.handleTimelineIter)
 	mux.HandleFunc("/debug/pabt/search", s.handleSearch)
@@ -393,6 +397,71 @@ func (s *Server) handlePlanBreakpointDelete(w http.ResponseWriter, r *http.Reque
 	}
 	t.RemoveBreakpoint(path)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) handleExport(w http.ResponseWriter, r *http.Request) {
+	t, ok := s.resolveTracker(r)
+	if !ok || t == nil {
+		http.Error(w, "no plan registered", http.StatusNotFound)
+		return
+	}
+	s.serveExport(w, r, t)
+}
+
+func (s *Server) handleImport(w http.ResponseWriter, r *http.Request) {
+	t, ok := s.resolveTracker(r)
+	if !ok || t == nil {
+		http.Error(w, "no plan registered", http.StatusNotFound)
+		return
+	}
+	s.serveImport(w, r, t)
+}
+
+func (s *Server) handlePlanExport(w http.ResponseWriter, r *http.Request) {
+	t, ok := s.resolveTracker(r)
+	if !ok || t == nil {
+		http.Error(w, fmt.Sprintf("plan %s not found", r.PathValue("id")), http.StatusNotFound)
+		return
+	}
+	s.serveExport(w, r, t)
+}
+
+func (s *Server) handlePlanImport(w http.ResponseWriter, r *http.Request) {
+	t, ok := s.resolveTracker(r)
+	if !ok || t == nil {
+		http.Error(w, fmt.Sprintf("plan %s not found", r.PathValue("id")), http.StatusNotFound)
+		return
+	}
+	s.serveImport(w, r, t)
+}
+
+func (s *Server) serveExport(w http.ResponseWriter, r *http.Request, t *Tracker) {
+	if r.Method != http.MethodGet && r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	w.Header().Set("Content-Type", "application/jsonl")
+	w.Header().Set("Content-Disposition", "attachment; filename=\"pabt-session-"+t.ID()+".jsonl\"")
+	w.WriteHeader(http.StatusOK)
+	if err := t.WriteJSONL(w); err != nil {
+		// Headers already sent; best effort log
+		_ = err
+	}
+}
+
+func (s *Server) serveImport(w http.ResponseWriter, r *http.Request, t *Tracker) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 50<<20) // 50MB cap
+	count, err := t.ReadJSONL(r.Body)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{"imported": count, "id": t.ID()})
 }
 
 // handleUI serves the embedded web UI.

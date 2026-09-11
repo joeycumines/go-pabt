@@ -18,6 +18,7 @@ package pabt
 
 import (
 	"encoding/json"
+	"fmt"
 	"sync/atomic"
 
 	bt "github.com/joeycumines/go-behaviortree"
@@ -66,6 +67,27 @@ func (s *NodeStatus) MarshalJSON() ([]byte, error) {
 		"TickCount":  s.TickCount(),
 		"LastStatus": s.LastStatus(),
 	})
+}
+
+// UnmarshalJSON restores NodeStatus from JSON produced by MarshalJSON.
+func (s *NodeStatus) UnmarshalJSON(data []byte) error {
+	if s == nil {
+		return fmt.Errorf("pabt: UnmarshalJSON on nil NodeStatus")
+	}
+	// Handle explicit null
+	if string(data) == "null" {
+		return nil
+	}
+	var aux struct {
+		TickCount  int       `json:"TickCount"`
+		LastStatus bt.Status `json:"LastStatus"`
+	}
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	s.SetTickCount(aux.TickCount)
+	s.SetLastStatus(aux.LastStatus)
+	return nil
 }
 
 // GetNodeStatus retrieves the NodeStatus from a bt.Valuer.

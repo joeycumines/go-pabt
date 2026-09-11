@@ -17,7 +17,11 @@
 package pabtdebug
 
 import (
+	"bufio"
+	"encoding/json"
 	"fmt"
+	"io"
+	"os"
 	"sort"
 	"strings"
 	"sync"
@@ -62,6 +66,9 @@ type Tracker struct {
 	keyframeInterval int
 	lastTree         *TreeNode
 	deltaStore       map[int]*TreeDelta
+	overflowPath     string
+	overflowFile     *os.File
+	overflowMu       sync.Mutex
 }
 
 func NewTracker(plan *pabt.IPlan) *Tracker {
@@ -150,6 +157,27 @@ func (t *Tracker) Track(status bt.Status, err error) {
 		NodeCount:     nodeCount,
 		BreakpointHit: event.BreakpointHit,
 	}
+	// Capture evicted entries for overflow persistence before mutating.
+	var evictedEntries []eventEntry
+	var evictedTrees map[int]*TreeNode
+	if t.maxEvents > 0 && len(t.entries)+1 > t.maxEvents {
+		excess := len(t.entries) + 1 - t.maxEvents
+		// Make copy of entries that will be evicted (oldest)
+		evictedEntries = make([]eventEntry, excess)
+		copy(evictedEntries, t.entries[:excess])
+	}
+	// Also capture trees that will be evicted due to maxTrees
+	if tree != nil && t.maxTrees > 0 && len(t.treeStore)+1 > t.maxTrees {
+		excessT := len(t.treeStore) + 1 - t.maxTrees
+		evictedTrees = make(map[int]*TreeNode, excessT)
+		for i := 0; i < excessT && i < len(t.treeOrder); i++ {
+			iterEv := t.treeOrder[i]
+			if tn, ok := t.treeStore[iterEv]; ok {
+				evictedTrees[iterEv] = CloneTree(tn)
+			}
+		}
+	}
+
 	t.entries = append(t.entries, entry)
 	if t.maxEvents > 0 && len(t.entries) > t.maxEvents {
 		t.entries = t.entries[len(t.entries)-t.maxEvents:]
@@ -169,6 +197,47 @@ func (t *Tracker) Track(status bt.Status, err error) {
 			t.treeOrder = t.treeOrder[1:]
 			delete(t.treeStore, oldest)
 		}
+	}
+	// Persist evicted slice to overflow file if configured.
+	if (len(evictedEntries) > 0 || len(evictedTrees) > 0) && t.overflowFile != nil {
+		t.overflowMu.Lock()
+		if t.overflowFile != nil {
+			enc := json.NewEncoder(t.overflowFile)
+			for _, ev := range evictedEntries {
+				// Build TickEvent with its tree if we have it in evictedTrees
+				te := TickEvent{
+					Iteration:     ev.Iteration,
+					Status:        ev.Status,
+					Timestamp:     ev.Timestamp,
+					DurationMs:    ev.DurationMs,
+					NodeCount:     ev.NodeCount,
+					BreakpointHit: ev.BreakpointHit,
+				}
+				if tn, ok := evictedTrees[ev.Iteration]; ok {
+					te.Tree = tn
+				}
+				_ = enc.Encode(te)
+			}
+			// Trees evicted due to maxTrees but whose entries remain (not in evictedEntries) — write standalone tree snapshot line?
+			// For those, write a minimal TickEvent with just Tree and iteration so it can be recovered.
+			for iterEv, tn := range evictedTrees {
+				// If already handled via evictedEntries, skip.
+				skip := false
+				for _, ev := range evictedEntries {
+					if ev.Iteration == iterEv {
+						skip = true
+						break
+					}
+				}
+				if skip {
+					continue
+				}
+				te := TickEvent{Iteration: iterEv, Tree: tn}
+				// Timestamp zero for tree-only eviction; not critical.
+				_ = enc.Encode(te)
+			}
+		}
+		t.overflowMu.Unlock()
 	}
 
 	if tree != nil {
@@ -724,6 +793,191 @@ func (t *Tracker) KeyframeInterval() int {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	return t.keyframeInterval
+}
+
+// SetOverflowFile configures a file to which evicted events are appended as JSONL.
+// When set, sliding-window eviction appends evicted entries instead of discarding them.
+func (t *Tracker) SetOverflowFile(path string) error {
+	t.overflowMu.Lock()
+	defer t.overflowMu.Unlock()
+	if t.overflowFile != nil {
+		t.overflowFile.Close()
+		t.overflowFile = nil
+	}
+	t.overflowPath = path
+	if path == "" {
+		return nil
+	}
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if err != nil {
+		return err
+	}
+	t.overflowFile = f
+	return nil
+}
+
+// CloseOverflow closes the overflow file if any.
+func (t *Tracker) CloseOverflow() error {
+	t.overflowMu.Lock()
+	defer t.overflowMu.Unlock()
+	if t.overflowFile != nil {
+		err := t.overflowFile.Close()
+		t.overflowFile = nil
+		return err
+	}
+	return nil
+}
+
+// OverflowPath returns the configured overflow file path.
+func (t *Tracker) OverflowPath() string {
+	t.overflowMu.Lock()
+	defer t.overflowMu.Unlock()
+	return t.overflowPath
+}
+
+// WriteJSONL writes all current events (with trees) as JSONL to w. One TickEvent per line.
+// If an overflow file is configured, its contents (evicted events) are written first, followed by the in-memory window,
+// providing a lossless export that includes evicted history.
+func (t *Tracker) WriteJSONL(w io.Writer) error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.overflowMu.Lock()
+	overflowPath := t.overflowPath
+	t.overflowMu.Unlock()
+	// If overflow file exists, copy its contents first (evicted history).
+	if overflowPath != "" {
+		if f, err := os.Open(overflowPath); err == nil {
+			_, _ = io.Copy(w, f)
+			f.Close()
+			// Ensure we start a new line if file didn't end with newline (Copy preserves)
+		}
+	}
+	enc := json.NewEncoder(w)
+	for _, e := range t.entries {
+		ev := TickEvent{
+			Iteration:     e.Iteration,
+			Status:        e.Status,
+			Timestamp:     e.Timestamp,
+			DurationMs:    e.DurationMs,
+			NodeCount:     e.NodeCount,
+			BreakpointHit: e.BreakpointHit,
+		}
+		if tree, ok := t.treeStore[e.Iteration]; ok {
+			ev.Tree = CloneTree(tree)
+		}
+		if err := enc.Encode(ev); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ReadJSONL replaces tracker state from JSONL produced by WriteJSONL. Returns number of events imported.
+// Existing state is cleared. Imported events are fully navigable (timeline, diff, search, profile).
+func (t *Tracker) ReadJSONL(r io.Reader) (int, error) {
+	scanner := bufio.NewScanner(r)
+	// Increase buffer for large tree lines (500 nodes)
+	const maxLine = 20 << 20 // 20MB per line
+	buf := make([]byte, 0, 64*1024)
+	scanner.Buffer(buf, maxLine)
+	var events []TickEvent
+	for scanner.Scan() {
+		line := scanner.Bytes()
+		if len(line) == 0 {
+			continue
+		}
+		var ev TickEvent
+		if err := json.Unmarshal(line, &ev); err != nil {
+			return len(events), fmt.Errorf("jsonl decode iteration %d: %w", len(events)+1, err)
+		}
+		events = append(events, ev)
+	}
+	if err := scanner.Err(); err != nil {
+		return len(events), err
+	}
+	if len(events) == 0 {
+		return 0, nil
+	}
+	// Reset state atomically
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.entries = make([]eventEntry, 0, len(events))
+	t.treeStore = make(map[int]*TreeNode, len(events))
+	t.treeOrder = make([]int, 0, len(events))
+	t.eventIndex = make(map[int]int, len(events))
+	t.profiles = make(map[string]*NodeProfile)
+	t.profileSeq = 0
+	t.deltaStore = make(map[int]*TreeDelta)
+	t.lastTree = nil
+	// Use max iteration to set atomic counter
+	maxIter := 0
+	for _, ev := range events {
+		if ev.Iteration > maxIter {
+			maxIter = ev.Iteration
+		}
+		e := eventEntry{
+			Iteration:     ev.Iteration,
+			Status:        ev.Status,
+			Timestamp:     ev.Timestamp,
+			DurationMs:    ev.DurationMs,
+			NodeCount:     ev.NodeCount,
+			BreakpointHit: ev.BreakpointHit,
+		}
+		t.entries = append(t.entries, e)
+		t.eventIndex[ev.Iteration] = len(t.entries) - 1
+		if ev.Tree != nil {
+			cl := CloneTree(ev.Tree)
+			t.treeStore[ev.Iteration] = cl
+			t.treeOrder = append(t.treeOrder, ev.Iteration)
+			walkTreeForProfile(cl, t.profiles, ev.DurationMs)
+			t.profileSeq++
+			t.lastTree = cl
+		}
+	}
+	// Respect maxTrees eviction after import (keep newest maxTrees)
+	if t.maxTrees > 0 && len(t.treeStore) > t.maxTrees {
+		sort.Ints(t.treeOrder)
+		excess := len(t.treeStore) - t.maxTrees
+		for i := 0; i < excess; i++ {
+			oldest := t.treeOrder[i]
+			delete(t.treeStore, oldest)
+		}
+		t.treeOrder = t.treeOrder[excess:]
+	}
+	// Respect maxEvents eviction (keep newest)
+	if t.maxEvents > 0 && len(t.entries) > t.maxEvents {
+		excess := len(t.entries) - t.maxEvents
+		t.entries = t.entries[excess:]
+		t.eventIndex = make(map[int]int, len(t.entries))
+		for i, e := range t.entries {
+			t.eventIndex[e.Iteration] = i
+		}
+		// Also evict corresponding trees if they were beyond window
+		allowed := make(map[int]struct{}, len(t.entries))
+		for _, e := range t.entries {
+			allowed[e.Iteration] = struct{}{}
+		}
+		newOrder := t.treeOrder[:0]
+		for _, iter := range t.treeOrder {
+			if _, ok := allowed[iter]; ok {
+				newOrder = append(newOrder, iter)
+			} else {
+				delete(t.treeStore, iter)
+			}
+		}
+		t.treeOrder = newOrder
+	}
+	t.iteration.Store(int64(maxIter))
+	// Ensure lastTrackTime reflects newest timestamp for duration continuity
+	if len(t.entries) > 0 {
+		t.lastTrackTime = t.entries[len(t.entries)-1].Timestamp
+	}
+	// Rebuild lastTree to newest tree for delta continuity
+	if len(t.treeOrder) > 0 {
+		lastIter := t.treeOrder[len(t.treeOrder)-1]
+		t.lastTree = CloneTree(t.treeStore[lastIter])
+	}
+	return len(events), nil
 }
 
 // DeltaForIteration returns the delta stored for the given iteration, if any.

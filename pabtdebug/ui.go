@@ -363,6 +363,8 @@ body {
       <input id="search-input" type="text" placeholder="Search nodes..." autocomplete="off">
     </div>
     <div id="header-right">
+      <button class="btn" id="btn-save" title="Save Session (File System Access API or download)">Save</button>
+      <button class="btn" id="btn-load" title="Load Session (File System Access API or upload)">Load</button>
       <button class="btn" id="btn-export" title="Export DOT">Export DOT</button>
       <button class="btn" id="btn-diff" title="Diff">Diff</button>
       <button class="btn" id="btn-fullscreen" title="Fullscreen">&#9974;</button>
@@ -497,7 +499,7 @@ body {
   let timelineEvents = [], currentIteration = null;
   let pendingTree = null, rafId = null;
   let keyframeTree = null, lastReconstructedTree = null, lastReconstructedIteration = null;
-  let liveMode = true, playback = false, playbackIdx = 0, playbackTimer = null;
+  let liveMode = true, playback = false, playbackIdx = 0, playbackRaf = null, playbackLastTime = 0, playbackSpeed = 1;
   let pan = { x: 0, y: 0 }, zoom = 1, isDragging = false, dragStart = null, panStart = { x: 0, y: 0 };
   let profileCache = null, profileCacheIter = null;
   let lastSeq = 0;
@@ -691,34 +693,34 @@ body {
     };
   }
 
-  function addTimelineEvent(event) {
-    var entry = {
-      iteration: event.iteration,
-      status: event.status,
-      durationMs: event.durationMs,
-      seq: event.seq,
-      nodeCount: event.nodeCount
-    };
-    timelineEvents.push(entry);
-    if (timelineEvents.length > MAX_TIMELINE_EVENTS) {
-      timelineEvents = timelineEvents.slice(timelineEvents.length - MAX_TIMELINE_EVENTS);
-      if (timelineList.firstChild) timelineList.removeChild(timelineList.firstChild);
-    }
-    currentIteration = event.iteration;
-    appendTimelineRow(entry);
-    if (profileCacheIter !== currentIteration) { profileCache = null; }
-    if (liveMode) {
-      const rows = timelineList.querySelectorAll('.tl-row');
-      if (rows.length) rows[rows.length - 1].scrollIntoView({ block: 'end' });
+  // ---- Virtual Timeline (D9/D10) ----
+  const VIRTUAL_ROW_HEIGHT = 24;
+  const VIRTUAL_BUFFER = 8;
+  let virtualTopSpacer = null, virtualBottomSpacer = null;
+  let virtualFetchingOlder = false;
+  let virtualPendingRender = false;
+  function ensureTimelineVirtualSpacers() {
+    if (virtualTopSpacer && virtualBottomSpacer) return;
+    virtualTopSpacer = document.createElement('div');
+    virtualTopSpacer.id = 'tl-top-spacer';
+    virtualBottomSpacer = document.createElement('div');
+    virtualBottomSpacer.id = 'tl-bottom-spacer';
+    // Insert spacers if not already present; rows will be between them.
+    if (timelineList.firstChild) {
+      timelineList.insertBefore(virtualTopSpacer, timelineList.firstChild);
+      timelineList.appendChild(virtualBottomSpacer);
+    } else {
+      timelineList.appendChild(virtualTopSpacer);
+      timelineList.appendChild(virtualBottomSpacer);
     }
   }
-
-  function appendTimelineRow(ev) {
+  function createTimelineRowElement(ev) {
     const row = document.createElement('div');
     row.className = 'tl-row' + (ev.iteration === currentIteration ? ' selected' : '');
     row.dataset.iter = ev.iteration;
     const st = statusToString(ev.status);
     const sc = STATUS_COLORS[ev.status] || '#888';
+    // Use DOM construction for dot to avoid innerHTML fragment parsing cost; keep innerHTML for row template (not container wipe)
     row.innerHTML = '<span class="tl-dot" style="background:' + escapeAttr(sc) + '"></span>' +
                     '<span class="tl-iter">#' + escapeHtml(ev.iteration) + '</span>' +
                     '<span class="tl-status" style="color:' + escapeAttr(sc) + '">' + escapeHtml(st) + '</span>' +
@@ -728,34 +730,168 @@ body {
       updateTimelineSelection();
       fetchTimelineIter(ev.iteration);
     });
-    timelineList.appendChild(row);
+    return row;
   }
-
+  function getTimelineViewport() {
+    return {
+      height: timelineList.clientHeight || 400,
+      scrollTop: timelineList.scrollTop || 0
+    };
+  }
+  function scheduleTimelineVirtualRender() {
+    if (virtualPendingRender) return;
+    virtualPendingRender = true;
+    requestAnimationFrame(function() {
+      virtualPendingRender = false;
+      renderTimelineVirtual();
+    });
+  }
+  function renderTimelineVirtual() {
+    ensureTimelineVirtualSpacers();
+    const total = timelineEvents.length;
+    if (total === 0) {
+      // No events: clear rows between spacers.
+      let n = virtualTopSpacer.nextSibling;
+      while (n && n !== virtualBottomSpacer) { const nxt = n.nextSibling; n.remove(); n = nxt; }
+      virtualTopSpacer.style.height = '0px';
+      virtualBottomSpacer.style.height = '0px';
+      return;
+    }
+    const vp = getTimelineViewport();
+    const rowH = VIRTUAL_ROW_HEIGHT;
+    const visibleCount = Math.ceil(vp.height / rowH) + VIRTUAL_BUFFER * 2;
+    let start = Math.floor(vp.scrollTop / rowH) - VIRTUAL_BUFFER;
+    if (start < 0) start = 0;
+    let end = start + visibleCount;
+    if (end > total) { end = total; start = Math.max(0, end - visibleCount); }
+    // Update spacers
+    virtualTopSpacer.style.height = (start * rowH) + 'px';
+    virtualBottomSpacer.style.height = ((total - end) * rowH) + 'px';
+    // Reuse existing rows map for minimal DOM churn is complex; for now rebuild visible slice via DocumentFragment.
+    // Remove old visible rows (between spacers).
+    let n = virtualTopSpacer.nextSibling;
+    while (n && n !== virtualBottomSpacer) { const nxt = n.nextSibling; n.remove(); n = nxt; }
+    const frag = document.createDocumentFragment();
+    for (let i = start; i < end; i++) {
+      const ev = timelineEvents[i];
+      frag.appendChild(createTimelineRowElement(ev));
+    }
+    timelineList.insertBefore(frag, virtualBottomSpacer);
+    // Lazy: if near top and we have older history on server, fetch.
+    if (vp.scrollTop < rowH * 2 && !virtualFetchingOlder && total > 0) {
+      const oldest = timelineEvents[0] ? timelineEvents[0].iteration : null;
+      if (oldest != null && oldest > 1) {
+        maybeFetchOlderTimeline(oldest);
+      }
+    }
+  }
+  function maybeFetchOlderTimeline(oldestIter) {
+    if (virtualFetchingOlder) return;
+    // Fetch up to 20 older entries via individual GET /timeline/{iter}
+    virtualFetchingOlder = true;
+    const batch = 20;
+    let toFetch = Math.min(batch, oldestIter - 1);
+    if (toFetch <= 0) { virtualFetchingOlder = false; return; }
+    let fetched = [];
+    let pending = toFetch;
+    for (let k = 0; k < toFetch; k++) {
+      const iter = oldestIter - 1 - k;
+      fetch(window.location.pathname.replace(/\/ui$/, '/timeline/' + iter))
+        .then(function(r){ return r.ok ? r.json() : null; })
+        .then(function(data){
+          if (data && data.iteration) {
+            fetched.push({ iteration: data.iteration, status: data.status, durationMs: data.durationMs, seq: data.seq || 0, nodeCount: data.nodeCount || 0 });
+          }
+        })
+        .catch(function(){})
+        .finally(function(){
+          pending--;
+          if (pending === 0) {
+            if (fetched.length) {
+              fetched.sort(function(a,b){ return a.iteration - b.iteration; });
+              const prevTop = timelineList.scrollTop;
+              const prevHeight = timelineEvents.length * VIRTUAL_ROW_HEIGHT;
+              // Prepend in order
+              timelineEvents = fetched.concat(timelineEvents);
+              // Enforce cap 200 LRU: trim from middle if needed? Keep most recent + fetched older? Keep 200 most recent? But we just fetched older, so we may exceed cap.
+              // Enforce max: keep last MAX_TIMELINE_EVENTS if exceeds, but we already have newest; so if exceeds, drop newest overflow? Actually LRU 200 means keep 200 total; if we prepend older we exceed. We should trim from the end? No, we want to keep viewport stable; simplest keep all until >250 then slice.
+              // Keep cache bounded but preserve newest; if we exceeded cap after prepending older,
+              // trim oldest beyond a soft limit (400) rather than discarding newest live data.
+              if (timelineEvents.length > 400) {
+                // Keep most recent 200 plus the newly fetched older plus viewport window: slice to keep last 400
+                timelineEvents = timelineEvents.slice(timelineEvents.length - 400);
+                // Adjust scroll: we removed some oldest, compensate
+                const removed = 0; // already adjusted via slice; scroll offset stays approx
+              } else if (timelineEvents.length > MAX_TIMELINE_EVENTS + 50 && timelineEvents.length > 300) {
+                // Soft cap: keep 250 most recent when not browsing history
+                timelineEvents = timelineEvents.slice(timelineEvents.length - MAX_TIMELINE_EVENTS);
+              }
+              // Adjust scroll to keep visual position stable
+              const addedH = fetched.length * VIRTUAL_ROW_HEIGHT;
+              timelineList.scrollTop = prevTop + addedH;
+              renderTimelineVirtual();
+            }
+            virtualFetchingOlder = false;
+          }
+        });
+    }
+  }
+  function addTimelineEvent(event) {
+    var entry = {
+      iteration: event.iteration,
+      status: event.status,
+      durationMs: event.durationMs,
+      seq: event.seq,
+      nodeCount: event.nodeCount
+    };
+    const wasAtBottom = (timelineList.scrollTop + timelineList.clientHeight + 40) >= timelineList.scrollHeight;
+    timelineEvents.push(entry);
+    let evicted = 0;
+    if (timelineEvents.length > MAX_TIMELINE_EVENTS) {
+      evicted = timelineEvents.length - MAX_TIMELINE_EVENTS;
+      timelineEvents = timelineEvents.slice(timelineEvents.length - MAX_TIMELINE_EVENTS);
+      // Virtual spacers will account for evicted count via height; scroll adjustment not needed if at bottom.
+    }
+    currentIteration = event.iteration;
+    if (profileCacheIter !== currentIteration) { profileCache = null; }
+    // Incremental path when at bottom: O(1) — virtual render will place it visible without full rebuild.
+    // We schedule a virtual render (debounced via rAF) rather than direct DOM append.
+    scheduleTimelineVirtualRender();
+    if (liveMode && wasAtBottom) {
+      // Keep pinned to bottom after rAF renders; use rAF to scroll after DOM updated.
+      requestAnimationFrame(function(){ timelineList.scrollTop = timelineList.scrollHeight; });
+    }
+  }
+  function appendTimelineRow(ev) {
+    // Legacy entry point kept for compatibility; delegate to virtual increment.
+    // Creating a single row directly would bypass virtual windowing, so route through addTimelineEvent path.
+    // For direct calls (should be rare), just ensure virtual spacers and append via fragment if within window.
+    scheduleTimelineVirtualRender();
+  }
   function updateTimelineSelection() {
+    // With virtualization, only visible rows exist in DOM; toggle class on those, no full scan needed beyond visible.
     const rows = timelineList.querySelectorAll('.tl-row');
     rows.forEach(function(r) { r.classList.toggle('selected', r.dataset.iter == currentIteration); });
   }
-
   function renderTimeline() {
-    timelineList.innerHTML = '';
-    for (const ev of timelineEvents) {
-      const row = document.createElement('div');
-      row.className = 'tl-row' + (ev.iteration === currentIteration ? ' selected' : '');
-      row.dataset.iter = ev.iteration;
-      const st = statusToString(ev.status);
-      const sc = STATUS_COLORS[ev.status] || '#888';
-      row.innerHTML = '<span class="tl-dot" style="background:' + escapeAttr(sc) + '"></span>' +
-                      '<span class="tl-iter">#' + escapeHtml(ev.iteration) + '</span>' +
-                      '<span class="tl-status" style="color:' + escapeAttr(sc) + '">' + escapeHtml(st) + '</span>' +
-                      '<span class="tl-duration">' + (ev.durationMs ? ev.durationMs.toFixed(1) + 'ms' : '') + '</span>';
-      row.addEventListener('click', function() {
-        currentIteration = ev.iteration;
-        updateTimelineSelection();
-        fetchTimelineIter(ev.iteration);
-      });
-      timelineList.appendChild(row);
-    }
+    // Legacy full-rebuild entry (e.g., playback) now delegates to virtual windowed render.
+    // No container innerHTML wipe; uses fragment + spacers.
+    renderTimelineVirtual();
   }
+  // Bind scroll -> virtual windowing
+  (function bindTimelineScroll(){
+    let ticking = false;
+    timelineList.addEventListener('scroll', function(){
+      if (!ticking) {
+        ticking = true;
+        requestAnimationFrame(function(){ ticking = false; renderTimelineVirtual(); });
+      }
+    });
+    // Initial virtual render to create spacers even before first event
+    ensureTimelineVirtualSpacers();
+    renderTimelineVirtual();
+  })();
+
 
   function fetchTimelineIter(iter) {
     fetch(window.location.pathname.replace(/\/ui$/, '/timeline/' + iter))
@@ -763,8 +899,8 @@ body {
         if (r.status === 404) {
           var nodesLayer = svg.getElementById('nodes-layer');
           var edgesLayer = svg.getElementById('edges-layer');
-          if (nodesLayer) nodesLayer.innerHTML = '';
-          if (edgesLayer) edgesLayer.innerHTML = '';
+          if (nodesLayer) clearSvgChildren(nodesLayer);
+          if (edgesLayer) clearSvgChildren(edgesLayer);
           if (nodesLayer) {
             var msgEl = document.createElementNS(SVG_NS, 'text');
             msgEl.setAttribute('x', '50');
@@ -781,81 +917,121 @@ body {
       .then(function(data) { if (data && data.tree) renderTree(data.tree); });
   }
 
+  // Layout is stored separately from tree data to avoid mutating shared event objects (D11).
+  // Also computes bounding boxes for viewport culling (D14).
+  function buildLayoutMap(tree) {
+    const map = {};
+    function compute(node, level) {
+      if (!node) return 1;
+      const entry = { level: level, width: 1, x: 0, absX: 0, absY: 0, bbox: null };
+      map[node.id] = entry;
+      if (!node.children || node.children.length === 0) {
+        entry.width = 1;
+        entry.x = 0;
+        return 1;
+      }
+      let totalW = 0;
+      for (let i = 0; i < node.children.length; i++) {
+        totalW += compute(node.children[i], level + 1);
+      }
+      entry.width = totalW;
+      let offset = -totalW / 2;
+      for (let i = 0; i < node.children.length; i++) {
+        const c = node.children[i];
+        const ce = map[c.id];
+        ce.x = offset + ce.width / 2;
+        offset += ce.width;
+      }
+      return totalW;
+    }
+    function assign(node, parentX) {
+      if (!node) return;
+      const e = map[node.id];
+      e.absX = (parentX + e.x) * UNIT;
+      e.absY = e.level * LEVEL_H + 40;
+      e.bbox = { x: e.absX - NODE_W/2, y: e.absY, w: NODE_W, h: NODE_H };
+      if (node.children) {
+        for (let i = 0; i < node.children.length; i++) assign(node.children[i], parentX + e.x);
+      }
+    }
+    compute(tree, 0);
+    assign(tree, 0);
+    return map;
+  }
+  function getViewportBounds() {
+    // viewBox is set as  pan.x pan.y width/zoom height/zoom . Visible rect is that.
+    // Fallback to container viewport if viewBox not yet set.
+    const vb = svg.getAttribute('viewBox');
+    if (vb) {
+      const parts = vb.split(/[\s,]+/).map(Number);
+      if (parts.length === 4 && parts.every(function(v){ return !isNaN(v); })) {
+        return { x: parts[0], y: parts[1], w: parts[2], h: parts[3] };
+      }
+    }
+    const w = svgContainer.clientWidth || 800;
+    const h = svgContainer.clientHeight || 600;
+    return { x: pan.x, y: pan.y, w: w / (zoom||1), h: h / (zoom||1) };
+  }
+  function isBboxVisible(bbox, vp) {
+    if (!bbox || !vp) return true;
+    return !(bbox.x + bbox.w < vp.x || bbox.x > vp.x + vp.w || bbox.y + bbox.h < vp.y || bbox.y > vp.y + vp.h);
+  }
+
+  // Legacy wrappers kept for test hooks (no mutation): they now delegate to map version
   function computeLayout(node, level) {
+    // Deprecated mutation path removed; use buildLayoutMap. This stub ensures any external caller still works without mutating.
     if (!node) return { width: 1, x: 0 };
-    level = level || 0;
-    node._level = level;
-    if (!node.children || node.children.length === 0) {
-      node._width = 1;
-      node._x = 0;
-      return { width: 1, x: 0 };
-    }
-    let totalW = 0;
-    for (const c of node.children) {
-      const r = computeLayout(c, level + 1);
-      totalW += r.width;
-    }
-    node._width = totalW;
-    let offset = -totalW / 2;
-    for (const c of node.children) {
-      c._x = offset + c._width / 2;
-      offset += c._width;
-    }
-    return { width: totalW, x: 0 };
+    const m = buildLayoutMap(node);
+    const e = m[node.id];
+    return { width: e.width, x: e.x };
   }
-
   function assignPositions(node, parentX) {
-    node._absX = (parentX + node._x) * UNIT;
-    node._absY = node._level * LEVEL_H + 40;
-    if (node.children) {
-      for (const c of node.children) assignPositions(c, parentX + node._x);
-    }
+    // No-op: layout now via buildLayoutMap
   }
 
+  let currentLayoutMap = null;
+  function clearSvgChildren(el) { while (el.firstChild) el.removeChild(el.firstChild); }
   function renderTree(tree) {
     if (!tree) return;
-
+    const layoutMap = buildLayoutMap(tree);
     const needsFullRebuild = currentTree === null ||
       !svg.getElementById('nodes-layer') ||
       currentTree.structureHash !== tree.structureHash;
 
-    computeLayout(tree, 0);
-    assignPositions(tree, 0);
-
     if (needsFullRebuild) {
-      currentTree = tree;
-      svg.innerHTML = '';
-
+      // No innerHTML wipe: remove via DOM API and rebuild.
+      clearSvgChildren(svg);
       const edgesG = document.createElementNS(SVG_NS, 'g');
       const nodesG = document.createElementNS(SVG_NS, 'g');
       edgesG.setAttribute('id', 'edges-layer');
       nodesG.setAttribute('id', 'nodes-layer');
-
-      drawEdges(tree, edgesG);
-      drawNodes(tree, nodesG);
-
+      drawEdges(tree, edgesG, layoutMap);
+      drawNodes(tree, nodesG, layoutMap);
       svg.appendChild(edgesG);
       svg.appendChild(nodesG);
+      currentTree = tree;
+      currentLayoutMap = layoutMap;
     } else {
       const nodesG = svg.getElementById('nodes-layer');
-
       const edgesG = svg.getElementById('edges-layer');
-      edgesG.innerHTML = '';
-      drawEdges(tree, edgesG);
-
-      diffAndUpdateNodes(tree, currentTree, nodesG);
+      clearSvgChildren(edgesG);
+      drawEdges(tree, edgesG, layoutMap);
+      diffAndUpdateNodes(tree, currentTree, nodesG, layoutMap, currentLayoutMap);
       currentTree = tree;
+      currentLayoutMap = layoutMap;
     }
-
     updateSvgView();
     drawProfileBar();
     if (selectedNodeId) highlightNode(selectedNodeId);
     if (highlightedIds.size) highlightSearch();
   }
 
-  function updateNodeGroup(group, newNode) {
-    const x = newNode._absX - NODE_W / 2;
-    const y = newNode._absY;
+  function updateNodeGroup(group, newNode, layoutMap) {
+    const lm = layoutMap ? layoutMap[newNode.id] : null;
+    const absX = lm ? lm.absX : newNode._absX;
+    const absY = lm ? lm.absY : newNode._absY;
+    const x = absX - NODE_W / 2;
+    const y = absY;
     const typeColor = TYPE_COLORS[newNode.nodeType] || TYPE_COLORS.Unknown;
     const status = newNode.status ? newNode.status.LastStatus : 0;
     const statusColor = STATUS_COLORS[status] || '#555';
@@ -935,47 +1111,93 @@ body {
     return newGroup;
   }
 
-  function diffAndUpdateNodes(newNode, oldNode, container) {
+  function diffAndUpdateNodes(newNode, oldNode, container, layoutMap, oldLayoutMap) {
     if (!newNode) return;
-
+    const lm = layoutMap ? layoutMap[newNode.id] : null;
+    const vp = layoutMap ? getViewportBounds() : null;
+    const pad = 80;
+    const evp = vp ? { x: vp.x - pad, y: vp.y - pad, w: vp.w + pad*2, h: vp.h + pad*2 } : null;
+    const bbox = lm ? lm.bbox : null;
+    const visible = !evp || !bbox || isBboxVisible(bbox, evp);
     const sid = safeId(newNode.id);
     let existingGroup = document.getElementById(sid);
-
+    if (!visible) {
+      if (existingGroup) existingGroup.remove();
+      // Recurse to children which may still be visible even if parent is culled
+      if (newNode.children) {
+        for (let i = 0; i < newNode.children.length; i++) {
+          const oldChild = (oldNode && oldNode.children && i < oldNode.children.length) ? oldNode.children[i] : null;
+          diffAndUpdateNodes(newNode.children[i], oldChild, container, layoutMap, oldLayoutMap);
+        }
+        if (oldNode && oldNode.children) {
+          for (let i = newNode.children.length; i < oldNode.children.length; i++) {
+            const oldChildId = safeId(oldNode.children[i].id);
+            const og = document.getElementById(oldChildId);
+            if (og) og.remove();
+            // Also remove its subtree if any (drawNodes may have left descendants)
+            // Fallback: brute remove any element whose id starts with that prefix
+            // (simple: query all node groups and remove those with data-id prefix)
+            const prefix = oldNode.children[i].id + ".";
+            document.querySelectorAll('[data-id]').forEach(function(el){
+              const did = el.getAttribute('data-id');
+              if (did && did.startsWith(prefix)) { const grp=document.getElementById(safeId(did)); if(grp) grp.remove(); }
+            });
+          }
+        }
+      } else if (oldNode && oldNode.children) {
+        for (let i = 0; i < oldNode.children.length; i++) {
+          const oldChildId = safeId(oldNode.children[i].id);
+          const og = document.getElementById(oldChildId);
+          if (og) og.remove();
+        }
+      }
+      return;
+    }
     if (existingGroup && oldNode && oldNode.id === newNode.id) {
-      updateNodeGroup(existingGroup, newNode);
-
+      updateNodeGroup(existingGroup, newNode, layoutMap);
       if (newNode.children) {
         for (let i = 0; i < newNode.children.length; i++) {
           const oldChild = (oldNode.children && i < oldNode.children.length) ? oldNode.children[i] : null;
-          diffAndUpdateNodes(newNode.children[i], oldChild, container);
+          diffAndUpdateNodes(newNode.children[i], oldChild, container, layoutMap, oldLayoutMap);
         }
         if (oldNode.children) {
           for (let i = newNode.children.length; i < oldNode.children.length; i++) {
             const oldChildId = safeId(oldNode.children[i].id);
-            const oldChildGroup = document.getElementById(oldChildId);
-            if (oldChildGroup) oldChildGroup.remove();
+            const og = document.getElementById(oldChildId);
+            if (og) og.remove();
           }
         }
       } else if (oldNode.children) {
         for (let i = 0; i < oldNode.children.length; i++) {
           const oldChildId = safeId(oldNode.children[i].id);
-          const oldChildGroup = document.getElementById(oldChildId);
-          if (oldChildGroup) oldChildGroup.remove();
+          const og = document.getElementById(oldChildId);
+          if (og) og.remove();
         }
       }
     } else {
       if (existingGroup) existingGroup.remove();
-      drawNodes(newNode, container);
+      drawNodes(newNode, container, layoutMap);
     }
   }
 
-  function drawEdges(node, g) {
+  function drawEdges(node, g, layoutMap) {
     if (!node.children) return;
-    const px = node._absX;
-    const py = node._absY + NODE_H;
+    const lm = layoutMap ? layoutMap[node.id] : null;
+    const px = lm ? lm.absX : node._absX;
+    const py = (lm ? lm.absY : node._absY) + NODE_H;
+    const vp = layoutMap ? getViewportBounds() : null;
+    const padE = 80;
+    const evp = vp ? { x: vp.x - padE, y: vp.y - padE, w: vp.w + padE*2, h: vp.h + padE*2 } : null;
     for (const c of node.children) {
-      const cx = c._absX;
-      const cy = c._absY;
+      const clm = layoutMap ? layoutMap[c.id] : null;
+      // Cull edge if child bbox is outside viewport (edge would be invisible)
+      if (evp && clm && clm.bbox && !isBboxVisible(clm.bbox, evp)) {
+        // Still need to recurse for deeper children that might be in view
+        drawEdges(c, g, layoutMap);
+        continue;
+      }
+      const cx = clm ? clm.absX : c._absX;
+      const cy = clm ? clm.absY : c._absY;
       const d = 'M ' + px + ' ' + py +
                 ' C ' + px + ' ' + (py + LEVEL_H/2) +
                 ', ' + cx + ' ' + (cy - LEVEL_H/2) +
@@ -986,13 +1208,29 @@ body {
       const status = c.status ? c.status.LastStatus : 0;
       if (status === 3) path.classList.add('active');
       g.appendChild(path);
-      drawEdges(c, g);
+      drawEdges(c, g, layoutMap);
     }
   }
 
-  function drawNodes(node, g) {
-    const x = node._absX - NODE_W / 2;
-    const y = node._absY;
+  function drawNodes(node, g, layoutMap) {
+    const lm = layoutMap ? layoutMap[node.id] : null;
+    const absX = lm ? lm.absX : node._absX;
+    const absY = lm ? lm.absY : node._absY;
+    // Viewport culling: skip DOM creation for nodes outside view (with padding)
+    const vp = layoutMap ? getViewportBounds() : null;
+    const bbox = lm ? lm.bbox : null;
+    const pad = 80;
+    const expandedVp = vp ? { x: vp.x - pad, y: vp.y - pad, w: vp.w + pad*2, h: vp.h + pad*2 } : null;
+    const visible = !expandedVp || !bbox || isBboxVisible(bbox, expandedVp);
+    if (!visible) {
+      // Still need to recurse to children which may be in viewport (subtree may span widely)
+      if (node.children) {
+        for (let i = 0; i < node.children.length; i++) drawNodes(node.children[i], g, layoutMap);
+      }
+      return;
+    }
+    const x = absX - NODE_W / 2;
+    const y = absY;
     const typeColor = TYPE_COLORS[node.nodeType] || TYPE_COLORS.Unknown;
     const status = node.status ? node.status.LastStatus : 0;
     const statusColor = STATUS_COLORS[status] || '#555';
@@ -1082,7 +1320,7 @@ body {
 
     g.appendChild(group);
     if (node.children) {
-      for (const c of node.children) drawNodes(c, g);
+      for (const c of node.children) drawNodes(c, g, layoutMap);
     }
   }
 
@@ -1211,12 +1449,26 @@ body {
     }
   }
 
+  let viewCullingRaf = null;
+  function scheduleCullingRerender() {
+    if (viewCullingRaf) return;
+    viewCullingRaf = requestAnimationFrame(function(){ viewCullingRaf=null; if(currentTree) renderTree(currentTree); });
+  }
   function updateSvgView() {
     const w = svgContainer.clientWidth || 800;
     const h = svgContainer.clientHeight || 600;
     svg.setAttribute('viewBox', pan.x + ' ' + pan.y + ' ' + (w / zoom) + ' ' + (h / zoom));
     zoomLevel.textContent = Math.round(zoom * 100) + '%';
+    // Viewport changed: re-evaluate culling if we have many nodes (>200) to avoid missing nodes when panning into previously culled area
+    if (currentTree && countNodesJS(currentTree) > 200) { scheduleCullingRerender(); }
   }
+  function countNodesJS(tree){
+    if(!tree) return 0;
+    let c=1;
+    if(tree.children) for(let i=0;i<tree.children.length;i++) c+=countNodesJS(tree.children[i]);
+    return c;
+  }
+
 
   function fitToTree() {
     if (!currentTree) return;
@@ -1390,10 +1642,11 @@ body {
   });
   btnLive.classList.add('active');
 
+  function cancelPlaybackRaf() { if (playbackRaf != null) { cancelAnimationFrame(playbackRaf); playbackRaf = null; } }
   btnPlay.addEventListener('click', function() {
     if (playback) {
       playback = false;
-      clearInterval(playbackTimer);
+      cancelPlaybackRaf();
       btnPlay.textContent = '\u25B6';
       return;
     }
@@ -1402,22 +1655,102 @@ body {
     btnLive.classList.remove('active');
     playback = true;
     playbackIdx = 0;
+    playbackSpeed = parseFloat(document.getElementById('speed-select').value) || 1;
+    playbackLastTime = performance.now();
     btnPlay.textContent = '\u25A0';
-    const speed = parseFloat(document.getElementById('speed-select').value);
-    playbackTimer = setInterval(function() {
-      if (playbackIdx >= timelineEvents.length) {
-        playback = false;
-        clearInterval(playbackTimer);
-        btnPlay.textContent = '\u25B6';
-        return;
+    function step(now) {
+      if (!playback) return;
+      const intervalMs = 1000 / playbackSpeed;
+      if (now - playbackLastTime >= intervalMs) {
+        if (playbackIdx >= timelineEvents.length) {
+          playback = false;
+          cancelPlaybackRaf();
+          btnPlay.textContent = '\u25B6';
+          return;
+        }
+        const ev = timelineEvents[playbackIdx];
+        currentIteration = ev.iteration;
+        // Use virtual render (no innerHTML wipe)
+        renderTimeline();
+        fetchTimelineIter(ev.iteration);
+        playbackIdx++;
+        playbackLastTime = now;
+        // Allow speed changes to take effect immediately without teardown
+        playbackSpeed = parseFloat(document.getElementById('speed-select').value) || playbackSpeed;
       }
-      const ev = timelineEvents[playbackIdx];
-      currentIteration = ev.iteration;
-      renderTimeline();
-      fetchTimelineIter(ev.iteration);
-      playbackIdx++;
-    }, 1000 / speed);
+      playbackRaf = requestAnimationFrame(step);
+    }
+    playbackRaf = requestAnimationFrame(step);
   });
+  // Speed changes apply on next frame without timer recreation
+  document.getElementById('speed-select').addEventListener('change', function(){
+    playbackSpeed = parseFloat(this.value) || 1;
+  });
+
+
+  // ---- Disk Persistence: Save / Load Session (File System Access API with fallback) ----
+  async function exportViaFSAPI(blob, suggestedName) {
+    // Try File System Access API, fall back to download anchor
+    if (window.showSaveFilePicker) {
+      try {
+        const handle = await window.showSaveFilePicker({
+          suggestedName: suggestedName || 'pabt-session.jsonl',
+          types: [{ description: 'PA-BT session (JSONL)', accept: { 'application/jsonl': ['.jsonl'], 'text/plain': ['.jsonl'] } }],
+        });
+        const writable = await handle.createWritable();
+        await writable.write(blob);
+        await writable.close();
+        return true;
+      } catch (e) {
+        if (e && e.name === 'AbortError') return true; // user cancelled
+        // fall through to fallback
+      }
+    }
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = suggestedName || 'pabt-session.jsonl';
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(function(){
+      URL.revokeObjectURL(a.href);
+      a.remove();
+    }, 1000);
+    return false;
+  }
+  async function importViaFSAPI() {
+    if (window.showOpenFilePicker) {
+      try {
+        const [handle] = await window.showOpenFilePicker({
+          types: [{ description: 'PA-BT session (JSONL)', accept: { 'application/jsonl': ['.jsonl'], 'text/plain': ['.jsonl', '.json'] } }],
+          excludeAcceptAllOption: false,
+        });
+        const file = await handle.getFile();
+        return file;
+      } catch (e) {
+        if (e && e.name === 'AbortError') return null;
+        return null;
+      }
+    }
+    return null; // caller will use input[type=file] fallback
+  }
+  function uploadViaHiddenInput() {
+    return new Promise(function(resolve){
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = '.jsonl,.json,application/jsonl,text/plain';
+      input.style.display = 'none';
+      document.body.appendChild(input);
+      input.addEventListener('change', function(){
+        const f = input.files && input.files[0];
+        input.remove();
+        resolve(f || null);
+      });
+      input.addEventListener('cancel', function(){ input.remove(); resolve(null); });
+      // Fallback if cancel not fired (some browsers): resolve null after timeout if no file
+      setTimeout(function(){ if (document.body.contains(input) && !input.files.length) { /* still open picker */ } }, 5000);
+      input.click();
+    });
+  }
 
   document.getElementById('btn-export').addEventListener('click', function() {
     fetch(window.location.pathname.replace(/\/ui$/, '/dot'))
@@ -1425,13 +1758,74 @@ body {
       .then(text => {
         if (!text) return;
         const blob = new Blob([text], { type: 'text/plain' });
-        const a = document.createElement('a');
-        a.href = URL.createObjectURL(blob);
-        a.download = 'debug.dot';
-        a.click();
-        URL.revokeObjectURL(a.href);
+        exportViaFSAPI(blob, 'debug.dot');
       });
   });
+  document.getElementById('btn-save').addEventListener('click', async function(){
+    const btn = this; const prev = btn.textContent;
+    try {
+      btn.textContent = 'Saving...'; btn.disabled = true;
+      const res = await fetch(window.location.pathname.replace(/\/ui$/, '/export'));
+      if (!res.ok) throw new Error('export failed: ' + res.status);
+      const blob = await res.blob();
+      await exportViaFSAPI(blob, 'pabt-session-' + Date.now() + '.jsonl');
+    } catch (e) {
+      console.error(e);
+      alert('Save failed: ' + (e && e.message || e));
+    } finally {
+      btn.textContent = prev; btn.disabled = false;
+    }
+  });
+  document.getElementById('btn-load').addEventListener('click', async function(){
+    const btn = this; const prev = btn.textContent;
+    try {
+      btn.textContent = 'Loading...'; btn.disabled = true;
+      let file = await importViaFSAPI();
+      if (!file) file = await uploadViaHiddenInput();
+      if (!file) { btn.textContent = prev; btn.disabled = false; return; }
+      const body = await file.text();
+      // POST to /import
+      const res = await fetch(window.location.pathname.replace(/\/ui$/, '/import'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain' },
+        body: body,
+      });
+      if (!res.ok) {
+        const t = await res.text();
+        throw new Error(t || ('import failed: '+res.status));
+      }
+      const data = await res.json().catch(function(){ return {}; });
+      // Reload timeline from server
+      const tlRes = await fetch(window.location.pathname.replace(/\/ui$/, '/timeline'));
+      if (tlRes.ok) {
+        const tl = await tlRes.json();
+        // Replace local cache with imported timeline: clear virtual spacers first
+        timelineEvents = tl.map(function(e){ return { iteration: e.iteration, status: (e.status==='Success'?1:(e.status==='Failure'?2:(e.status==='Running'?3:0))), durationMs: e.durationMs||0, seq: 0, nodeCount: e.nodeCount||0 }; });
+        // Status strings are "Success"/"Failure"/"Running"; fallback already handled; but server may return string
+        // Re-normalize status strings if numeric not matched
+        timelineEvents = timelineEvents.map(function(entry, idx){
+          const orig = tl[idx];
+          let s = 0;
+          if (orig.status === 'Success' || orig.status === 1) s = 1;
+          else if (orig.status === 'Failure' || orig.status === 2) s = 2;
+          else if (orig.status === 'Running' || orig.status === 3) s = 3;
+          else s = entry.status;
+          entry.status = s;
+          return entry;
+        });
+        currentIteration = timelineEvents.length ? timelineEvents[timelineEvents.length-1].iteration : null;
+        renderTimelineVirtual();
+        if (currentIteration != null) fetchTimelineIter(currentIteration);
+      }
+      if (data.imported) connStatus.textContent = 'Loaded ' + data.imported + ' events';
+    } catch (e) {
+      console.error(e);
+      alert('Load failed: ' + (e && e.message || e));
+    } finally {
+      btn.textContent = prev; btn.disabled = false;
+    }
+  });
+
 
   const diffModal = document.getElementById('diff-modal');
   document.getElementById('btn-diff').addEventListener('click', function() {
