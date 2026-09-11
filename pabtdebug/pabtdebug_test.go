@@ -1123,3 +1123,244 @@ func TestHub_GracefulClose(t *testing.T) {
 		t.Errorf("expected 0 clients after Close, got %d", remaining)
 	}
 }
+
+func TestServer_TimelineIterEndpoint(t *testing.T) {
+	state := &testState{vars: map[any]any{"x": true}}
+	plan, err := pabt.INew(state, []pabt.IConditions{{&testCondition{key: "x", value: true}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tracker := NewTracker(plan)
+	tracker.Track(bt.Success, nil)
+	srv := NewServer(tracker, "127.0.0.1:0")
+
+	// Happy path: valid iter 1.
+	req := httptest.NewRequest(http.MethodGet, "/debug/pabt/timeline/1", nil)
+	w := httptest.NewRecorder()
+	srv.server.Handler.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("timeline/1 expected 200 got %d: %s", w.Code, w.Body.String())
+	}
+	var ev TickEvent
+	if err := json.Unmarshal(w.Body.Bytes(), &ev); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if ev.Iteration != 1 {
+		t.Errorf("Iteration = %d want 1", ev.Iteration)
+	}
+
+	// Missing iteration param (PathValue empty: simulate direct handler call via newServeMux pattern).
+	// For coverage, call via mismatched route so PathValue is empty -> 400.
+	req2 := httptest.NewRequest(http.MethodGet, "/debug/pabt/timeline/", nil)
+	w2 := httptest.NewRecorder()
+	srv.server.Handler.ServeHTTP(w2, req2)
+	// The registered pattern is /debug/pabt/timeline/{iter} — a request to /timeline/ with empty
+	// iter will 404; we at least verify it doesn't panic and returns non-200.
+	if w2.Code == http.StatusOK {
+		t.Fatalf("expected non-200 for missing iter segment, got %d", w2.Code)
+	}
+
+	// Invalid iteration: non-numeric.
+	req3 := httptest.NewRequest(http.MethodGet, "/debug/pabt/timeline/abc", nil)
+	w3 := httptest.NewRecorder()
+	srv.server.Handler.ServeHTTP(w3, req3)
+	if w3.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for invalid iter, got %d", w3.Code)
+	}
+
+	// Not found.
+	req4 := httptest.NewRequest(http.MethodGet, "/debug/pabt/timeline/999", nil)
+	w4 := httptest.NewRecorder()
+	srv.server.Handler.ServeHTTP(w4, req4)
+	if w4.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 for missing iter, got %d", w4.Code)
+	}
+}
+
+func TestServer_DiffEndpoint(t *testing.T) {
+	state := &testState{vars: map[any]any{"x": true}}
+	plan, err := pabt.INew(state, []pabt.IConditions{{&testCondition{key: "x", value: true}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tracker := NewTracker(plan)
+	tracker.Track(bt.Success, nil)
+	tracker.Track(bt.Running, nil)
+	srv := NewServer(tracker, "127.0.0.1:0")
+
+	// Happy path.
+	req := httptest.NewRequest(http.MethodGet, "/debug/pabt/diff?from=1&to=2", nil)
+	w := httptest.NewRecorder()
+	srv.server.Handler.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("diff happy path expected 200 got %d: %s", w.Code, w.Body.String())
+	}
+	var res DiffResult
+	if err := json.Unmarshal(w.Body.Bytes(), &res); err != nil {
+		t.Fatalf("unmarshal DiffResult: %v", err)
+	}
+	if res.FromIteration != 1 || res.ToIteration != 2 {
+		t.Errorf("DiffResult iterations = %d->%d want 1->2", res.FromIteration, res.ToIteration)
+	}
+
+	// Missing from param -> 400.
+	req2 := httptest.NewRequest(http.MethodGet, "/debug/pabt/diff?to=2", nil)
+	w2 := httptest.NewRecorder()
+	srv.server.Handler.ServeHTTP(w2, req2)
+	if w2.Code != http.StatusBadRequest {
+		t.Fatalf("missing from expected 400 got %d", w2.Code)
+	}
+	// Missing to param -> 400.
+	req3 := httptest.NewRequest(http.MethodGet, "/debug/pabt/diff?from=1", nil)
+	w3 := httptest.NewRecorder()
+	srv.server.Handler.ServeHTTP(w3, req3)
+	if w3.Code != http.StatusBadRequest {
+		t.Fatalf("missing to expected 400 got %d", w3.Code)
+	}
+	// Invalid from -> 400.
+	req4 := httptest.NewRequest(http.MethodGet, "/debug/pabt/diff?from=abc&to=2", nil)
+	w4 := httptest.NewRecorder()
+	srv.server.Handler.ServeHTTP(w4, req4)
+	if w4.Code != http.StatusBadRequest {
+		t.Fatalf("invalid from expected 400 got %d", w4.Code)
+	}
+	// Invalid to -> 400.
+	req5 := httptest.NewRequest(http.MethodGet, "/debug/pabt/diff?from=1&to=xyz", nil)
+	w5 := httptest.NewRecorder()
+	srv.server.Handler.ServeHTTP(w5, req5)
+	if w5.Code != http.StatusBadRequest {
+		t.Fatalf("invalid to expected 400 got %d", w5.Code)
+	}
+	// Non-existent iteration -> 400 (Diff returns error which maps to 400).
+	req6 := httptest.NewRequest(http.MethodGet, "/debug/pabt/diff?from=999&to=1", nil)
+	w6 := httptest.NewRecorder()
+	srv.server.Handler.ServeHTTP(w6, req6)
+	if w6.Code != http.StatusBadRequest {
+		t.Fatalf("non-existent from expected 400 got %d", w6.Code)
+	}
+}
+
+func TestServer_PlanDetailMissingID(t *testing.T) {
+	state := &testState{vars: map[any]any{"x": true}}
+	plan, err := pabt.INew(state, []pabt.IConditions{{&testCondition{key: "x", value: true}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tracker := NewTracker(plan)
+	srv := NewServer(tracker, "127.0.0.1:0")
+
+	// Request without id path value (hits pattern miss -> 404; direct invocation path)
+	// Simulate by calling ServeHTTP with missing segment.
+	req := httptest.NewRequest(http.MethodGet, "/debug/pabt/plans/", nil)
+	w := httptest.NewRecorder()
+	srv.server.Handler.ServeHTTP(w, req)
+	if w.Code == http.StatusOK {
+		t.Fatalf("expected non-200 for missing id, got %d", w.Code)
+	}
+	// Wrong id (numeric handling still requires non-empty)
+	req2 := httptest.NewRequest(http.MethodGet, "/debug/pabt/plans/doesnotexist", nil)
+	w2 := httptest.NewRecorder()
+	srv.server.Handler.ServeHTTP(w2, req2)
+	// Since BuildTree always returns a tree (plan exists) the handler succeeds with that tree
+	// regardless of id content, but it must require id != "" (which it has). So 200 expected.
+	if w2.Code != http.StatusOK {
+		t.Fatalf("expected 200 for arbitrary id (tree exists), got %d", w2.Code)
+	}
+}
+
+func TestServer_SearchEmptyQuery(t *testing.T) {
+	state := &testState{vars: map[any]any{"x": true}}
+	plan, err := pabt.INew(state, []pabt.IConditions{{&testCondition{key: "x", value: true}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tracker := NewTracker(plan)
+	srv := NewServer(tracker, "127.0.0.1:0")
+
+	req := httptest.NewRequest(http.MethodGet, "/debug/pabt/search", nil)
+	w := httptest.NewRecorder()
+	srv.server.Handler.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("empty search expected 200 got %d", w.Code)
+	}
+	var results []SearchResult
+	if err := json.Unmarshal(w.Body.Bytes(), &results); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(results) != 0 {
+		t.Errorf("empty query should return 0 results, got %d", len(results))
+	}
+}
+
+func TestServer_StartClose(t *testing.T) {
+	state := &testState{vars: map[any]any{"x": true}}
+	plan, err := pabt.INew(state, []pabt.IConditions{{&testCondition{key: "x", value: true}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tracker := NewTracker(plan)
+	srv := NewServer(tracker, "127.0.0.1:0")
+	// Close without Start should not panic.
+	if err := srv.Close(); err != nil {
+		t.Fatalf("Close without Start: %v", err)
+	}
+	// Start with a random port then immediately close. Use goroutine.
+	srv2 := NewServer(tracker, "127.0.0.1:0")
+	done := make(chan error, 1)
+	go func() { done <- srv2.Start() }()
+	time.Sleep(80 * time.Millisecond)
+	_ = srv2.Close()
+	select {
+	case err := <-done:
+		if err != nil && err.Error() != "http: Server closed" {
+			t.Logf("Start returned %v (acceptable)", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Start did not return after Close")
+	}
+}
+
+func TestDotColors(t *testing.T) {
+	// Exercise every NodeType branch for fill.
+	cases := []struct {
+		nodeType string
+		want     string
+	}{
+		{"GoalRoot", "#2196f3"},
+		{"GoalSelector", "#2196f3"},
+		{"PPARoot", "#9c27b0"},
+		{"PPAPost", "#9c27b0"},
+		{"ActionSelector", "#ff9800"},
+		{"ActionRoot", "#ff9800"},
+		{"ActionNode", "#4caf50"},
+		{"PreconditionsRoot", "#00bcd4"},
+		{"PreconditionLeaf", "#00bcd4"},
+		{"zzz", "#888888"},
+	}
+	for _, tc := range cases {
+		if got := dotFillColor(tc.nodeType); got != tc.want {
+			t.Errorf("dotFillColor(%q) = %q want %q", tc.nodeType, got, tc.want)
+		}
+	}
+	// Border branches.
+	if got := dotBorderColor(nil); got != "#666666" {
+		t.Errorf("dotBorderColor(nil) = %q want #666666", got)
+	}
+	s := &pabt.NodeStatus{}
+	s.SetLastStatus(bt.Success)
+	if got := dotBorderColor(s); got != "#4caf50" {
+		t.Errorf("dotBorderColor(Success) = %q", got)
+	}
+	s.SetLastStatus(bt.Failure)
+	if got := dotBorderColor(s); got != "#f44336" {
+		t.Errorf("dotBorderColor(Failure) = %q", got)
+	}
+	s.SetLastStatus(bt.Running)
+	if got := dotBorderColor(s); got != "#ff9800" {
+		t.Errorf("dotBorderColor(Running) = %q", got)
+	}
+	s.SetLastStatus(bt.Status(99))
+	if got := dotBorderColor(s); got != "#666666" {
+		t.Errorf("dotBorderColor(unknown) = %q want #666666", got)
+	}
+}

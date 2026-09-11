@@ -324,3 +324,105 @@ func patchTreeMeta() func() {
 func attachTreeMeta(node bt.Node, meta ...any) bt.Node {
 	return node.WithValue(treeMetaKey{}, meta)
 }
+
+func TestPlan_Running(t *testing.T) {
+	// Verify Running() transitions end-to-end through actual plan ticking,
+	// not by setting the field directly. The planner returns bt.Running on
+	// the first tick due to expansion (without setting Running), then the
+	// action node's Running on the second tick (which does set Running), then
+	// Success on the third tick (which clears Running via pabt.go:bt defer).
+	var (
+		variables = map[any]any{"x": "start"}
+		ticks     int
+	)
+	state := &mockState{
+		variable: func(key any) (value any, err error) {
+			v, ok := variables[key]
+			if !ok {
+				return nil, fmt.Errorf("variable not found: %v", key)
+			}
+			return v, nil
+		},
+		actions: func(failed Condition) ([]IAction, error) {
+			return []IAction{
+				&simpleAction{
+					effects: Effects{&simpleEffect{key: "x", value: "done"}},
+					node: bt.New(func([]bt.Node) (bt.Status, error) {
+						ticks++
+						if ticks == 1 {
+							return bt.Running, nil
+						}
+						variables["x"] = "done"
+						return bt.Success, nil
+					}),
+				},
+			}, nil
+		},
+	}
+	cond := &simpleCondition{key: "x", value: "done"}
+	plan, err := INew(state, []IConditions{{cond}})
+	if err != nil {
+		t.Fatalf("INew: %v", err)
+	}
+	if plan.Running() {
+		t.Fatalf("Running before any tick = true, want false")
+	}
+	node := plan.Node()
+
+	// Tick 1: expansion — planner returns Running without executing the action.
+	status, err := node.Tick()
+	if err != nil {
+		t.Fatalf("tick 1: %v", err)
+	}
+	if status != bt.Running {
+		t.Fatalf("tick 1 status = %v, want Running", status)
+	}
+	if plan.Running() {
+		t.Fatalf("Running after expansion tick = true, want false (only Action.Node Running sets it)")
+	}
+	if ticks != 0 {
+		t.Fatalf("ticks after expansion = %d, want 0 (action not yet ticked)", ticks)
+	}
+
+	// Tick 2: action returns Running — wrapActionNodeHandleSetRunning sets running=true.
+	status, err = node.Tick()
+	if err != nil {
+		t.Fatalf("tick 2: %v", err)
+	}
+	if status != bt.Running {
+		t.Fatalf("tick 2 status = %v, want Running", status)
+	}
+	if !plan.Running() {
+		t.Fatalf("Running after action Running = false, want true")
+	}
+	if ticks != 1 {
+		t.Fatalf("ticks after tick 2 = %d, want 1", ticks)
+	}
+
+	// Tick 3: action returns Success — pabt.bt clears running before tick, so false.
+	status, err = node.Tick()
+	if err != nil {
+		t.Fatalf("tick 3: %v", err)
+	}
+	if status != bt.Success {
+		t.Fatalf("tick 3 status = %v, want Success", status)
+	}
+	if plan.Running() {
+		t.Fatalf("Running after Success = true, want false")
+	}
+	if ticks != 2 {
+		t.Fatalf("ticks after tick 3 = %d, want 2", ticks)
+	}
+
+	// Subsequent tick remains Success with Running false (idempotent success).
+	status, err = node.Tick()
+	if err != nil {
+		t.Fatalf("tick 4: %v", err)
+	}
+	if status != bt.Success {
+		t.Fatalf("tick 4 status = %v, want Success", status)
+	}
+	if plan.Running() {
+		t.Fatalf("Running after idempotent Success = true, want false")
+	}
+}

@@ -1,6 +1,7 @@
 package pabt
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -251,5 +252,100 @@ func TestGetIPath(t *testing.T) {
 	}
 	if path[0].NodeType != NodeTypeGoalRoot {
 		t.Errorf("first entry NodeType = %v, want NodeTypeGoalRoot", path[0].NodeType)
+	}
+}
+
+func TestFormatEffects(t *testing.T) {
+	if got := formatEffects(nil); got != "" {
+		t.Errorf("formatEffects(nil) = %q, want empty", got)
+	}
+	if got := formatEffects(Effects{}); got != "" {
+		t.Errorf("formatEffects(empty) = %q, want empty", got)
+	}
+	if got := formatEffects(Effects{nil}); got != "<nil>" {
+		t.Errorf("formatEffects(nil entry) = %q, want <nil>", got)
+	}
+	effects := Effects{
+		&simpleEffect{key: "actor", value: "s5"},
+		&simpleEffect{key: "loc", value: "table"},
+	}
+	got := formatEffects(effects)
+	if !strings.Contains(got, "actor=s5") {
+		t.Errorf("formatEffects = %q, want actor=s5", got)
+	}
+	if !strings.Contains(got, "loc=table") {
+		t.Errorf("formatEffects = %q, want loc=table", got)
+	}
+	if !strings.Contains(got, ",") {
+		t.Errorf("formatEffects multiple should contain comma, got %q", got)
+	}
+}
+
+func TestFormatVariableKey(t *testing.T) {
+	if got := formatVariableKey(nil); got != "<nil>" {
+		t.Errorf("formatVariableKey(nil) = %q, want <nil>", got)
+	}
+	if got := formatVariableKey("actor"); got != "actor" {
+		t.Errorf("formatVariableKey(actor) = %q, want actor", got)
+	}
+}
+
+func TestFormatConditionMatch_Nil(t *testing.T) {
+	if got := formatConditionMatch(nil); got != "<nil>" {
+		t.Errorf("formatConditionMatch(nil) = %q, want <nil>", got)
+	}
+	c := &simpleCondition{key: "x", value: "done"}
+	got := formatConditionMatch(c)
+	if got == "" || got == "<nil>" {
+		t.Errorf("formatConditionMatch(c) = %q, want non-nil non-empty", got)
+	}
+}
+
+func TestPrinter_WithEffects(t *testing.T) {
+	old := bt.DefaultPrinter
+	bt.DefaultPrinter = Printer
+	defer func() { bt.DefaultPrinter = old }()
+
+	variables := map[any]any{"x": "start"}
+	state := &mockState{
+		variable: func(key any) (any, error) {
+			v, ok := variables[key]
+			if !ok {
+				return nil, fmt.Errorf("variable not found: %v", key)
+			}
+			return v, nil
+		},
+		actions: func(failed Condition) ([]IAction, error) {
+			return []IAction{
+				&simpleAction{
+					effects: Effects{
+						&simpleEffect{key: "x", value: "done"},
+						&simpleEffect{key: "y", value: 42},
+					},
+					node: bt.New(func([]bt.Node) (bt.Status, error) {
+						variables["x"] = "done"
+						return bt.Success, nil
+					}),
+				},
+			}, nil
+		},
+	}
+	cond := &simpleCondition{key: "x", value: "done"}
+	plan, err := INew(state, []IConditions{{cond}})
+	if err != nil {
+		t.Fatalf("INew: %v", err)
+	}
+	node := plan.Node()
+	if _, err := node.Tick(); err != nil {
+		t.Fatalf("tick 1 (expand): %v", err)
+	}
+	// Second tick actually runs the action so tree is fully materialized.
+	// Either tick should have ActionNode with effects visible via Printer.
+	output := node.String()
+	if !strings.Contains(output, "effects:") {
+		t.Errorf("Printer output should contain effects: prefix, got:\n%s", output)
+	}
+	if !strings.Contains(output, "x=done") {
+		t.Errorf("Printer output should contain x=done, got:\n%s", output)
 	}
 }

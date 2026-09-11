@@ -428,3 +428,190 @@ func Test_node_copy(t *testing.T) {
 		t.Errorf("dst.status.LastStatus() = %v, want Success", dst.status.LastStatus())
 	}
 }
+
+func TestPpaConflicts(t *testing.T) {
+	// Direct unit test for the conflicts() helper which previously had 0% coverage.
+	// Construct PPAs manually with effects vs conditions.
+
+	condKey := "x"
+
+	trueCond := &simpleCondition{key: condKey, value: "desired"}
+	falseEffect := &simpleEffect{key: condKey, value: "other"}
+	trueEffect := &simpleEffect{key: condKey, value: "desired"}
+	unrelatedEffect := &simpleEffect{key: "y", value: "anything"}
+
+	// Helper to build a p(P) with a single condition and an o with single effect.
+	buildP := func(cond Condition) *ppa[Condition] {
+		root := &node[Condition]{typ: NodeTypePPARoot}
+		p := &ppa[Condition]{root: root}
+		root.ppa = p
+		if cond != nil {
+			leaf := &node[Condition]{typ: NodeTypePreconditionLeaf, precondition: &precondition[Condition]{condition: cond}}
+			leaf.precondition.root = leaf
+			andMap := map[any]*precondition[Condition]{cond.Key(): leaf.precondition}
+			or := &preconditions[Condition]{and: andMap}
+			act := &action[Condition]{or: []*preconditions[Condition]{or}, effects: map[any]Effect{}}
+			p.actions = []*action[Condition]{act}
+		}
+		return p
+	}
+	buildO := func(eff Effect) *ppa[Condition] {
+		root := &node[Condition]{typ: NodeTypePPARoot}
+		o := &ppa[Condition]{root: root}
+		root.ppa = o
+		act := &action[Condition]{effects: map[any]Effect{eff.Key(): eff}}
+		o.actions = []*action[Condition]{act}
+		return o
+	}
+
+	// No conditions -> fast path false.
+	t.Run("no conditions no conflict", func(t *testing.T) {
+		p := buildP(nil)
+		// explicitly empty actions to ensure pairs empty
+		p.actions = []*action[Condition]{}
+		o := buildO(falseEffect)
+		if p.conflicts(o) {
+			t.Fatalf("expected no conflict when p has no conditions")
+		}
+	})
+
+	// Effect key matches condition key but value differs -> conflict true.
+	t.Run("conflicting effect", func(t *testing.T) {
+		p := buildP(trueCond)
+		o := buildO(falseEffect)
+		if !p.conflicts(o) {
+			t.Fatalf("expected conflict: condition expects desired, effect is other")
+		}
+	})
+
+	// Effect value matches condition -> no conflict.
+	t.Run("matching effect no conflict", func(t *testing.T) {
+		p := buildP(trueCond)
+		o := buildO(trueEffect)
+		if p.conflicts(o) {
+			t.Fatalf("expected no conflict when effect matches condition")
+		}
+	})
+
+	// Unrelated key -> no conflict.
+	t.Run("unrelated key no conflict", func(t *testing.T) {
+		p := buildP(trueCond)
+		o := buildO(unrelatedEffect)
+		if p.conflicts(o) {
+			t.Fatalf("expected no conflict for unrelated keys")
+		}
+	})
+
+	// Nested PPA via or.and queue traversal: o's action has a precondition whose
+	// root is an expanded PPA. The conflicts check should queue that nested PPA.
+	t.Run("nested ppa", func(t *testing.T) {
+		p := buildP(trueCond)
+		// Build nested PPA that itself conflicts.
+		nestedRoot := &node[Condition]{typ: NodeTypePPARoot}
+		nested := &ppa[Condition]{root: nestedRoot}
+		nestedRoot.ppa = nested
+		nested.actions = []*action[Condition]{{effects: map[any]Effect{condKey: falseEffect}}}
+
+		// Outer O's action contains an 'or' that points to nestedRoot.
+		nestedLeaf := &node[Condition]{typ: NodeTypePreconditionLeaf, precondition: &precondition[Condition]{condition: &simpleCondition{key: "z", value: "zv"}}}
+		nestedLeaf.precondition.root = nestedLeaf
+		// Mark this leaf as an expanded PPA root: its ppa root equals itself.
+		// Actually for queue traversal, the condition is: and.root == and.root.ppa.root
+		// So we need and.root.ppa.root == and.root
+		leafPpaRoot := &node[Condition]{typ: NodeTypePPARoot}
+		leafPpa := &ppa[Condition]{root: leafPpaRoot}
+		leafPpaRoot.ppa = leafPpa
+		leafPpa.actions = []*action[Condition]{{effects: map[any]Effect{condKey: falseEffect}}}
+		nestedLeaf.precondition.root = leafPpaRoot
+		nestedLeaf.ppa = leafPpa // not used but ensure consistency
+		andMapNested := map[any]*precondition[Condition]{"z": nestedLeaf.precondition}
+		orNested := &preconditions[Condition]{and: andMapNested}
+		outerAct := &action[Condition]{
+			effects: map[any]Effect{"unrelated": unrelatedEffect},
+			or:      []*preconditions[Condition]{orNested},
+		}
+		outerRoot := &node[Condition]{typ: NodeTypePPARoot}
+		outer := &ppa[Condition]{root: outerRoot}
+		outerRoot.ppa = outer
+		outer.actions = []*action[Condition]{outerAct}
+		// This should find conflict via nested queue.
+		if !p.conflicts(outer) {
+			t.Fatalf("expected conflict via nested ppa traversal")
+		}
+	})
+}
+
+func TestPpaResolve_ReordersOnConflict(t *testing.T) {
+	condKey := "x"
+	cond := &simpleCondition{key: condKey, value: "desired"}
+	conflictingEffect := &simpleEffect{key: condKey, value: "other"}
+
+	// Build two PPA roots as children of a sequence parent.
+	parent := &node[Condition]{tick: bt.Sequence, typ: NodeTypeActionRoot}
+
+	oRoot := &node[Condition]{typ: NodeTypePPARoot}
+	o := &ppa[Condition]{root: oRoot}
+	oRoot.ppa = o
+	oAct := &action[Condition]{effects: map[any]Effect{condKey: conflictingEffect}}
+	o.actions = []*action[Condition]{oAct}
+
+	pRoot := &node[Condition]{typ: NodeTypePPARoot}
+	p := &ppa[Condition]{root: pRoot}
+	pRoot.ppa = p
+	leaf := &node[Condition]{typ: NodeTypePreconditionLeaf, precondition: &precondition[Condition]{condition: cond}}
+	leaf.precondition.root = leaf
+	andMap := map[any]*precondition[Condition]{condKey: leaf.precondition}
+	or := &preconditions[Condition]{and: andMap}
+	pAct := &action[Condition]{or: []*preconditions[Condition]{or}, effects: map[any]Effect{}}
+	p.actions = []*action[Condition]{pAct}
+
+	parent.append(nil, oRoot, pRoot)
+
+	if parent.first != oRoot || parent.last != pRoot || pRoot.prev != oRoot {
+		t.Fatalf("initial order wrong: first=%p oRoot=%p last=%p pRoot=%p prev=%p", parent.first, oRoot, parent.last, pRoot, pRoot.prev)
+	}
+
+	moved := p.resolve()
+	if moved != 1 {
+		t.Fatalf("resolve conflicts = %d want 1", moved)
+	}
+	// After resolve, pRoot should have been moved left of oRoot.
+	if parent.first != pRoot || parent.last != oRoot {
+		t.Fatalf("after resolve order wrong: first=%p want pRoot=%p last=%p want oRoot=%p prev checks pRoot.next=%p oRoot.prev=%p", parent.first, pRoot, parent.last, oRoot, pRoot.next, oRoot.prev)
+	}
+	if pRoot.next != oRoot || oRoot.prev != pRoot {
+		t.Fatalf("linkage after resolve broken: pRoot.next=%p oRoot.prev=%p", pRoot.next, oRoot.prev)
+	}
+
+	// Second call should find no further conflict and return 0.
+	if moved2 := p.resolve(); moved2 != 0 {
+		t.Fatalf("second resolve = %d want 0", moved2)
+	}
+}
+
+func TestPpaConflict_NoConflictReturnsNil(t *testing.T) {
+	// Use planner integration: construct a state where no conflict exists, verify conflict() returns nil via resolve==0.
+	// Minimal case: single action with matching condition.
+	condKey := "k"
+	cond := &simpleCondition{key: condKey, value: "v"}
+	eff := &simpleEffect{key: condKey, value: "v"}
+	parent := &node[Condition]{tick: bt.Sequence, typ: NodeTypeActionRoot}
+	oRoot := &node[Condition]{typ: NodeTypePPARoot}
+	o := &ppa[Condition]{root: oRoot}
+	oRoot.ppa = o
+	o.actions = []*action[Condition]{{effects: map[any]Effect{condKey: eff}}}
+	pRoot := &node[Condition]{typ: NodeTypePPARoot}
+	p := &ppa[Condition]{root: pRoot}
+	pRoot.ppa = p
+	leaf := &node[Condition]{typ: NodeTypePreconditionLeaf, precondition: &precondition[Condition]{condition: cond}}
+	leaf.precondition.root = leaf
+	andMap := map[any]*precondition[Condition]{condKey: leaf.precondition}
+	p.actions = []*action[Condition]{{or: []*preconditions[Condition]{{and: andMap}}}}
+	parent.append(nil, oRoot, pRoot)
+	if p.conflict() != nil {
+		t.Fatalf("expected no conflict, got %v", p.conflict())
+	}
+	if p.resolve() != 0 {
+		t.Fatalf("resolve should be 0 when no conflict")
+	}
+}

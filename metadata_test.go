@@ -17,6 +17,7 @@
 package pabt
 
 import (
+	"encoding/json"
 	"testing"
 
 	bt "github.com/joeycumines/go-behaviortree"
@@ -474,4 +475,64 @@ func TestWalk_NodeTypes(t *testing.T) {
 			t.Errorf("planner-created nodes should not have NodeTypeUnknown, got types %v", types)
 		}
 	}
+}
+
+func TestNodeStatus_MarshalJSON(t *testing.T) {
+	t.Run("zero value", func(t *testing.T) {
+		var s NodeStatus
+		data, err := s.MarshalJSON()
+		if err != nil {
+			t.Fatalf("MarshalJSON error: %v", err)
+		}
+		var m map[string]any
+		if err := json.Unmarshal(data, &m); err != nil {
+			t.Fatalf("unmarshal: %v data=%s", err, data)
+		}
+		if v, ok := m["TickCount"]; !ok || int(v.(float64)) != 0 {
+			t.Errorf("TickCount = %v, want 0", m["TickCount"])
+		}
+		if v, ok := m["LastStatus"]; !ok || int(v.(float64)) != 0 {
+			t.Errorf("LastStatus = %v, want 0", m["LastStatus"])
+		}
+	})
+
+	t.Run("with values", func(t *testing.T) {
+		var s NodeStatus
+		s.SetTickCount(5)
+		s.SetLastStatus(bt.Success)
+		data, err := s.MarshalJSON()
+		if err != nil {
+			t.Fatalf("MarshalJSON error: %v", err)
+		}
+		var m map[string]any
+		if err := json.Unmarshal(data, &m); err != nil {
+			t.Fatalf("unmarshal: %v data=%s", err, data)
+		}
+		if got := int(m["TickCount"].(float64)); got != 5 {
+			t.Errorf("TickCount = %d, want 5", got)
+		}
+		if got := int(m["LastStatus"].(float64)); got != int(bt.Success) {
+			t.Errorf("LastStatus = %d, want %d", got, int(bt.Success))
+		}
+	})
+
+	t.Run("round trip via json Marshal", func(t *testing.T) {
+		var s NodeStatus
+		s.SetTickCount(42)
+		s.SetLastStatus(bt.Running)
+		data, err := json.Marshal(&s)
+		if err != nil {
+			t.Fatalf("json.Marshal: %v", err)
+		}
+		var m map[string]any
+		if err := json.Unmarshal(data, &m); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		if int(m["TickCount"].(float64)) != 42 {
+			t.Errorf("TickCount round-trip failed: %v", m)
+		}
+		if int(m["LastStatus"].(float64)) != int(bt.Running) {
+			t.Errorf("LastStatus round-trip failed: %v", m)
+		}
+	})
 }
