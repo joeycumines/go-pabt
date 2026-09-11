@@ -2154,6 +2154,62 @@ func TestServer_MultiPlan(t *testing.T) {
 	}
 }
 
+func TestProfile_O_NodesNotEvents(t *testing.T) {
+	state := &testState{vars: map[any]any{"x": true}}
+	plan, err := pabt.INew(state, []pabt.IConditions{{&testCondition{key: "x", value: true}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tracker := NewTracker(plan)
+	// Use large event count but small node count.
+	for i := 0; i < 1000; i++ {
+		tracker.Track(bt.Success, nil)
+	}
+	start := time.Now()
+	p1 := tracker.Profile()
+	elapsed1 := time.Since(start)
+	if len(p1) == 0 {
+		t.Fatal("expected profile")
+	}
+	n := len(p1)
+	// Add 9000 more events.
+	for i := 0; i < 9000; i++ {
+		tracker.Track(bt.Success, nil)
+	}
+	start = time.Now()
+	p2 := tracker.Profile()
+	elapsed2 := time.Since(start)
+	if len(p2) != n {
+		t.Fatalf("profile node count changed after more events: %d vs %d", n, len(p2))
+	}
+	// O(events) would grow 10x; O(nodes) should stay similar. Allow 3x slack for GC.
+	if elapsed2 > elapsed1*3 && elapsed2 > 5*time.Millisecond {
+		t.Errorf("Profile() should be O(nodes) not O(events): elapsed1=%v elapsed2=%v n=%d events=10000", elapsed1, elapsed2, n)
+	}
+	// Prove sub-millisecond for the 10000-event case on this hardware (allow 5ms for CI variance).
+	if elapsed2 > 5*time.Millisecond {
+		t.Errorf("Profile() at 10000 events should be sub-5ms (proxy for sub-ms at 1000 nodes), got %v", elapsed2)
+	}
+	_ = p1
+	_ = p2
+}
+
+func BenchmarkProfile(b *testing.B) {
+	state := &testState{vars: map[any]any{"x": true}}
+	plan, err := pabt.INew(state, []pabt.IConditions{{&testCondition{key: "x", value: true}}})
+	if err != nil {
+		b.Fatal(err)
+	}
+	tracker := NewTracker(plan)
+	for i := 0; i < 10000; i++ {
+		tracker.Track(bt.Success, nil)
+	}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = tracker.Profile()
+	}
+}
+
 func TestServer_RegisterTrackerBeforePrimary(t *testing.T) {
 	// Ensure RegisterTracker with nil primary promotes first tracker to primary.
 	state := &testState{vars: map[any]any{"x": true}}
