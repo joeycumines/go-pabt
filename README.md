@@ -162,8 +162,8 @@ import "github.com/joeycumines/go-pabt/pabtdebug"
 tracker := pabtdebug.NewTracker(plan)
 
 // After each tick, record the event:
-status := plan.Tick()
-tracker.Track(status, nil)
+status, err := plan.Node().Tick()
+tracker.Track(status, err)
 
 // Start the debug server:
 server := pabtdebug.NewServer(tracker, ":8080")

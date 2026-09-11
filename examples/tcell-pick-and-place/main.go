@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+//go:build example
 // +build example
 
 package main
@@ -169,7 +170,7 @@ func run(cmd string, args []string) (exitCode int) {
 			var (
 				name      = fmt.Sprintf(`actors[%d]`, i)
 				pnpResult = logic.PickAndPlace(ctx, simulation, actor)
-				planNode = pnpResult.Node
+				planNode  = pnpResult.Node
 			)
 
 			if debug != `` && i == 0 {
