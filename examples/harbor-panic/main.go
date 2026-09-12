@@ -72,23 +72,6 @@ func main() {
 			tickMs = 1
 		}
 	}
-	// scenario presets override defaults unless explicitly storm/human flags were set differently?
-	// We apply scenario after harbor creation via init override, but keep stormEvery/humanSpeed as base
-	switch scenario {
-	case "calm":
-		stormEvery = 0
-		humanSpeed = 0
-	case "stormy":
-		stormEvery = 60
-		humanSpeed = 2.5
-	case "maze":
-		stormEvery = 120
-		humanSpeed = 4
-	case "":
-		// no scenario
-	default:
-		log.Fatalf("unknown --scenario %q (calm|stormy|maze)", scenario)
-	}
 	if rankByCost {
 		// propagated via logic global
 		logic.SetRankByCost(true)
@@ -105,33 +88,10 @@ func main() {
 	}()
 
 	harbor := hsim.NewHarbor(stormEvery, humanSpeed, time.Now().UnixNano())
-	if scenario == "maze" {
-		// maze walls with single chokepoint - dense corridors
-		walls := []*hsim.Sprite{
-			{ID: "WALL-MAZE-0", Kind: hsim.KindWall, X: 8, Y: 5, W: 1, H: 8, Rune: '#'},
-			{ID: "WALL-MAZE-1", Kind: hsim.KindWall, X: 15, Y: 3, W: 1, H: 8, Rune: '#'},
-			{ID: "WALL-MAZE-2", Kind: hsim.KindWall, X: 22, Y: 5, W: 1, H: 8, Rune: '#'},
-			{ID: "WALL-MAZE-3", Kind: hsim.KindWall, X: 30, Y: 3, W: 1, H: 8, Rune: '#'},
-			{ID: "WALL-MAZE-4", Kind: hsim.KindWall, X: 8, Y: 13, W: 24, H: 1, Rune: '#'},
-			{ID: "WALL-MAZE-5", Kind: hsim.KindWall, X: 8, Y: 2, W: 1, H: 2, Rune: '#'},
+	if scenario != "" {
+		if err := hsim.ApplyScenario(harbor, scenario); err != nil {
+			log.Fatalf("%v", err)
 		}
-		// single chokepoint gap at (12,13) etc handled by not full wall
-		harbor.SetWalls(walls)
-	} else if scenario == "stormy" {
-		walls := []*hsim.Sprite{
-			{ID: "WALL-STORM-0", Kind: hsim.KindWall, X: 5, Y: 4, W: 1, H: 3, Rune: '#'},
-			{ID: "WALL-STORM-1", Kind: hsim.KindWall, X: 12, Y: 6, W: 1, H: 4, Rune: '#'},
-			{ID: "WALL-STORM-2", Kind: hsim.KindWall, X: 18, Y: 3, W: 1, H: 3, Rune: '#'},
-			{ID: "WALL-STORM-3", Kind: hsim.KindWall, X: 22, Y: 10, W: 1, H: 4, Rune: '#'},
-			{ID: "WALL-STORM-4", Kind: hsim.KindWall, X: 28, Y: 4, W: 1, H: 3, Rune: '#'},
-			{ID: "WALL-STORM-5", Kind: hsim.KindWall, X: 32, Y: 8, W: 1, H: 3, Rune: '#'},
-			{ID: "WALL-STORM-6", Kind: hsim.KindWall, X: 10, Y: 12, W: 6, H: 1, Rune: '#'},
-			{ID: "WALL-STORM-7", Kind: hsim.KindWall, X: 20, Y: 13, W: 5, H: 1, Rune: '#'},
-		}
-		harbor.SetWalls(walls)
-	} else if scenario == "calm" {
-		// open corridors no walls
-		harbor.SetWalls(nil)
 	}
 	if beliefFlag {
 		harbor.EnableBelief(true)
