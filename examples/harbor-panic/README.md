@@ -197,8 +197,9 @@ Browser (chromium):
 ```bash
 bash examples/harbor-panic/scripts/verify_ui_invariants.sh http://localhost:8080/debug/pabt && \
 bash examples/harbor-panic/scripts/verify_io_tour.sh http://localhost:8080/debug/pabt
-# exits 0 printing: search OK, diff OK, profile O(nodes) OK, dot OK, breakpoint hit OK,
-# export/import lossless OK (1050 lines imported), virtual 20-40 rows OK, diffing OK, culling OK, rAF OK
+# verify_io_tour.sh exits 0 printing 8 OK lines:
+#   search OK, diff OK, profile O(nodes) OK, dot OK, breakpoint hit OK,
+#   export/import lossless OK, SSE replay OK, timeline window OK
 ```
 
 ---
