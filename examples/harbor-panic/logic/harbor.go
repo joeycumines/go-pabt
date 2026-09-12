@@ -146,7 +146,7 @@ func HarborPlan(ctx context.Context, harbor *hsim.Harbor, actorID string) Harbor
 		panic(fmt.Sprintf("harbor plan actor %s not found among %d actors", actorID, len(actorsSorted)))
 	}
 
-	pairsPerActor := 1
+	pairsPerActor := 2
 	startPair := actorIdx * pairsPerActor
 	pairCount := 0
 	for gi, g := range goals {
@@ -217,8 +217,8 @@ func (h *harborState) Actions(failed pabt.Condition) (actions []pabt.IAction, er
 		if add("pick")(h.templatePick(failed, st, cube)) {
 			return
 		}
-		for x := int32(0); x < hsim.SpaceWidth; x += 4 {
-			for y := int32(0); y < hsim.SpaceHeight; y += 4 {
+		for x := int32(0); x < hsim.SpaceWidth; x += 2 {
+			for y := int32(0); y < hsim.SpaceHeight; y += 2 {
 				if add("place")(h.templatePlace(failed, st, x, y, cube)) {
 					return
 				}
@@ -226,8 +226,8 @@ func (h *harborState) Actions(failed pabt.Condition) (actions []pabt.IAction, er
 		}
 	}
 
-	for x := int32(0); x < hsim.SpaceWidth; x += 4 {
-		for y := int32(0); y < hsim.SpaceHeight; y += 4 {
+	for x := int32(0); x < hsim.SpaceWidth; x += 2 {
+		for y := int32(0); y < hsim.SpaceHeight; y += 2 {
 			if add("move")(h.templateMove(failed, st, x, y)) {
 				return
 			}

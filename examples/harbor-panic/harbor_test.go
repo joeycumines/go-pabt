@@ -83,18 +83,24 @@ func TestHarborBuildsLargeTrees(t *testing.T) {
 		t.Logf("%s: tree has %d nodes", planID, nodeCount)
 
 		// PA-BT produces compact trees proportional to distinct precondition
-		// keys. With 1 success condition per actor and grid step 4, trees
-		// converge at 3-13 nodes. This proves the PA-BT fabric generalizes
-		// to the harbor scenario. Multi-plan SSE streaming stress (Task 20+)
-		// provides the 150-400 node aggregate load across 4 concurrent plans.
-		if nodeCount < 3 {
-			t.Errorf("%s: expected >=3 nodes, got %d", planID, nodeCount)
+		// keys. With 2 success conditions per actor and grid step 2, trees
+		// converge at 30-80 nodes after widening (Task 25). With 1 condition
+		// and step 4 they were 3-13 nodes. This proves the PA-BT fabric
+		// generalizes to the harbor scenario and that widening achieved
+		// chaos visibility.
+		if nodeCount < 20 {
+			t.Errorf("%s: expected >=20 nodes, got %d", planID, nodeCount)
 		}
 
 		// Verify pabt-aware Printer output contains type labels that
 		// are proven to appear in PA-BT output (per pabt_test.go).
+		// With 1 success condition root typ is GoalRoot, with 2 it is
+		// GoalSelector — both are valid; PPARoot/PPAPost must always appear.
 		output := result.Node.String()
-		for _, want := range []string{"GoalRoot", "PPARoot", "PPAPost"} {
+		if !strings.Contains(output, "GoalRoot") && !strings.Contains(output, "GoalSelector") {
+			t.Errorf("%s: Node.String() missing GoalRoot or GoalSelector", planID)
+		}
+		for _, want := range []string{"PPARoot", "PPAPost"} {
 			if !strings.Contains(output, want) {
 				t.Errorf("%s: Node.String() missing %q", planID, want)
 			}
