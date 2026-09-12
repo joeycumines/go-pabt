@@ -107,3 +107,141 @@ func TestHarborBuildsLargeTrees(t *testing.T) {
 		}
 	}
 }
+
+func TestHarborVerifiedEffects(t *testing.T) {
+	ctx := context.Background()
+
+	// Part 1: Revision monotonically increases across Step calls
+	harbor := hsim.NewHarbor(0, 0, 42)
+	var lastRev uint64
+	for i := 0; i < 20; i++ {
+		if err := harbor.Step(ctx); err != nil {
+			t.Fatalf("Step failed at tick %d: %v", i, err)
+		}
+		rev := harbor.State().Revision
+		if rev <= lastRev {
+			t.Fatalf("Revision not monotonically increasing: tick %d rev %d <= prev %d", i, rev, lastRev)
+		}
+		lastRev = rev
+	}
+	t.Logf("Revision monotonicity verified: 20 ticks, final rev=%d", lastRev)
+
+	// Part 2: Verified effects catch phantom success.
+	// Execute a plan and verify that every cube placement results in
+	// the cube actually being at a valid position. The tickPlace
+	// verification guard re-reads State() after Release+Move and
+	// returns Failure if the cube is not at the target.
+	harbor2 := hsim.NewHarbor(0, 0, 42)
+	st := harbor2.State()
+	actors := st.Actors()
+	if len(actors) == 0 {
+		t.Fatal("no actors")
+	}
+
+	result := logic.HarborPlan(ctx, harbor2, actors[0].ID)
+	planNode := result.Node
+
+	placeCount := 0
+	for tick := 0; tick < 100; tick++ {
+		harbor2.Step(ctx)
+
+		// Record cube positions before tick
+		cubesBefore := make(map[string][2]float64)
+		for _, c := range harbor2.State().Cubes() {
+			cubesBefore[c.ID] = [2]float64{c.X, c.Y}
+		}
+
+		status, _ := planNode.Tick()
+
+		// After tick, verify any cube that changed position is valid.
+		// If tickPlace returned Success without actually moving the cube
+		// (phantom success), the cube would still be at its old position
+		// while the planner believes it moved. The verification guard
+		// prevents this by re-reading state.
+		for _, c := range harbor2.State().Cubes() {
+			before := cubesBefore[c.ID]
+			if c.X != before[0] || c.Y != before[1] {
+				placeCount++
+				// Cube moved - verify it's within bounds
+				if c.X < 0 || c.X >= float64(hsim.SpaceWidth) || c.Y < 0 || c.Y >= float64(hsim.SpaceHeight) {
+					t.Errorf("phantom: cube %s placed out of bounds at (%f,%f)", c.ID, c.X, c.Y)
+				}
+			}
+		}
+
+		if status == bt.Success {
+			break
+		}
+	}
+
+	// Part 3: Verify state consistency after every tick -
+	// no actor holds a non-existent cube (phantom reference)
+	harbor3 := hsim.NewHarbor(0, 0, 99)
+	result3 := logic.HarborPlan(ctx, harbor3, harbor3.State().Actors()[0].ID)
+	for tick := 0; tick < 50; tick++ {
+		harbor3.Step(ctx)
+		result3.Node.Tick()
+		st3 := harbor3.State()
+		for _, sp := range st3.Sprites {
+			if sp.Kind == hsim.KindActor && sp.HeldItem != nil {
+				heldSprite := st3.Sprites[sp.HeldItem.ID]
+				if heldSprite == nil {
+					t.Fatalf("phantom: actor %s holds non-existent cube %s at tick %d", sp.ID, sp.HeldItem.ID, tick)
+				}
+			}
+		}
+	}
+
+	// Part 4: Prove the verification guard CATCHES phantom success.
+	// Request a placement at an out-of-bounds position. Harbor.Move clamps
+	// the position, but tickPlace's guard detects the mismatch between
+	// requested (x,y) and actual position, returning bt.Failure.
+	harbor4 := hsim.NewHarbor(0, 0, 77)
+	st4 := harbor4.State()
+	actors4 := st4.Actors()
+	if len(actors4) == 0 {
+		t.Fatal("no actors for phantom proof")
+	}
+	// Find a cube to attempt placing out of bounds
+	var targetCubeID string
+	for _, c := range st4.Cubes() {
+		targetCubeID = c.ID
+		break
+	}
+	if targetCubeID == "" {
+		t.Fatal("no cubes for phantom proof")
+	}
+	// Move actor to cube position so Grasp succeeds (within PickupDistance)
+	cubeSprite := st4.Sprites[targetCubeID]
+	if cubeSprite == nil {
+		t.Fatal("target cube sprite not found")
+	}
+	if err := harbor4.Move(ctx, actors4[0].ID, cubeSprite.X, cubeSprite.Y); err != nil {
+		t.Fatalf("move actor to cube for phantom proof: %v", err)
+	}
+	// Grasp the cube first so Release doesn't fail
+	if err := harbor4.Grasp(ctx, actors4[0].ID, targetCubeID); err != nil {
+		t.Fatalf("grasp for phantom proof: %v", err)
+	}
+	// Create a harborState to call tickPlace directly
+	hs := logic.NewTestHarborState(ctx, harbor4, actors4[0].ID)
+	// Request position far out of bounds — Move will clamp, guard catches mismatch
+	outX, outY := float64(hsim.SpaceWidth)+100, float64(hsim.SpaceHeight)+100
+	tickFn := hs.TickPlace(targetCubeID, outX, outY)
+	status, err := tickFn(nil)
+	if err != nil {
+		t.Fatalf("tickPlace returned error: %v", err)
+	}
+	if status != bt.Failure {
+		t.Fatalf("phantom NOT caught: tickPlace returned %v for out-of-bounds placement, want bt.Failure", status)
+	}
+	// Verify cube did NOT end up at the out-of-bounds position
+	st4b := harbor4.State()
+	sp4 := st4b.Sprites[targetCubeID]
+	if sp4 != nil && (sp4.X == outX || sp4.Y == outY) {
+		t.Fatal("phantom: cube placed at out-of-bounds position")
+	}
+	t.Log("Phantom success caught: tickPlace returned bt.Failure for mismatched position")
+
+	t.Logf("Verified effects: %d cube placements verified, phantom guard proven", placeCount)
+}

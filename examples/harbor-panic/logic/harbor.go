@@ -402,6 +402,16 @@ func (h *harborState) tickPlace(cubeID string, x, y float64) bt.Tick {
 		if err := h.harbor.Move(h.ctx, cubeID, x, y); err != nil {
 			return bt.Failure, nil
 		}
+		// Verified effects: re-read state to confirm mutation committed.
+		// Guards against phantom Success from stale reads (bt-02 §7, ungrounded-02 §21).
+		st := h.harbor.State()
+		sp := st.Sprites[cubeID]
+		if sp == nil {
+			return bt.Failure, nil
+		}
+		if sp.X != x || sp.Y != y {
+			return bt.Failure, nil
+		}
 		return bt.Success, nil
 	}
 }
@@ -446,4 +456,19 @@ func (v positionVar) stateVar(state stateInterface) (any, error) {
 		positions[id] = &positionInfo{X: sp.X, Y: sp.Y, W: sp.W, H: sp.H}
 	}
 	return &positionValue{Positions: positions}, nil
+}
+
+// NewTestHarborState creates a harborState for testing verified effects.
+func NewTestHarborState(ctx context.Context, harbor *hsim.Harbor, actorID string) TestHarborState {
+	return TestHarborState{hs: &harborState{ctx: ctx, harbor: harbor, actorID: actorID}}
+}
+
+// TestHarborState wraps harborState for test access.
+type TestHarborState struct {
+	hs *harborState
+}
+
+// TickPlace exposes tickPlace for testing.
+func (t TestHarborState) TickPlace(cubeID string, x, y float64) bt.Tick {
+	return t.hs.tickPlace(cubeID, x, y)
 }
