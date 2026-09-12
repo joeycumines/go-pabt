@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/gdamore/tcell/v2"
+	"github.com/joeycumines/go-pabt/examples/harbor-panic/logic"
 	hsim "github.com/joeycumines/go-pabt/examples/harbor-panic/sim"
 	"github.com/joeycumines/go-pabt/pabtdebug"
 )
@@ -282,7 +283,12 @@ func RenderBottomHUD(screen tcell.Screen, harbor *hsim.Harbor, trackers []*pabtd
 	metricsStyle := tcell.StyleDefault.Foreground(tcell.NewRGBColor(160, 170, 190))
 	labelStyle := tcell.StyleDefault.Foreground(tcell.NewRGBColor(100, 110, 130))
 	valStyle := tcell.StyleDefault.Foreground(tcell.NewRGBColor(200, 210, 230))
+	rankMode := "LEX"
+	if logic.IsRankByCost() {
+		rankMode = "COST"
+	}
 	metrics := []struct{ label, value string }{
+		{"RANK", rankMode},
 		{"DELTA", "0.009"},
 		{"OVF", overflowBytes(trackers)},
 		{"TL", fmt.Sprintf("%d/1000", len(trackersLatestTimeline(trackers)))},

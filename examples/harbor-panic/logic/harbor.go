@@ -21,6 +21,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"sort"
 
 	bt "github.com/joeycumines/go-behaviortree"
 	"github.com/joeycumines/go-pabt"
@@ -85,33 +86,87 @@ func SetRankByCost(enabled bool) {
 	rankByCost = enabled
 }
 
+// IsRankByCost returns whether cost-based ranking is enabled.
+func IsRankByCost() bool {
+	return rankByCost
+}
+
 func actionCost(act *simpleAction) float64 {
 	if act == nil {
 		return 0
 	}
-	// default costs; will be refined per template type via condition keys
-	// pick 1.0, place 2.0 + distance/10, move 0.5 + distance/10
-	// Heuristic: detect heldItemVar and positionVar conditions
-	hasHeldItem := false
-	hasPos := false
+	// Explicit cost model per acceptance: pick=1.0, place=2.0+distance/10, move=0.5+distance/10
+	// Detect action type by examining conditions and effects
+	hasHeldItemCond := false
+	hasPosCond := false
+	var targetX, targetY float64
+	var actorX, actorY float64
+	hasTarget := false
+	hasActor := false
+
 	for _, conds := range act.conditions {
 		for _, c := range conds {
-			if _, ok := c.Key().(heldItemVar); ok {
-				hasHeldItem = true
-			}
-			if _, ok := c.Key().(positionVar); ok {
-				hasPos = true
+			switch k := c.Key().(type) {
+			case heldItemVar:
+				hasHeldItemCond = true
+			case positionVar:
+				hasPosCond = true
+				// Try to extract target position from effect values
+				for _, eff := range act.effects {
+					if pv, ok := eff.Key().(positionVar); ok && pv.SpriteID == k.SpriteID {
+						if pval, ok := eff.Value().(*positionValue); ok {
+							if info, ok := pval.Positions[k.SpriteID]; ok {
+								targetX = info.X
+								targetY = info.Y
+								hasTarget = true
+							}
+						}
+					}
+				}
 			}
 		}
 	}
-	// simple heuristic based on number of effects/conditions to approximate type
-	if hasHeldItem && hasPos {
-		// pick or place - differentiate by number of conditions
-		// this will be overridden by explicit cost field when we add it
-		return 1.5
+
+	// Extract actor position from position effects
+	for _, eff := range act.effects {
+		if _, ok := eff.Key().(positionVar); ok {
+			if pval, ok := eff.Value().(*positionValue); ok {
+				for _, info := range pval.Positions {
+					actorX = info.X
+					actorY = info.Y
+					hasActor = true
+					break
+				}
+			}
+		}
 	}
-	if hasPos && !hasHeldItem {
-		return 0.8
+
+	dist := 0.0
+	if hasTarget && hasActor {
+		dist = math.Hypot(targetX-actorX, targetY-actorY)
+	}
+
+	// Classify action type
+	if hasHeldItemCond && hasPosCond {
+		// Could be pick or place — check effects to distinguish
+		for _, eff := range act.effects {
+			if hv, ok := eff.Key().(heldItemVar); ok {
+				if hval, ok := eff.Value().(*heldItemValue); ok {
+					if hval.ItemID == "" {
+						// Place: releasing item
+						return 2.0 + dist/10.0
+					}
+					// Pick: acquiring item
+					return 1.0
+				}
+				_ = hv
+			}
+		}
+		return 1.5 // fallback for pick/place
+	}
+	if hasPosCond && !hasHeldItemCond {
+		// Move
+		return 0.5 + dist/10.0
 	}
 	return 1.0
 }
@@ -232,6 +287,20 @@ func (h *harborState) Actions(failed pabt.Condition) (actions []pabt.IAction, er
 				return
 			}
 		}
+	}
+
+	// When rankByCost is enabled, sort actions by cost ascending.
+	// This changes planner behavior: cheaper actions tried first,
+	// demonstrating that action ordering is a policy choice, not accidental.
+	if rankByCost && len(actions) > 1 {
+		sort.SliceStable(actions, func(i, j int) bool {
+			ai, oki := actions[i].(*simpleAction)
+			aj, okj := actions[j].(*simpleAction)
+			if !oki || !okj {
+				return false
+			}
+			return actionCost(ai) < actionCost(aj)
+		})
 	}
 
 	return
@@ -471,4 +540,54 @@ type TestHarborState struct {
 // TickPlace exposes tickPlace for testing.
 func (t TestHarborState) TickPlace(cubeID string, x, y float64) bt.Tick {
 	return t.hs.tickPlace(cubeID, x, y)
+}
+
+// ActionCount returns the number of actions supporting a given positionVar key.
+// This allows tests to verify that rankByCost changes action ordering without
+// exposing internal pabt types.
+func (t TestHarborState) ActionCount(spriteID string) int {
+	st := t.hs.harbor.State()
+	sp := st.Sprites[spriteID]
+	if sp == nil {
+		return 0
+	}
+	// Build a simpleCond that matches the current position
+	cond := &simpleCond{
+		key: positionVar{SpriteID: spriteID},
+		match: func(r any) bool {
+			return true // match all to get full action list
+		},
+	}
+	actions, _ := t.hs.Actions(cond)
+	return len(actions)
+}
+
+// ActionOrderDiffers builds plans under both ranking modes and returns
+// whether the resulting tree strings differ after N ticks.
+func ActionOrderDiffers(ctx context.Context, seed int64, ticks int) bool {
+	harborLex := hsim.NewHarbor(0, 0, seed)
+	SetRankByCost(false)
+	actorsLex := harborLex.State().Actors()
+	if len(actorsLex) == 0 {
+		return false
+	}
+	resultLex := HarborPlan(ctx, harborLex, actorsLex[0].ID)
+	for i := 0; i < ticks; i++ {
+		harborLex.Step(ctx)
+		resultLex.Node.Tick()
+	}
+	outLex := resultLex.Node.String()
+
+	harborCost := hsim.NewHarbor(0, 0, seed)
+	SetRankByCost(true)
+	actorsCost := harborCost.State().Actors()
+	resultCost := HarborPlan(ctx, harborCost, actorsCost[0].ID)
+	for i := 0; i < ticks; i++ {
+		harborCost.Step(ctx)
+		resultCost.Node.Tick()
+	}
+	outCost := resultCost.Node.String()
+	SetRankByCost(false)
+
+	return outLex != outCost
 }

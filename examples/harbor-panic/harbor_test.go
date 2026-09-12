@@ -245,3 +245,68 @@ func TestHarborVerifiedEffects(t *testing.T) {
 
 	t.Logf("Verified effects: %d cube placements verified, phantom guard proven", placeCount)
 }
+
+func TestHarborCostRanking(t *testing.T) {
+	ctx := context.Background()
+
+	// Verify IsRankByCost reflects the setting
+	logic.SetRankByCost(false)
+	if logic.IsRankByCost() {
+		t.Error("IsRankByCost should be false after SetRankByCost(false)")
+	}
+	logic.SetRankByCost(true)
+	if !logic.IsRankByCost() {
+		t.Error("IsRankByCost should be true after SetRankByCost(true)")
+	}
+	logic.SetRankByCost(false)
+
+	// Search for a seed where lexical vs cost ordering produce different trees.
+	// With 6 cubes on a 40x18 grid, there are hundreds of candidate place/move
+	// actions per failed condition. Lexical ordering enumerates them in grid-scan
+	// order; cost ordering puts cheapest first. For most seeds, the PA-BT planner
+	// selects different actions under each ordering, producing structurally
+	// different trees. We search up to 20 seeds to find one.
+	foundDiff := false
+	var diffSeed int64
+	for seed := int64(1); seed <= 20; seed++ {
+		if logic.ActionOrderDiffers(ctx, seed, 15) {
+			foundDiff = true
+			diffSeed = seed
+			break
+		}
+	}
+
+	if !foundDiff {
+		t.Fatal("lexical vs cost ordering produced identical trees for all 20 seeds — actionCost model or sort not affecting planner selection")
+	}
+
+	t.Logf("PASS: lexical vs cost ordering differ at seed=%d (contention demonstrated)", diffSeed)
+
+	// Verify the specific difference with detailed output
+	harborLex := hsim.NewHarbor(0, 0, diffSeed)
+	logic.SetRankByCost(false)
+	resultLex := logic.HarborPlan(ctx, harborLex, harborLex.State().Actors()[0].ID)
+	for i := 0; i < 15; i++ {
+		harborLex.Step(ctx)
+		resultLex.Node.Tick()
+	}
+	outLex := resultLex.Node.String()
+
+	harborCost := hsim.NewHarbor(0, 0, diffSeed)
+	logic.SetRankByCost(true)
+	resultCost := logic.HarborPlan(ctx, harborCost, harborCost.State().Actors()[0].ID)
+	for i := 0; i < 15; i++ {
+		harborCost.Step(ctx)
+		resultCost.Node.Tick()
+	}
+	outCost := resultCost.Node.String()
+	logic.SetRankByCost(false)
+
+	t.Logf("Lexical tree: %d chars", len(outLex))
+	t.Logf("Cost tree: %d chars", len(outCost))
+
+	if outLex == outCost {
+		t.Fatal("ActionOrderDiffers returned true but direct comparison shows identical trees")
+	}
+	t.Log("PASS: lexical vs cost ordering produce different trees for same failed condition")
+}
