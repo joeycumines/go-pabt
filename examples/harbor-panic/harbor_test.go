@@ -310,3 +310,85 @@ func TestHarborCostRanking(t *testing.T) {
 	}
 	t.Log("PASS: lexical vs cost ordering produce different trees for same failed condition")
 }
+
+func TestHarborBelief(t *testing.T) {
+	ctx := context.Background()
+
+	// Part 1: Without --belief, all 6 cubes visible, no hidden
+	harborNoBelief := hsim.NewHarbor(0, 0, 42)
+	stNo := harborNoBelief.State()
+	visibleNo := 0
+	hiddenNo := 0
+	for _, c := range stNo.CubesAll() {
+		if c.Hidden {
+			hiddenNo++
+		} else {
+			visibleNo++
+		}
+	}
+	if hiddenNo != 0 {
+		t.Errorf("without belief: expected 0 hidden cubes, got %d", hiddenNo)
+	}
+	if visibleNo != 6 {
+		t.Errorf("without belief: expected 6 visible cubes, got %d", visibleNo)
+	}
+	t.Logf("Without belief: %d visible, %d hidden", visibleNo, hiddenNo)
+
+	// Part 2: With belief, 2 cubes hidden initially
+	harborBelief := hsim.NewHarbor(0, 0, 42)
+	harborBelief.EnableBelief(true)
+	stB := harborBelief.State()
+	visibleB := 0
+	hiddenB := 0
+	var hiddenCubes []*hsim.Sprite
+	for _, c := range stB.CubesAll() {
+		if c.Hidden {
+			hiddenB++
+			hiddenCubes = append(hiddenCubes, c)
+		} else {
+			visibleB++
+		}
+	}
+	if hiddenB != 2 {
+		t.Fatalf("with belief: expected 2 hidden cubes, got %d", hiddenB)
+	}
+	if visibleB != 4 {
+		t.Fatalf("with belief: expected 4 visible cubes, got %d", visibleB)
+	}
+	t.Logf("With belief (initial): %d visible, %d hidden", visibleB, hiddenB)
+
+	// Part 3: After sensing (Reveal), hidden cubes become visible
+	for _, hc := range hiddenCubes {
+		if err := harborBelief.Reveal(hc.ID); err != nil {
+			t.Fatalf("Reveal(%s): %v", hc.ID, err)
+		}
+	}
+	stAfter := harborBelief.State()
+	visibleAfter := 0
+	hiddenAfter := 0
+	for _, c := range stAfter.CubesAll() {
+		if c.Hidden {
+			hiddenAfter++
+		} else {
+			visibleAfter++
+		}
+	}
+	if hiddenAfter != 0 {
+		t.Errorf("after sense: expected 0 hidden cubes, got %d", hiddenAfter)
+	}
+	if visibleAfter != 6 {
+		t.Errorf("after sense: expected 6 visible cubes, got %d", visibleAfter)
+	}
+	t.Logf("With belief (after sense): %d visible, %d hidden", visibleAfter, hiddenAfter)
+
+	// Part 4: Verify plan builds with belief enabled (templateSense wired)
+	actors := stB.Actors()
+	if len(actors) > 0 {
+		result := logic.HarborPlan(ctx, harborBelief, actors[0].ID)
+		out := result.Node.String()
+		if len(out) == 0 {
+			t.Error("plan output empty with belief enabled")
+		}
+		t.Logf("Plan with belief: %d chars", len(out))
+	}
+}

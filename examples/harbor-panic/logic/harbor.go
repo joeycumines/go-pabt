@@ -61,6 +61,13 @@ type (
 		Positions map[string]*positionInfo
 	}
 
+	hiddenVar struct {
+		CubeID string
+	}
+	hiddenValue struct {
+		Hidden bool
+	}
+
 	simpleCond struct {
 		key   any
 		match func(r any) bool
@@ -289,6 +296,18 @@ func (h *harborState) Actions(failed pabt.Condition) (actions []pabt.IAction, er
 		}
 	}
 
+	// Sense hidden cubes when belief mode is enabled (ungrounded-01 three-valued logic).
+	// Sensing reveals a hidden cube when actor is within sensing distance.
+	if h.harbor.BeliefEnabled() {
+		for _, cube := range st.CubesAll() {
+			if cube.Hidden {
+				if add("sense")(h.templateSense(failed, st, cube)) {
+					return
+				}
+			}
+		}
+	}
+
 	// When rankByCost is enabled, sort actions by cost ascending.
 	// This changes planner behavior: cheaper actions tried first,
 	// demonstrating that action ordering is a policy choice, not accidental.
@@ -454,6 +473,46 @@ func (h *harborState) templateMove(failed pabt.Condition, st *hsim.State, x, y i
 	return
 }
 
+// templateSense creates an action that reveals a hidden cube when the actor
+// is within sensing distance (3 cells). Implements the Unknown->True transition
+// from ungrounded-01 three-valued logic and ungrounded-02 section 20 belief interfaces.
+func (h *harborState) templateSense(failed pabt.Condition, st *hsim.State, cube *hsim.Sprite) (actions []pabt.IAction, err error) {
+	// Position map after reveal: cube becomes visible at its actual position
+	positions := buildFullPositions(st)
+
+	actions = append(actions, &simpleAction{
+		conditions: []pabt.IConditions{
+			{
+				&simpleCond{
+					key: positionVar{SpriteID: h.actorID},
+					match: func(r any) bool {
+						pos := r.(*positionValue).Positions
+						ap := pos[h.actorID]
+						cp := pos[cube.ID]
+						if ap == nil || cp == nil {
+							return false
+						}
+						// Sense range: 3 cells (wider than pickup distance of 1.5)
+						return math.Hypot(ap.X-cp.X, ap.Y-cp.Y) <= 3.0
+					},
+				},
+			},
+		},
+		effects: pabt.Effects{
+			&simpleEffect{
+				key:   hiddenVar{CubeID: cube.ID},
+				value: &hiddenValue{Hidden: false},
+			},
+			&simpleEffect{
+				key:   positionVar{SpriteID: cube.ID},
+				value: &positionValue{Positions: positions},
+			},
+		},
+		node: bt.New(h.tickSense(cube.ID)),
+	})
+	return
+}
+
 func (h *harborState) tickPick(cubeID string) bt.Tick {
 	return func(children []bt.Node) (bt.Status, error) {
 		if err := h.harbor.Grasp(h.ctx, h.actorID, cubeID); err != nil {
@@ -494,6 +553,15 @@ func (h *harborState) tickMove(x, y float64) bt.Tick {
 	}
 }
 
+func (h *harborState) tickSense(cubeID string) bt.Tick {
+	return func(children []bt.Node) (bt.Status, error) {
+		if err := h.harbor.Reveal(cubeID); err != nil {
+			return bt.Failure, nil
+		}
+		return bt.Success, nil
+	}
+}
+
 func (h *harborState) move(x, y float64) error {
 	return h.harbor.Move(h.ctx, h.actorID, x, y)
 }
@@ -525,6 +593,16 @@ func (v positionVar) stateVar(state stateInterface) (any, error) {
 		positions[id] = &positionInfo{X: sp.X, Y: sp.Y, W: sp.W, H: sp.H}
 	}
 	return &positionValue{Positions: positions}, nil
+}
+
+func (v hiddenVar) stateVar(state stateInterface) (any, error) {
+	st := state.getHarbor().State()
+	sp := st.Sprites[v.CubeID]
+	hidden := false
+	if sp != nil {
+		hidden = sp.Hidden
+	}
+	return &hiddenValue{Hidden: hidden}, nil
 }
 
 // NewTestHarborState creates a harborState for testing verified effects.
