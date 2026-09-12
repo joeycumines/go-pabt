@@ -582,23 +582,26 @@ func (h *Harbor) Step(ctx context.Context) error {
 		// Stuck-cycle detection: HUMAN at same rounded cell for 3+ consecutive ticks
 		// indicates genuine stuck behavior (wall collision guard reverting movement).
 		// Normal pathfinding overshoot (speed 3.1 > waypoint distance 1.0) is NOT a cycle.
-		cx, cy := math.Round(human.X), math.Round(human.Y)
-		if len(h.humanPosHistory) > 0 {
-			lastPos := h.humanPosHistory[len(h.humanPosHistory)-1]
-			if lastPos[0] == cx && lastPos[1] == cy {
-				h.stuckCount++
-				if h.stuckCount >= 3 {
-					h.cycles++
-					h.stuckCount = 0 // reset to count discrete stuck episodes
+		// If humanSpeed == 0 the human is intentionally stationary -- not stuck.
+		if h.humanSpeed > 0 {
+			cx, cy := math.Round(human.X), math.Round(human.Y)
+			if len(h.humanPosHistory) > 0 {
+				lastPos := h.humanPosHistory[len(h.humanPosHistory)-1]
+				if lastPos[0] == cx && lastPos[1] == cy {
+					h.stuckCount++
+					if h.stuckCount >= 3 {
+						h.cycles++
+						h.stuckCount = 0 // reset to count discrete stuck episodes
+					}
+				} else {
+					h.stuckCount = 0
 				}
-			} else {
-				h.stuckCount = 0
 			}
-		}
-		// Keep history bounded
-		h.humanPosHistory = append(h.humanPosHistory, [2]float64{cx, cy})
-		if len(h.humanPosHistory) > 8 {
-			h.humanPosHistory = h.humanPosHistory[len(h.humanPosHistory)-8:]
+			// Keep history bounded
+			h.humanPosHistory = append(h.humanPosHistory, [2]float64{cx, cy})
+			if len(h.humanPosHistory) > 8 {
+				h.humanPosHistory = h.humanPosHistory[len(h.humanPosHistory)-8:]
+			}
 		}
 	}
 
@@ -730,6 +733,49 @@ func (h *Harbor) SetWalls(walls []*Sprite) {
 	for _, w := range walls {
 		h.state.Sprites[w.ID] = w
 		h.state.Walls = append(h.state.Walls, w)
+	}
+	// Resolve overlaps: relocate any non-wall sprite overlapping a new wall
+	for _, sp := range h.state.Sprites {
+		if sp.Kind == KindWall {
+			continue
+		}
+		overlaps := false
+		for _, w := range h.state.Walls {
+			if sp.X < w.X+float64(w.W) && sp.X+float64(sp.W) > w.X && sp.Y < w.Y+float64(w.H) && sp.Y+float64(sp.H) > w.Y {
+				overlaps = true
+				break
+			}
+		}
+		if overlaps {
+			// Spiral search for nearest position where sprite's full AABB doesn't overlap any wall
+			bx, by := int32(math.Round(sp.X)), int32(math.Round(sp.Y))
+			placed := false
+			for r := int32(0); r < 20 && !placed; r++ {
+				for dx := -r; dx <= r && !placed; dx++ {
+					for dy := -r; dy <= r && !placed; dy++ {
+						if r > 0 && dx != -r && dx != r && dy != -r && dy != r {
+							continue // only check perimeter of radius r
+						}
+						nx, ny := float64(bx+dx), float64(by+dy)
+						if nx < 0 || ny < 0 || nx+float64(sp.W) > float64(SpaceWidth) || ny+float64(sp.H) > float64(SpaceHeight) {
+							continue
+						}
+						clear := true
+						for _, w := range h.state.Walls {
+							if nx < w.X+float64(w.W) && nx+float64(sp.W) > w.X && ny < w.Y+float64(w.H) && ny+float64(sp.H) > w.Y {
+								clear = false
+								break
+							}
+						}
+						if clear {
+							sp.X = nx
+							sp.Y = ny
+							placed = true
+						}
+					}
+				}
+			}
+		}
 	}
 }
 

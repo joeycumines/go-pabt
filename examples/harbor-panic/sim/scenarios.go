@@ -56,7 +56,7 @@ func Scenarios() map[string]ScenarioConfig {
 			StormEvery: 120,
 			HumanSpeed: 4,
 			Walls: []*Sprite{
-				{ID: "WALL-MAZE-0", Kind: KindWall, X: 8, Y: 5, W: 1, H: 8, Rune: '#'},
+				{ID: "WALL-MAZE-0", Kind: KindWall, X: 9, Y: 5, W: 1, H: 8, Rune: '#'},
 				{ID: "WALL-MAZE-1", Kind: KindWall, X: 15, Y: 3, W: 1, H: 8, Rune: '#'},
 				{ID: "WALL-MAZE-2", Kind: KindWall, X: 22, Y: 5, W: 1, H: 8, Rune: '#'},
 				{ID: "WALL-MAZE-3", Kind: KindWall, X: 30, Y: 3, W: 1, H: 8, Rune: '#'},
