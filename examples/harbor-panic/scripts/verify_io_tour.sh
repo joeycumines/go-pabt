@@ -11,15 +11,17 @@ echo "=== IO Tour Verification ==="
 echo "Target: $BASE Plan: $PLAN"
 
 # 1. Search
-SEARCH_COUNT=$(curl -s "$BASE/plans/$PLAN/search?q=ActionNode" | python3 -c "import sys,json; print(len(json.load(sys.stdin)))" 2>/dev/null || echo 0)
+# Search for node types that actually appear in PA-BT harbor trees.
+# With pairsPerActor=2, root is GoalSelector. Internal nodes are Unknown.
+# We search for 'Selector' which matches GoalSelector NodeType substring.
+SEARCH_COUNT=$(curl -s -m 30 "$BASE/plans/$PLAN/search?q=Selector" | python3 -c "import sys,json; d=json.load(sys.stdin); print(len(d) if d else 0)" 2>/dev/null || echo 0)
 if [ "$SEARCH_COUNT" -gt 0 ]; then
   echo "search OK (results: $SEARCH_COUNT)"
 else
-  echo "WARNING: search returned $SEARCH_COUNT results (ActionNode may not be in tree yet)"
-  # Try GoalRoot which should always exist
-  SEARCH_COUNT=$(curl -s "$BASE/plans/$PLAN/search?q=GoalRoot" | python3 -c "import sys,json; print(len(json.load(sys.stdin)))" 2>/dev/null || echo 0)
+  # Fallback: search for Unknown which matches all internal PA-BT nodes
+  SEARCH_COUNT=$(curl -s -m 30 "$BASE/plans/$PLAN/search?q=Unknown" | python3 -c "import sys,json; d=json.load(sys.stdin); print(len(d) if d else 0)" 2>/dev/null || echo 0)
   if [ "$SEARCH_COUNT" -gt 0 ]; then
-    echo "search OK (GoalRoot results: $SEARCH_COUNT)"
+    echo "search OK (Unknown results: $SEARCH_COUNT)"
   else
     echo "FAIL: search returned 0 results"
     exit 1

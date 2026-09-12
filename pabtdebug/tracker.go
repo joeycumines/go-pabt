@@ -218,24 +218,7 @@ func (t *Tracker) Track(status bt.Status, err error) {
 				}
 				_ = enc.Encode(te)
 			}
-			// Trees evicted due to maxTrees but whose entries remain (not in evictedEntries) — write standalone tree snapshot line?
-			// For those, write a minimal TickEvent with just Tree and iteration so it can be recovered.
-			for iterEv, tn := range evictedTrees {
-				// If already handled via evictedEntries, skip.
-				skip := false
-				for _, ev := range evictedEntries {
-					if ev.Iteration == iterEv {
-						skip = true
-						break
-					}
-				}
-				if skip {
-					continue
-				}
-				te := TickEvent{Iteration: iterEv, Tree: tn}
-				// Timestamp zero for tree-only eviction; not critical.
-				_ = enc.Encode(te)
-			}
+
 		}
 		t.overflowMu.Unlock()
 	}
@@ -243,6 +226,14 @@ func (t *Tracker) Track(status bt.Status, err error) {
 	if tree != nil {
 		walkTreeForProfile(tree, t.profiles, durationMs)
 		t.profileSeq++
+		// Prune stale entries so profiles stays O(current tree nodes),
+		// not O(all historical node IDs) across dynamic restructuring.
+		seen := collectTreeIDs(tree)
+		for id := range t.profiles {
+			if !seen[id] {
+				delete(t.profiles, id)
+			}
+		}
 	}
 
 	// Delta computation for SSE broadcast (keyframe every N).
@@ -667,6 +658,23 @@ func walkTreeForProfile(tree *TreeNode, profiles map[string]*NodeProfile, durati
 
 	for i := range tree.Children {
 		walkTreeForProfile(&tree.Children[i], profiles, durationMs)
+	}
+}
+
+// collectTreeIDs returns the set of node IDs present in tree.
+func collectTreeIDs(tree *TreeNode) map[string]bool {
+	seen := make(map[string]bool)
+	collectTreeIDsInto(tree, seen)
+	return seen
+}
+
+func collectTreeIDsInto(tree *TreeNode, seen map[string]bool) {
+	if tree == nil {
+		return
+	}
+	seen[tree.ID] = true
+	for i := range tree.Children {
+		collectTreeIDsInto(&tree.Children[i], seen)
 	}
 }
 

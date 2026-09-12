@@ -68,6 +68,9 @@ func main() {
 
 	if burst > 0 {
 		headless = true
+		if tickMs == 80 {
+			tickMs = 1
+		}
 	}
 	// scenario presets override defaults unless explicitly storm/human flags were set differently?
 	// We apply scenario after harbor creation via init override, but keep stormEvery/humanSpeed as base
@@ -142,24 +145,7 @@ func main() {
 
 	var debugServer *pabtdebug.Server
 	var trackers []*pabtdebug.Tracker
-
-	manager := bt.NewManager()
-	managerDone := make(chan struct{})
-	go func() {
-		defer close(managerDone)
-		<-manager.Done()
-		if err := manager.Err(); err != nil && ctx.Err() == nil {
-			log.Printf("bt manager error: %v", err)
-		}
-	}()
-
-	var wg sync.WaitGroup
-	wgDone := make(chan struct{})
-	wg.Add(len(actors))
-	go func() {
-		wg.Wait()
-		close(wgDone)
-	}()
+	var planNodes []bt.Node
 
 	for i, actor := range actors {
 		planID := fmt.Sprintf("harbor-bot-%d", i)
@@ -181,13 +167,7 @@ func main() {
 			})
 		}
 		trackers = append(trackers, tracker)
-
-		origNode := planNode
-		wrappedNode := bt.New(func(children []bt.Node) (bt.Status, error) {
-			status, err := origNode.Tick()
-			tracker.Track(status, err)
-			return status, err
-		})
+		planNodes = append(planNodes, planNode)
 
 		if debugAddr != "" {
 			if i == 0 {
@@ -199,75 +179,130 @@ func main() {
 				debugServer.RegisterTracker(tracker)
 			}
 		}
-
-		ticker := bt.NewTicker(ctx, time.Duration(tickMs)*time.Millisecond, bt.New(
-			bt.Not(bt.All),
-			bt.New(
-				bt.Selector,
-				bt.New(
-					bt.Sequence,
-					wrappedNode,
-					bt.New(func([]bt.Node) (bt.Status, error) {
-						return bt.Success, nil
-					}),
-				),
-				bt.New(func([]bt.Node) (bt.Status, error) {
-					return bt.Failure, nil
-				}),
-			),
-		))
-
-		if err := manager.Add(ticker); err != nil {
-			log.Fatalf("manager add %s: %v", planID, err)
-		}
-
-		go func(name string) {
-			defer wg.Done()
-			<-ticker.Done()
-			if err := ticker.Err(); err != nil && ctx.Err() == nil {
-				log.Printf("plan error %s: %v", name, err)
-			}
-		}(planID)
 	}
 
-	// Harbor sim step loop
-	go func() {
-		interval := time.Duration(tickMs) * time.Millisecond
-		if burst > 0 {
-			interval = 0 // as fast as possible
-		}
-		ticked := 0
-		for {
-			if burst > 0 && ticked >= burst {
-				log.Printf("burst complete: %d ticks", ticked)
-				<-ctx.Done()
-				return
-			}
-			if ticks > 0 && ticked >= ticks {
-				log.Printf("tick limit reached: %d", ticked)
-				<-ctx.Done()
-				return
-			}
-			select {
-			case <-ctx.Done():
-				return
-			default:
-			}
-			if err := harbor.Step(ctx); err != nil {
-				if ctx.Err() != nil {
+	// Manager + tickers for non-burst mode; burst mode uses linearized synchronous pipeline
+	var manager bt.Manager
+	managerDone := make(chan struct{})
+	var wg sync.WaitGroup
+	wgDone := make(chan struct{})
+
+	if burst > 0 {
+		// Linearized burst pipeline: exactly burst iterations, each does harbor.Step + Track per plan
+		// No manager/wg in burst mode; channels remain open until tail handles them
+		go func() {
+			ticked := 0
+			for ticked < burst {
+				select {
+				case <-ctx.Done():
+					return
+				default:
+				}
+				if ticks > 0 && ticked >= ticks {
+					log.Printf("tick limit reached: %d", ticked)
+					<-ctx.Done()
 					return
 				}
-				log.Printf("harbor step error: %v", err)
+				if err := harbor.Step(ctx); err != nil {
+					if ctx.Err() != nil {
+						return
+					}
+					log.Printf("harbor step error: %v", err)
+				}
+				for idx, pn := range planNodes {
+					status, err := pn.Tick()
+					trackers[idx].Track(status, err)
+				}
+				ticked++
+				if ticked%500 == 0 {
+					log.Printf("harbor tick %d/%d", ticked, burst)
+				}
 			}
-			ticked++
-			if headless && ticked%100 == 0 {
-				log.Printf("harbor tick %d", ticked)
+			log.Printf("burst complete: %d ticks", ticked)
+			<-ctx.Done()
+		}()
+	} else {
+		manager = bt.NewManager()
+		go func() {
+			defer close(managerDone)
+			<-manager.Done()
+			if err := manager.Err(); err != nil && ctx.Err() == nil {
+				log.Printf("bt manager error: %v", err)
 			}
-			if interval > 0 {
-				time.Sleep(interval)
+		}()
+		wg.Add(len(actors))
+		go func() {
+			wg.Wait()
+			close(wgDone)
+		}()
+		for i := range actors {
+			planID := fmt.Sprintf("harbor-bot-%d", i)
+			tracker := trackers[i]
+			planNode := planNodes[i]
+			origNode := planNode
+			wrappedNode := bt.New(func(children []bt.Node) (bt.Status, error) {
+				status, err := origNode.Tick()
+				tracker.Track(status, err)
+				return status, err
+			})
+			ticker := bt.NewTicker(ctx, time.Duration(tickMs)*time.Millisecond, bt.New(
+				bt.Not(bt.All),
+				bt.New(
+					bt.Selector,
+					bt.New(
+						bt.Sequence,
+						wrappedNode,
+						bt.New(func([]bt.Node) (bt.Status, error) {
+							return bt.Success, nil
+						}),
+					),
+					bt.New(func([]bt.Node) (bt.Status, error) {
+						return bt.Failure, nil
+					}),
+				),
+			))
+			if err := manager.Add(ticker); err != nil {
+				log.Fatalf("manager add %s: %v", planID, err)
 			}
+			go func(name string) {
+				defer wg.Done()
+				<-ticker.Done()
+				if err := ticker.Err(); err != nil && ctx.Err() == nil {
+					log.Printf("plan error %s: %v", name, err)
+				}
+			}(planID)
 		}
-	}()
+		// Harbor sim step loop for non-burst live mode
+		go func() {
+			interval := time.Duration(tickMs) * time.Millisecond
+			ticked := 0
+			for {
+				if ticks > 0 && ticked >= ticks {
+					log.Printf("tick limit reached: %d", ticked)
+					<-ctx.Done()
+					return
+				}
+				select {
+				case <-ctx.Done():
+					return
+				default:
+				}
+				if err := harbor.Step(ctx); err != nil {
+					if ctx.Err() != nil {
+						return
+					}
+					log.Printf("harbor step error: %v", err)
+				}
+				ticked++
+				if headless && ticked%100 == 0 {
+					log.Printf("harbor tick %d", ticked)
+				}
+				if interval > 0 {
+					time.Sleep(interval)
+				}
+			}
+		}()
+	}
 
 	useTUIEffective := useTUI && !headless && burst == 0 && ticks == 0
 	if useTUI && headless {
@@ -305,23 +340,37 @@ func main() {
 		}
 	}
 
-	if !useTUIEffective {
+	if burst > 0 {
+		<-ctx.Done()
+		cancel()
+		if debugServer != nil {
+			debugServer.Close()
+		}
+		for _, tr := range trackers {
+			tr.CloseOverflow()
+		}
+		return
+	}
+
+	if useTUIEffective {
+		<-ctx.Done()
+	} else {
 		select {
 		case <-ctx.Done():
 		case <-managerDone:
 		case <-wgDone:
 		}
 	}
-
 	cancel()
-	manager.Stop()
+	if manager != nil {
+		manager.Stop()
+	}
 	<-managerDone
 	<-wgDone
-
 	if debugServer != nil {
 		debugServer.Close()
 	}
-	for _, t := range trackers {
-		t.CloseOverflow()
+	for _, tr := range trackers {
+		tr.CloseOverflow()
 	}
 }
