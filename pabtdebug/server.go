@@ -86,6 +86,14 @@ func NewServer(tracker *Tracker, addr string) *Server {
 	return s
 }
 
+// HandleFunc registers an additional HTTP handler on the debug server's mux.
+// This allows examples to expose custom endpoints (e.g. safety counters).
+func (s *Server) HandleFunc(pattern string, handler http.HandlerFunc) {
+	if mux, ok := s.server.Handler.(*http.ServeMux); ok {
+		mux.HandleFunc(pattern, handler)
+	}
+}
+
 // RegisterTracker registers an additional tracker for multi-plan debugging.
 // The tracker must have a non-empty ID (use Tracker.WithID or NewTrackerWithID).
 // If a tracker with the same ID already exists, it is replaced.

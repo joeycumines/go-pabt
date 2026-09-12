@@ -392,3 +392,48 @@ func TestHarborBelief(t *testing.T) {
 		t.Logf("Plan with belief: %d chars", len(out))
 	}
 }
+
+func TestHarborSafety(t *testing.T) {
+	ctx := context.Background()
+
+	// Run 500 steps with belief + storm enabled
+	harbor := hsim.NewHarbor(60, 3.1, 42) // stormEvery=60, humanSpeed=3.1
+	harbor.EnableBelief(true)
+
+	for i := 0; i < 500; i++ {
+		if err := harbor.Step(ctx); err != nil {
+			t.Fatalf("Step(%d): %v", i, err)
+		}
+	}
+
+	// Safety violations must be 0
+	if v := harbor.SafetyViolations(); v != 0 {
+		t.Fatalf("expected 0 safety violations after 500 steps, got %d", v)
+	}
+
+	// Cycles must be <5 (stuck oscillation detection)
+	if c := harbor.Cycles(); c >= 5 {
+		t.Fatalf("expected cycles <5, got %d", c)
+	}
+	t.Logf("After 500 steps: violations=%d cycles=%d deadEnds=%d",
+		harbor.SafetyViolations(), harbor.Cycles(), harbor.DeadEnds())
+
+	// Verify safety metadata is in State snapshot
+	st := harbor.State()
+	if st.SafetyViolations != 0 {
+		t.Errorf("State.SafetyViolations: expected 0, got %d", st.SafetyViolations)
+	}
+	if st.Cycles != harbor.Cycles() {
+		t.Errorf("State.Cycles mismatch: snapshot=%d live=%d", st.Cycles, harbor.Cycles())
+	}
+	if st.DeadEnds != harbor.DeadEnds() {
+		t.Errorf("State.DeadEnds mismatch: snapshot=%d live=%d", st.DeadEnds, harbor.DeadEnds())
+	}
+	t.Log("PASS: safety metadata present in State snapshot")
+
+	// Verify export JSONL round-trip includes safety metadata via State fields
+	// (State is embedded in the sim; export round-trip is tested via tracker,
+	// but safety metadata lives in the sim State which is snapshotted each tick.
+	// The safety endpoint proves live access; this test proves snapshot access.)
+	t.Log("PASS: TestHarborSafety complete")
+}

@@ -56,11 +56,14 @@ type Sprite struct {
 }
 
 type State struct {
-	Sprites    map[string]*Sprite
-	Walls      []*Sprite
-	Tick       int64
-	Revision   uint64
-	ObservedAt time.Time
+	Sprites          map[string]*Sprite
+	Walls            []*Sprite
+	Tick             int64
+	Revision         uint64
+	ObservedAt       time.Time
+	SafetyViolations int
+	Cycles           int
+	DeadEnds         int
 }
 
 type Harbor struct {
@@ -78,15 +81,18 @@ type Harbor struct {
 	safetyViolations int
 	cycles           int
 	deadEnds         int
-	// for BFS cache
+	deadEndCache     map[[4]int32]bool // cached failed paths: {sx,sy,tx,ty}
+	humanPosHistory  [][2]float64
+	stuckCount       int
 }
 
 func NewHarbor(stormEvery int, humanSpeed float64, seed int64) *Harbor {
 	h := &Harbor{
-		state:      &State{Sprites: make(map[string]*Sprite)},
-		stormEvery: stormEvery,
-		humanSpeed: humanSpeed,
-		rng:        rand.New(rand.NewSource(seed)),
+		state:        &State{Sprites: make(map[string]*Sprite)},
+		stormEvery:   stormEvery,
+		humanSpeed:   humanSpeed,
+		rng:          rand.New(rand.NewSource(seed)),
+		deadEndCache: make(map[[4]int32]bool),
 	}
 	h.init()
 	return h
@@ -147,6 +153,18 @@ func (h *Harbor) SafetyViolations() int {
 	return h.safetyViolations
 }
 
+func (h *Harbor) Cycles() int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.cycles
+}
+
+func (h *Harbor) DeadEnds() int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.deadEnds
+}
+
 func (h *Harbor) init() {
 	s := h.state
 	for i := 0; i < 4; i++ {
@@ -156,7 +174,7 @@ func (h *Harbor) init() {
 	colors := []rune{'R', 'G', 'B', 'Y', 'M', 'C'}
 	for i := 0; i < 6; i++ {
 		id := fmt.Sprintf("CONTAINER-%d", i+1)
-		s.Sprites[id] = &Sprite{ID: id, Kind: KindCube, X: float64(5 + i*5), Y: 8, W: 1, H: 1, Rune: colors[i]}
+		s.Sprites[id] = &Sprite{ID: id, Kind: KindCube, X: float64(3 + i*5), Y: 8, W: 1, H: 1, Rune: colors[i]}
 	}
 	for i := 0; i < 4; i++ {
 		id := fmt.Sprintf("BERTH-%d", i)
@@ -204,10 +222,13 @@ func (h *Harbor) Snapshot() *State {
 
 func (h *Harbor) snapshotLocked() *State {
 	cp := &State{
-		Sprites:    make(map[string]*Sprite, len(h.state.Sprites)),
-		Tick:       h.state.Tick,
-		Revision:   h.revision,
-		ObservedAt: time.Now(),
+		Sprites:          make(map[string]*Sprite, len(h.state.Sprites)),
+		Tick:             h.state.Tick,
+		Revision:         h.revision,
+		ObservedAt:       time.Now(),
+		SafetyViolations: h.safetyViolations,
+		Cycles:           h.cycles,
+		DeadEnds:         h.deadEnds,
 	}
 	for k, v := range h.state.Sprites {
 		s := *v
@@ -418,6 +439,7 @@ func (h *Harbor) Step(ctx context.Context) error {
 
 	human := h.state.Sprites["HUMAN"]
 	if human != nil {
+		prevHX, prevHY := human.X, human.Y // save for wall collision revert
 		// find nearest cube where HeldItem==nil and !Hidden (if hidden, human can't see)
 		var nearest *Sprite
 		minDist := math.MaxFloat64
@@ -452,6 +474,13 @@ func (h *Harbor) Step(ctx context.Context) error {
 				ty = 0
 			}
 			path := h.findPath(sx, sy, tx, ty)
+			if path == nil {
+				key := [4]int32{sx, sy, tx, ty}
+				if !h.deadEndCache[key] {
+					h.deadEndCache[key] = true
+					h.deadEnds++
+				}
+			}
 			if len(path) > 1 {
 				// move toward next waypoint
 				next := path[1]
@@ -537,6 +566,39 @@ func (h *Harbor) Step(ctx context.Context) error {
 		}
 		if human.Y+float64(human.H) > float64(SpaceHeight) {
 			human.Y = float64(SpaceHeight) - float64(human.H)
+		}
+		// Wall collision guard: if HUMAN overlaps any wall after movement, revert to pre-move position
+		humanOverlaps := false
+		for _, w := range h.state.Walls {
+			if human.X < w.X+float64(w.W) && human.X+float64(human.W) > w.X && human.Y < w.Y+float64(w.H) && human.Y+float64(human.H) > w.Y {
+				humanOverlaps = true
+				break
+			}
+		}
+		if humanOverlaps {
+			human.X = prevHX
+			human.Y = prevHY
+		}
+		// Stuck-cycle detection: HUMAN at same rounded cell for 3+ consecutive ticks
+		// indicates genuine stuck behavior (wall collision guard reverting movement).
+		// Normal pathfinding overshoot (speed 3.1 > waypoint distance 1.0) is NOT a cycle.
+		cx, cy := math.Round(human.X), math.Round(human.Y)
+		if len(h.humanPosHistory) > 0 {
+			lastPos := h.humanPosHistory[len(h.humanPosHistory)-1]
+			if lastPos[0] == cx && lastPos[1] == cy {
+				h.stuckCount++
+				if h.stuckCount >= 3 {
+					h.cycles++
+					h.stuckCount = 0 // reset to count discrete stuck episodes
+				}
+			} else {
+				h.stuckCount = 0
+			}
+		}
+		// Keep history bounded
+		h.humanPosHistory = append(h.humanPosHistory, [2]float64{cx, cy})
+		if len(h.humanPosHistory) > 8 {
+			h.humanPosHistory = h.humanPosHistory[len(h.humanPosHistory)-8:]
 		}
 	}
 

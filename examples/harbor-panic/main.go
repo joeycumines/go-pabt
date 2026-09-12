@@ -19,9 +19,11 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
 	"sync"
@@ -139,6 +141,18 @@ func main() {
 				debugServer.RegisterTracker(tracker)
 			}
 		}
+	}
+
+	// Safety endpoint: exposes live safety counters for verify_safety.sh
+	if debugAddr != "" && debugServer != nil {
+		debugServer.HandleFunc("/debug/pabt/safety", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]any{
+				"safetyViolations": harbor.SafetyViolations(),
+				"cycles":           harbor.Cycles(),
+				"deadEnds":         harbor.DeadEnds(),
+			})
+		})
 	}
 
 	// Manager + tickers for non-burst mode; burst mode uses linearized synchronous pipeline
