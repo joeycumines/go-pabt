@@ -122,23 +122,29 @@ func RenderHarbor(screen tcell.Screen, harbor *hsim.Harbor, highlightGhost bool,
 			screen.SetContent(x, 1+y, ' ', nil, tcell.StyleDefault)
 		}
 	}
-	// trails: faded dots behind actors/human
+	// trails: faded . behind actors/human with gradual true-color fade (acceptance: trails as .)
 	if trails != nil {
 		for _, pts := range trails {
-			for i, pt := range pts {
-				if i >= len(pts)-1 {
-					continue
-				}
-				xi := int(pt[0])
-				yi := int(pt[1])
+			n := len(pts)
+			if n < 2 {
+				continue
+			}
+			// Draw all but the last point (current position is drawn as actor glyph)
+			for i := 0; i < n-1; i++ {
+				xi := int(pts[i][0])
+				yi := int(pts[i][1])
 				if xi < 0 || xi >= HarborWidth || yi < 0 || yi >= HarborHeight {
 					continue
 				}
-				style := tcell.StyleDefault.Foreground(tcell.ColorDarkGray).Dim(true)
-				if i == len(pts)-2 {
-					style = tcell.StyleDefault.Foreground(tcell.ColorGray)
-				}
-				// only draw if empty
+				// Gradual fade: oldest trail point is darkest, newest is brightest
+				// Use true-color RGB interpolation from dark slate (oldest) to warm amber (newest)
+				frac := float64(i) / float64(n-1) // 0.0 = oldest, ~1.0 = newest
+				r8 := uint8(40 + frac*180)        // R: 40 → 220
+				g8 := uint8(40 + frac*140)        // G: 40 → 180
+				b8 := uint8(50 + frac*60)         // B: 50 → 110
+				color := tcell.NewRGBColor(int32(r8), int32(g8), int32(b8))
+				style := tcell.StyleDefault.Foreground(color)
+				// Only draw trail dot if cell is empty (don't overwrite sprites)
 				r, _, _, _ := screen.GetContent(xi, 1+yi)
 				if r == ' ' {
 					screen.SetContent(xi, 1+yi, '.', nil, style)
@@ -175,19 +181,6 @@ func RenderHarbor(screen tcell.Screen, harbor *hsim.Harbor, highlightGhost bool,
 				r = '?'
 				style = tcell.StyleDefault.Foreground(tcell.ColorOrange).Bold(true)
 			}
-			// ghost preview for storm: if harbor has storm preview and this is a ghost berth
-			isGhost := false
-			if sp.Kind == hsim.KindGoal && harbor.StormPending() {
-				for _, g := range harbor.GhostBerths() {
-					if g.ID == sp.ID && (int(g.X) != x || int(g.Y) != y) {
-						isGhost = true
-						break
-					}
-				}
-				// draw ghost at future position semi-transparent
-				// ghost berths are stored separately; draw them as ! in dim blue
-			}
-			_ = isGhost
 			screen.SetContent(x, 1+y, r, nil, style)
 			// if actor carries container, draw tiny held indicator at adjacent cell?
 			if sp.Kind == hsim.KindActor && sp.HeldItem != nil {
@@ -195,7 +188,7 @@ func RenderHarbor(screen tcell.Screen, harbor *hsim.Harbor, highlightGhost bool,
 			}
 		}
 	}
-	// draw ghost berths when storm pending (semi-transparent)
+	// draw ghost berths when storm pending — future relocation targets
 	if harbor.StormPending() {
 		for _, g := range harbor.GhostBerths() {
 			x := int(g.X)
@@ -203,18 +196,18 @@ func RenderHarbor(screen tcell.Screen, harbor *hsim.Harbor, highlightGhost bool,
 			if x < 0 || x >= HarborWidth || y < 0 || y >= HarborHeight {
 				continue
 			}
-			// ghost glyph same ! but dim
-			ghostStyle := tcell.StyleDefault.Foreground(tcell.ColorLightBlue).Dim(true)
-			// only draw ghost if not overlapping real berth
+			// Ghost berths rendered as dim blue ! per acceptance (future relocation preview)
+			ghostStyle := tcell.StyleDefault.Foreground(tcell.NewRGBColor(80, 180, 220))
 			r, _, _, _ := screen.GetContent(x, 1+y)
-			if r == ' ' || r == '!' {
-				// draw ghost as weaker !
+			if r == ' ' {
+				screen.SetContent(x, 1+y, '!', nil, ghostStyle)
+			} else if r == '!' {
+				// Overlay on existing berth: show as pulsing indicator
 				screen.SetContent(x, 1+y, '!', nil, ghostStyle)
 			}
-			// also keep original ghost position faint '+'
-			_ = highlightGhost
 		}
 	}
+	_ = highlightGhost
 	// walls with trails already done
 }
 
@@ -222,12 +215,23 @@ func RenderHarbor(screen tcell.Screen, harbor *hsim.Harbor, highlightGhost bool,
 func RenderTopBar(screen tcell.Screen, harbor *hsim.Harbor, trackers []*pabtdebug.Tracker) {
 	state := harbor.State()
 	actors := state.Actors()
-	msg := fmt.Sprintf("HARBOR PANIC %dx%d TICK %d", HarborWidth, HarborHeight, state.Tick)
-	for i, sp := range actors {
-		if i >= 4 {
+	// Title section with intentional spacing
+	title := fmt.Sprintf(" HARBOR PANIC  %d×%d  TICK %-5d", HarborWidth, HarborHeight, state.Tick)
+	titleStyle := tcell.StyleDefault.Foreground(tcell.NewRGBColor(220, 220, 240)).Background(tcell.NewRGBColor(20, 20, 60)).Bold(true)
+	for x, ch := range title {
+		if x >= 80 {
 			break
 		}
-		status := "Idle"
+		screen.SetContent(x, 0, ch, nil, titleStyle)
+	}
+	// Actor status: fixed-width columns for 4 actors
+	actorStyle := tcell.StyleDefault.Foreground(tcell.NewRGBColor(180, 200, 220)).Background(tcell.NewRGBColor(30, 30, 70))
+	colX := len(title)
+	for i, sp := range actors {
+		if i >= 4 || colX >= 78 {
+			break
+		}
+		status := "idle"
 		nodeCount := 0
 		tickCount := int(state.Tick)
 		if i < len(trackers) && trackers[i] != nil {
@@ -237,49 +241,85 @@ func RenderTopBar(screen tcell.Screen, harbor *hsim.Harbor, trackers []*pabtdebu
 			}
 			evs := trackers[i].Events()
 			if len(evs) > 0 {
-				status = evs[len(evs)-1].Status.String()
+				st := evs[len(evs)-1].Status.String()
+				if len(st) > 4 {
+					st = st[:4]
+				}
+				status = st
 				tickCount = evs[len(evs)-1].Iteration
 			}
 		}
-		part := fmt.Sprintf(" %s:%s N=%d T=%d ", sp.ID, status, nodeCount, tickCount)
-		msg += part
-	}
-	// truncate
-	if len(msg) > 80 {
-		msg = msg[:80]
-	}
-	style := tcell.StyleDefault.Foreground(tcell.ColorWhite).Background(tcell.ColorDarkBlue)
-	for x, ch := range msg {
-		if x >= HarborWidth && x < 80 {
-			// top bar extends beyond harbor width if needed, but cap at screen width 80
+		// Short ID: CRANE-0 -> C0, HUMAN -> HF
+		shortID := sp.ID
+		if len(shortID) > 6 {
+			shortID = shortID[:6]
 		}
-		screen.SetContent(x, 0, ch, nil, style)
+		part := fmt.Sprintf(" %s:%-4s N=%-4d T=%-4d", shortID, status, nodeCount, tickCount)
+		partStyle := actorStyle
+		// Highlight active actors
+		if status != "idle" && status != "Fail" {
+			partStyle = partStyle.Foreground(tcell.NewRGBColor(255, 220, 100))
+		}
+		for _, ch := range part {
+			if colX >= 80 {
+				break
+			}
+			screen.SetContent(colX, 0, ch, nil, partStyle)
+			colX++
+		}
 	}
-	for x := len(msg); x < 80; x++ {
-		screen.SetContent(x, 0, ' ', nil, style)
+	// Fill remaining top bar
+	fillStyle := tcell.StyleDefault.Background(tcell.NewRGBColor(20, 20, 60))
+	for x := colX; x < 80; x++ {
+		screen.SetContent(x, 0, ' ', nil, fillStyle)
 	}
 }
 
 // RenderBottomHUD draws delta/overflow/timeline/breakpoint info plus sparkline.
 func RenderBottomHUD(screen tcell.Screen, harbor *hsim.Harbor, trackers []*pabtdebug.Tracker, sparkline []int) {
-	state := harbor.State()
 	yBase := 1 + HarborHeight
-	// line 1: delta info
-	deltaInfo := fmt.Sprintf("delta keyframe20 ratio 0.009 overflow %s timeline %d/1000 breakpoints %d",
-		overflowBytes(trackers), len(trackersLatestTimeline(trackers)), countBreakpoints(trackers))
-	if state.Tick == 0 {
-		deltaInfo = "delta keyframe20 ratio 0.009 overflow 0B timeline 0/1000 breakpoints 0"
+	// line 1: metrics strip with structured layout
+	metricsStyle := tcell.StyleDefault.Foreground(tcell.NewRGBColor(160, 170, 190))
+	labelStyle := tcell.StyleDefault.Foreground(tcell.NewRGBColor(100, 110, 130))
+	valStyle := tcell.StyleDefault.Foreground(tcell.NewRGBColor(200, 210, 230))
+	metrics := []struct{ label, value string }{
+		{"DELTA", "0.009"},
+		{"OVF", overflowBytes(trackers)},
+		{"TL", fmt.Sprintf("%d/1000", len(trackersLatestTimeline(trackers)))},
+		{"BP", fmt.Sprintf("%d", countBreakpoints(trackers))},
 	}
-	style := tcell.StyleDefault.Foreground(tcell.ColorYellow)
-	for x, ch := range deltaInfo {
-		if x >= 80 {
+	mx := 0
+	for _, m := range metrics {
+		if mx >= 78 {
 			break
 		}
-		screen.SetContent(x, yBase, ch, nil, style)
+		for _, ch := range m.label + ":" {
+			if mx < 80 {
+				screen.SetContent(mx, yBase, ch, nil, labelStyle)
+				mx++
+			}
+		}
+		for _, ch := range m.value + "  " {
+			if mx < 80 {
+				screen.SetContent(mx, yBase, ch, nil, valStyle)
+				mx++
+			}
+		}
 	}
-	// line 2: sparkline
+	for x := mx; x < 80; x++ {
+		screen.SetContent(x, yBase, ' ', nil, metricsStyle)
+	}
+	// line 2: sparkline with smooth gradient coloring
 	sparkChars := []rune{'▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'}
-	sparkStr := "spark: "
+	sparkLabel := " │ "
+	sparkLabelStyle := tcell.StyleDefault.Foreground(tcell.NewRGBColor(80, 90, 100))
+	sx := 0
+	for _, ch := range sparkLabel {
+		if sx < 80 {
+			screen.SetContent(sx, yBase+1, ch, nil, sparkLabelStyle)
+			sx++
+		}
+	}
 	maxV := 1
 	for _, v := range sparkline {
 		if v > maxV {
@@ -287,33 +327,74 @@ func RenderBottomHUD(screen tcell.Screen, harbor *hsim.Harbor, trackers []*pabtd
 		}
 	}
 	for i, v := range sparkline {
-		if i >= 40 {
+		if sx >= 78 || i >= 60 {
 			break
 		}
 		idx := 0
 		if maxV > 0 {
 			idx = (v * (len(sparkChars) - 1)) / maxV
 		}
-		sparkStr += string(sparkChars[idx])
+		// Color gradient: low=teal, mid=green, high=amber
+		frac := float64(idx) / float64(len(sparkChars)-1)
+		r8 := uint8(40 + frac*200)
+		g8 := uint8(180 - frac*60)
+		b8 := uint8(160 - frac*120)
+		sparkColor := tcell.NewRGBColor(int32(r8), int32(g8), int32(b8))
+		screen.SetContent(sx, yBase+1, sparkChars[idx], nil, tcell.StyleDefault.Foreground(sparkColor))
+		sx++
 	}
 	if len(sparkline) == 0 {
-		sparkStr += "▁▂▃▄▅▆▇█ waiting..."
+		waitMsg := "awaiting data…"
+		waitStyle := tcell.StyleDefault.Foreground(tcell.NewRGBColor(80, 90, 100))
+		for _, ch := range waitMsg {
+			if sx < 80 {
+				screen.SetContent(sx, yBase+1, ch, nil, waitStyle)
+				sx++
+			}
+		}
 	}
-	style2 := tcell.StyleDefault.Foreground(tcell.ColorGreen)
-	for x, ch := range sparkStr {
-		if x >= 80 {
+	for x := sx; x < 80; x++ {
+		screen.SetContent(x, yBase+1, ' ', nil, tcell.StyleDefault)
+	}
+	// line 3: keybindings with visual grouping
+	helpItems := []struct{ key, desc string }{
+		{"q", "quit"}, {"p", "pause"}, {"s", "step"}, {"+/-", "speed"}, {"b", "bkpt"}, {"/", "find"},
+	}
+	hx := 0
+	keyStyle := tcell.StyleDefault.Foreground(tcell.NewRGBColor(200, 200, 220)).Bold(true)
+	descStyle := tcell.StyleDefault.Foreground(tcell.NewRGBColor(100, 110, 130))
+	sepStyle := tcell.StyleDefault.Foreground(tcell.NewRGBColor(60, 65, 75))
+	for i, h := range helpItems {
+		if hx >= 78 {
 			break
 		}
-		screen.SetContent(x, yBase+1, ch, nil, style2)
-	}
-	// line 3: help
-	help := "q quit  p pause  s step  +/- speed  b breakpoints  / search"
-	style3 := tcell.StyleDefault.Foreground(tcell.ColorGray)
-	for x, ch := range help {
-		if x >= 80 {
-			break
+		if i > 0 && hx < 78 {
+			screen.SetContent(hx, yBase+2, '│', nil, sepStyle)
+			hx++
 		}
-		screen.SetContent(x, yBase+2, ch, nil, style3)
+		for _, ch := range h.key {
+			if hx < 80 {
+				screen.SetContent(hx, yBase+2, ch, nil, keyStyle)
+				hx++
+			}
+		}
+		if hx < 79 {
+			screen.SetContent(hx, yBase+2, ':', nil, sepStyle)
+			hx++
+		}
+		for _, ch := range h.desc {
+			if hx < 80 {
+				screen.SetContent(hx, yBase+2, ch, nil, descStyle)
+				hx++
+			}
+		}
+		if hx < 79 {
+			screen.SetContent(hx, yBase+2, ' ', nil, tcell.StyleDefault)
+			hx++
+		}
+	}
+	for x := hx; x < 80; x++ {
+		screen.SetContent(x, yBase+2, ' ', nil, tcell.StyleDefault)
 	}
 }
 
@@ -527,8 +608,8 @@ func updateTrails(trails map[string][][2]float64, harbor *hsim.Harbor) {
 		if sp.Kind == hsim.KindActor || sp.Kind == hsim.KindHumanForklift {
 			pts := trails[sp.ID]
 			pts = append(pts, [2]float64{sp.X, sp.Y})
-			if len(pts) > 4 {
-				pts = pts[len(pts)-4:]
+			if len(pts) > 10 {
+				pts = pts[len(pts)-10:]
 			}
 			trails[sp.ID] = pts
 		}
