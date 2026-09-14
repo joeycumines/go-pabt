@@ -37,10 +37,13 @@ const (
 
 // Options configures Run.
 type Options struct {
-	TickMs       int
-	Paused       *atomic.Bool
-	DebugAddr    string
-	OverflowPath string
+	TickMs          int
+	Paused          *atomic.Bool
+	DebugAddr       string
+	OverflowPath    string
+	SpeedMultiplier float64
+	StepCh          chan struct{}
+	PauseCh         chan bool
 }
 
 // Glyph mapping per spec: walls #, berths !, containers R,G,B,Y,M,C, cranes 0-3, human H
@@ -537,25 +540,36 @@ func runWithScreen(ctx context.Context, screen tcell.Screen, harbor *hsim.Harbor
 						if opts.Paused != nil {
 							opts.Paused.Store(paused)
 						}
+						if opts.PauseCh != nil {
+							select {
+							case opts.PauseCh <- paused:
+							default:
+							}
+						}
 					case 's', 'S':
-						// single step
-						_ = harbor.Step(ctx)
-						// push trail
+						if opts.StepCh != nil {
+							select {
+							case opts.StepCh <- struct{}{}:
+							default:
+							}
+						} else {
+							_ = harbor.Step(ctx)
+						}
 						updateTrails(trails, harbor)
 					case '+', '=':
 						speed += 0.5
 						if speed > 5 {
 							speed = 5
 						}
+						opts.SpeedMultiplier = speed
 					case '-', '_':
 						speed -= 0.5
 						if speed < 0.5 {
 							speed = 0.5
 						}
+						opts.SpeedMultiplier = speed
 					case 'b', 'B':
-						// toggle breakpoints overlay: placeholder no-op
 					case '/':
-						// search: placeholder
 					}
 				}
 			case *tcell.EventResize:

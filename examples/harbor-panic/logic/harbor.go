@@ -301,9 +301,11 @@ func (h *harborState) Actions(failed pabt.Condition) (actions []pabt.IAction, er
 	if h.harbor.BeliefEnabled() {
 		for _, cube := range st.CubesAll() {
 			if cube.Hidden {
-				if add("sense")(h.templateSense(failed, st, cube)) {
-					return
+				senseActions, senseErr := h.templateSense(failed, st, cube)
+				if senseErr != nil {
+					return nil, senseErr
 				}
+				actions = append(actions, senseActions...)
 			}
 		}
 	}

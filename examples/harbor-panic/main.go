@@ -160,6 +160,7 @@ func main() {
 	managerDone := make(chan struct{})
 	var wg sync.WaitGroup
 	wgDone := make(chan struct{})
+	var simPaused atomic.Bool
 
 	if burst > 0 {
 		// Linearized burst pipeline: exactly burst iterations, each does harbor.Step + Track per plan
@@ -174,7 +175,7 @@ func main() {
 				}
 				if ticks > 0 && ticked >= ticks {
 					log.Printf("tick limit reached: %d", ticked)
-					<-ctx.Done()
+					cancel()
 					return
 				}
 				if err := harbor.Step(ctx); err != nil {
@@ -253,13 +254,17 @@ func main() {
 			for {
 				if ticks > 0 && ticked >= ticks {
 					log.Printf("tick limit reached: %d", ticked)
-					<-ctx.Done()
+					cancel()
 					return
 				}
 				select {
 				case <-ctx.Done():
 					return
 				default:
+				}
+				if simPaused.Load() {
+					time.Sleep(50 * time.Millisecond)
+					continue
 				}
 				if err := harbor.Step(ctx); err != nil {
 					if ctx.Err() != nil {
@@ -294,19 +299,9 @@ func main() {
 
 	if useTUIEffective {
 		fmt.Println("Harbor Panic TUI mode: press q to quit, p pause, s step, +/- speed")
-		paused := &atomic.Bool{}
-		// harbor Step loop is already ticking via Step goroutine; we need to coordinate pause
-		// pause via atomic is polled in Step loop? Instead we wrap harbor.Step loop with pause flag
-		// For simplicity, the TUI Run polls harbor.State and renders; Step goroutine continues unless paused
-		// We intercept via context: TUI manages its own loop then cancels
 		tuiCtx, tuiCancel := context.WithCancel(ctx)
 		defer tuiCancel()
-		// Pause-aware harbor stepping: we need to honor paused flag in the existing Step goroutine
-		// Patch the Step goroutine to check paused by wrapping harbor.Step: we cannot modify that goroutine here
-		// Instead we rely on main Step loop already started; TUI's paused flag is checked inline in Run?
-		// For Task 24, TUI does not need to pause the harbor sim strictly; p pauses ticker display
-		_ = paused
-		if err := tui.Run(tuiCtx, harbor, trackers, tui.Options{TickMs: tickMs, Paused: paused, DebugAddr: debugAddr, OverflowPath: overflowPath}); err != nil {
+		if err := tui.Run(tuiCtx, harbor, trackers, tui.Options{TickMs: tickMs, Paused: &simPaused, DebugAddr: debugAddr, OverflowPath: overflowPath}); err != nil {
 			log.Printf("tui error: %v, falling back to headless wait", err)
 			useTUIEffective = false
 		} else {
@@ -315,8 +310,9 @@ func main() {
 	}
 
 	if burst > 0 {
+		// Burst goroutine already called cancel() on completion.
+		// Wait for context cancellation (from signal or burst completion).
 		<-ctx.Done()
-		cancel()
 		if debugServer != nil {
 			debugServer.Close()
 		}
