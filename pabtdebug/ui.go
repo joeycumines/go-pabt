@@ -491,7 +491,7 @@ body {
     PreconditionsRoot: '#00bcd4', PreconditionLeaf: '#00bcd4',
     Unknown: '#666'
   };
-  const STATUS_COLORS = { 1: '#4caf50', 2: '#f44336', 3: '#ff9800' };
+  const STATUS_COLORS = { 1: '#ff9800', 2: '#4caf50', 3: '#f44336' };
 
   let eventSource = null, reconnectDelay = 1000;
   let currentTree = null, selectedNodeId = null, highlightedIds = new Set();
@@ -525,7 +525,7 @@ body {
     return String(str).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   }
   function safeId(id) { return 'node-' + String(id).replace(/\./g, '-'); }
-  function statusToString(s) { switch(s){ case 1: return 'Success'; case 2: return 'Failure'; case 3: return 'Running'; default: return 'Unknown'; } }
+  function statusToString(s) { switch(s){ case 1: return 'Running'; case 2: return 'Success'; case 3: return 'Failure'; default: return 'Unknown'; } }
   function cloneTreeJS(tree) { return tree ? JSON.parse(JSON.stringify(tree)) : null; }
   function parentIdJS(id) { var idx = id.lastIndexOf('.'); return idx === -1 ? '' : id.substring(0, idx); }
   function parseIndexJS(s) { if (!s) return -1; for (var i=0;i<s.length;i++){ var c=s.charCodeAt(i); if(c<48||c>57) return -1;} return parseInt(s,10); }
@@ -621,7 +621,31 @@ body {
   }
 
   function connect() {
-    const url = window.location.pathname.replace(/\/ui$/, '/plans/0/events');
+    fetchInitialTimeline();
+    fetch(window.location.pathname.replace(/\/ui$/, '/plans'))
+      .then(function(r) { return r.ok ? r.json() : []; })
+      .then(function(plans) {
+        var planId = (plans && plans.length > 0) ? plans[0].id : '0';
+        startSSE(planId);
+      })
+      .catch(function() { startSSE('0'); });
+  }
+  function fetchInitialTimeline() {
+    fetch(window.location.pathname.replace(/\/ui$/, '/timeline'))
+      .then(function(r) { return r.ok ? r.json() : []; })
+      .then(function(tl) {
+        if (!tl || !tl.length) return;
+        timelineEvents = tl.map(function(e) {
+          return { iteration: e.iteration, status: (e.status === 'Running' ? 1 : (e.status === 'Success' ? 2 : (e.status === 'Failure' ? 3 : 0))), durationMs: e.durationMs || 0, seq: 0, nodeCount: e.nodeCount || 0 };
+        });
+        currentIteration = timelineEvents.length ? timelineEvents[timelineEvents.length - 1].iteration : null;
+        renderTimelineVirtual();
+        if (currentIteration != null) fetchTimelineIter(currentIteration);
+      })
+      .catch(function() {});
+  }
+  function startSSE(planId) {
+    const url = window.location.pathname.replace(/\/ui$/, '/plans/' + encodeURIComponent(planId) + '/events');
     eventSource = new EventSource(url);
     eventSource.onopen = function() {
       connDot.classList.add('connected');
@@ -897,8 +921,8 @@ body {
     fetch(window.location.pathname.replace(/\/ui$/, '/timeline/' + iter))
       .then(function(r) {
         if (r.status === 404) {
-          var nodesLayer = svg.getElementById('nodes-layer');
-          var edgesLayer = svg.getElementById('edges-layer');
+          var nodesLayer = document.getElementById('nodes-layer');
+          var edgesLayer = document.getElementById('edges-layer');
           if (nodesLayer) clearSvgChildren(nodesLayer);
           if (edgesLayer) clearSvgChildren(edgesLayer);
           if (nodesLayer) {
@@ -914,7 +938,7 @@ body {
         }
         return r.ok ? r.json() : null;
       })
-      .then(function(data) { if (data && data.tree) renderTree(data.tree); });
+      .then(function(data) { if (data && data.tree) { lastReconstructedTree = cloneTreeJS(data.tree); lastReconstructedIteration = data.iteration || iter; renderTree(data.tree); } });
   }
 
   // Layout is stored separately from tree data to avoid mutating shared event objects (D11).
@@ -995,7 +1019,7 @@ body {
     if (!tree) return;
     const layoutMap = buildLayoutMap(tree);
     const needsFullRebuild = currentTree === null ||
-      !svg.getElementById('nodes-layer') ||
+      !document.getElementById('nodes-layer') ||
       currentTree.structureHash !== tree.structureHash;
 
     if (needsFullRebuild) {
@@ -1012,8 +1036,8 @@ body {
       currentTree = tree;
       currentLayoutMap = layoutMap;
     } else {
-      const nodesG = svg.getElementById('nodes-layer');
-      const edgesG = svg.getElementById('edges-layer');
+      const nodesG = document.getElementById('nodes-layer');
+      const edgesG = document.getElementById('edges-layer');
       clearSvgChildren(edgesG);
       drawEdges(tree, edgesG, layoutMap);
       diffAndUpdateNodes(tree, currentTree, nodesG, layoutMap, currentLayoutMap);
@@ -1035,7 +1059,7 @@ body {
     const typeColor = TYPE_COLORS[newNode.nodeType] || TYPE_COLORS.Unknown;
     const status = newNode.status ? newNode.status.LastStatus : 0;
     const statusColor = STATUS_COLORS[status] || '#555';
-    const isRunning = status === 3;
+    const isRunning = status === 1;
     const hasEffects = newNode.effects && newNode.effects.length > 0;
     const hasCondition = !!newNode.condition || !!newNode.postCondition;
 
@@ -1206,7 +1230,7 @@ body {
       path.setAttribute('d', d);
       path.setAttribute('class', 'edge-path');
       const status = c.status ? c.status.LastStatus : 0;
-      if (status === 3) path.classList.add('active');
+      if (status === 1) path.classList.add('active');
       g.appendChild(path);
       drawEdges(c, g, layoutMap);
     }
@@ -1237,7 +1261,7 @@ body {
     const sid = safeId(node.id);
     const hasEffects = node.effects && node.effects.length > 0;
     const hasCondition = !!node.condition || !!node.postCondition;
-    const isRunning = status === 3;
+    const isRunning = status === 1;
 
     const group = document.createElementNS(SVG_NS, 'g');
     group.setAttribute('id', sid);
@@ -1376,7 +1400,8 @@ body {
 
     svg.querySelectorAll('.node-ring').forEach(r => r.classList.remove('selected'));
     const sid = safeId(node.id);
-    const ring = document.getElementById(sid).querySelector('.node-ring');
+    const el = document.getElementById(sid);
+    const ring = el ? el.querySelector('.node-ring') : null;
     if (ring) ring.classList.add('selected');
   }
 
@@ -1450,16 +1475,21 @@ body {
   }
 
   let viewCullingRaf = null;
+  let cullingRenderInProgress = false;
   function scheduleCullingRerender() {
-    if (viewCullingRaf) return;
-    viewCullingRaf = requestAnimationFrame(function(){ viewCullingRaf=null; if(currentTree) renderTree(currentTree); });
+    if (viewCullingRaf || cullingRenderInProgress) return;
+    viewCullingRaf = requestAnimationFrame(function(){
+      viewCullingRaf = null;
+      cullingRenderInProgress = true;
+      if (currentTree) renderTree(currentTree);
+      cullingRenderInProgress = false;
+    });
   }
   function updateSvgView() {
     const w = svgContainer.clientWidth || 800;
     const h = svgContainer.clientHeight || 600;
     svg.setAttribute('viewBox', pan.x + ' ' + pan.y + ' ' + (w / zoom) + ' ' + (h / zoom));
     zoomLevel.textContent = Math.round(zoom * 100) + '%';
-    // Viewport changed: re-evaluate culling if we have many nodes (>200) to avoid missing nodes when panning into previously culled area
     if (currentTree && countNodesJS(currentTree) > 200) { scheduleCullingRerender(); }
   }
   function countNodesJS(tree){
@@ -1472,7 +1502,8 @@ body {
 
   function fitToTree() {
     if (!currentTree) return;
-    const bbox = svg.getBBox();
+    var bbox;
+    try { bbox = svg.getBBox(); } catch (e) { return; }
     if (!bbox.width || !bbox.height) return;
     const pad = 40;
     const cw = svgContainer.clientWidth || 800;
@@ -1624,11 +1655,11 @@ body {
     fetch(window.location.pathname.replace(/\/ui$/, '/breakpoints'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ path: selectedNodeId })
-    }).then(r => {
+      body: JSON.stringify({ id: selectedNodeId, nodePath: selectedNodeId, nodeType: '', enabled: true })
+    }).then(function(r) {
       if (r.ok) btn.textContent = 'Breakpoint Set';
       else btn.textContent = 'Error';
-      setTimeout(() => btn.textContent = 'Toggle Breakpoint', 1500);
+      setTimeout(function() { btn.textContent = 'Toggle Breakpoint'; }, 1500);
     });
   });
 
@@ -1800,15 +1831,15 @@ body {
       if (tlRes.ok) {
         const tl = await tlRes.json();
         // Replace local cache with imported timeline: clear virtual spacers first
-        timelineEvents = tl.map(function(e){ return { iteration: e.iteration, status: (e.status==='Success'?1:(e.status==='Failure'?2:(e.status==='Running'?3:0))), durationMs: e.durationMs||0, seq: 0, nodeCount: e.nodeCount||0 }; });
+        timelineEvents = tl.map(function(e){ return { iteration: e.iteration, status: (e.status==='Running'?1:(e.status==='Success'?2:(e.status==='Failure'?3:0))), durationMs: e.durationMs||0, seq: 0, nodeCount: e.nodeCount||0 }; });
         // Status strings are "Success"/"Failure"/"Running"; fallback already handled; but server may return string
         // Re-normalize status strings if numeric not matched
         timelineEvents = timelineEvents.map(function(entry, idx){
           const orig = tl[idx];
           let s = 0;
-          if (orig.status === 'Success' || orig.status === 1) s = 1;
-          else if (orig.status === 'Failure' || orig.status === 2) s = 2;
-          else if (orig.status === 'Running' || orig.status === 3) s = 3;
+          if (orig.status === 'Running' || orig.status === 1) s = 1;
+          else if (orig.status === 'Success' || orig.status === 2) s = 2;
+          else if (orig.status === 'Failure' || orig.status === 3) s = 3;
           else s = entry.status;
           entry.status = s;
           return entry;
