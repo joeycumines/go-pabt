@@ -322,7 +322,7 @@ func main() {
 		fmt.Println("Harbor Panic TUI mode: press q to quit, p pause, s step, +/- speed")
 		tuiCtx, tuiCancel := context.WithCancel(ctx)
 		defer tuiCancel()
-		if err := tui.Run(tuiCtx, harbor, trackers, tui.Options{TickMs: tickMs, Paused: &simPaused, StepCh: stepCh, SpeedMultiplier: &simSpeed, DebugAddr: debugAddr, OverflowPath: overflowPath}); err != nil {
+		if err := tui.Run(tuiCtx, harbor, trackers, tui.Options{TickMs: tickMs, Paused: &simPaused, StepCh: stepCh, SpeedMultiplier: &simSpeed, DebugAddr: debugAddr, OverflowPath: overflowPath, Scenario: scenario}); err != nil {
 			log.Printf("tui error: %v, falling back to headless wait", err)
 			useTUIEffective = false
 		} else {

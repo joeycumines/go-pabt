@@ -44,6 +44,21 @@ type Options struct {
 	SpeedMultiplier *atomic.Value
 	StepCh          chan struct{}
 	PauseCh         chan bool
+	Scenario        string
+}
+
+// scenarioOrder defines the cycling order for the c key binding.
+var scenarioOrder = []string{"calm", "stormy", "maze"}
+
+// HUDState tracks command deck state for rendering in the bottom HUD.
+type HUDState struct {
+	Scenario      string
+	SearchMode    bool
+	SearchQuery   string
+	SearchCount   int
+	SearchResults []pabtdebug.SearchResult
+	Toast         string
+	ToastUntil    time.Time
 }
 
 // Glyph mapping per spec: walls #, berths !, containers R,G,B,Y,M,C, cranes 0-3, human H
@@ -279,8 +294,8 @@ func RenderTopBar(screen tcell.Screen, harbor *hsim.Harbor, trackers []*pabtdebu
 	}
 }
 
-// RenderBottomHUD draws delta/overflow/timeline/breakpoint info plus sparkline.
-func RenderBottomHUD(screen tcell.Screen, harbor *hsim.Harbor, trackers []*pabtdebug.Tracker, sparkline []int) {
+// RenderBottomHUD draws delta/overflow/timeline/breakpoint info plus sparkline and command deck state.
+func RenderBottomHUD(screen tcell.Screen, harbor *hsim.Harbor, trackers []*pabtdebug.Tracker, sparkline []int, hud *HUDState) {
 	yBase := 1 + HarborHeight
 	// line 1: metrics strip with structured layout
 	metricsStyle := tcell.StyleDefault.Foreground(tcell.NewRGBColor(160, 170, 190))
@@ -290,8 +305,18 @@ func RenderBottomHUD(screen tcell.Screen, harbor *hsim.Harbor, trackers []*pabtd
 	if logic.IsRankByCost() {
 		rankMode = "COST"
 	}
+	scenLabel := ""
+	if hud != nil && hud.Scenario != "" {
+		scenLabel = hud.Scenario
+	}
+	beliefLabel := "OFF"
+	if harbor.BeliefEnabled() {
+		beliefLabel = "ON"
+	}
 	metrics := []struct{ label, value string }{
 		{"RANK", rankMode},
+		{"SCEN", scenLabel},
+		{"BEL", beliefLabel},
 		{"DELTA", "0.009"},
 		{"OVF", overflowBytes(trackers)},
 		{"TL", fmt.Sprintf("%d/1000", len(trackersLatestTimeline(trackers)))},
@@ -367,7 +392,7 @@ func RenderBottomHUD(screen tcell.Screen, harbor *hsim.Harbor, trackers []*pabtd
 	}
 	// line 3: keybindings with visual grouping
 	helpItems := []struct{ key, desc string }{
-		{"q", "quit"}, {"p", "pause"}, {"s", "step"}, {"+/-", "speed"}, {"b", "bkpt"}, {"/", "find"},
+		{"q", "quit"}, {"p", "pause"}, {"s", "step"}, {"+/-", "spd"}, {"c", "scen"}, {"r", "rank"}, {"B", "bel"}, {"b", "bp"}, {"/", "find"},
 	}
 	hx := 0
 	keyStyle := tcell.StyleDefault.Foreground(tcell.NewRGBColor(200, 200, 220)).Bold(true)
@@ -404,6 +429,15 @@ func RenderBottomHUD(screen tcell.Screen, harbor *hsim.Harbor, trackers []*pabtd
 	}
 	for x := hx; x < 80; x++ {
 		screen.SetContent(x, yBase+2, ' ', nil, tcell.StyleDefault)
+	}
+	if hud != nil && hud.SearchMode {
+		searchStyle := tcell.StyleDefault.Foreground(tcell.NewRGBColor(255, 255, 200)).Background(tcell.NewRGBColor(40, 40, 80)).Bold(true)
+		prompt := fmt.Sprintf(" /%s█ %d ", hud.SearchQuery, hud.SearchCount)
+		for i, ch := range prompt {
+			if i < 80 {
+				screen.SetContent(i, yBase+1, ch, nil, searchStyle)
+			}
+		}
 	}
 }
 
@@ -452,7 +486,8 @@ func countBreakpoints(trackers []*pabtdebug.Tracker) int {
 }
 
 // Run starts the TUI loop blocking until quit or context cancel.
-// It handles input q/Ctrl-C, p pause, s step, +/- speed, b overlay.
+// Command deck: c cycles scenario, r toggles rank-by-cost, B toggles belief,
+// +/- speed, b toggles breakpoint, / search overlay, q quit, p pause, s step.
 // If screen init fails, it returns error and caller should fallback to headless.
 func Run(ctx context.Context, harbor *hsim.Harbor, trackers []*pabtdebug.Tracker, opts Options) error {
 	if harbor == nil {
@@ -495,6 +530,7 @@ func runWithScreen(ctx context.Context, screen tcell.Screen, harbor *hsim.Harbor
 		paused = opts.Paused.Load()
 	}
 	speed := 1.0
+	hud := HUDState{Scenario: opts.Scenario}
 	// event channel
 	evCh := make(chan tcell.Event, 16)
 	go func() {
@@ -516,7 +552,7 @@ func runWithScreen(ctx context.Context, screen tcell.Screen, harbor *hsim.Harbor
 	// initial render
 	RenderTopBar(screen, harbor, trackers)
 	RenderHarbor(screen, harbor, true, trails)
-	RenderBottomHUD(screen, harbor, trackers, sparkline)
+	RenderBottomHUD(screen, harbor, trackers, sparkline, &hud)
 	screen.Show()
 	for {
 		select {
@@ -528,6 +564,26 @@ func runWithScreen(ctx context.Context, screen tcell.Screen, harbor *hsim.Harbor
 			}
 			switch ev := ev.(type) {
 			case *tcell.EventKey:
+				if hud.SearchMode && ev.Key() == tcell.KeyRune {
+					hud.SearchQuery += string(ev.Rune())
+					executeSearch(trackers, &hud)
+					break
+				}
+				if hud.SearchMode && (ev.Key() == tcell.KeyBackspace || ev.Key() == tcell.KeyBackspace2) {
+					runes := []rune(hud.SearchQuery)
+					if len(runes) > 0 {
+						hud.SearchQuery = string(runes[:len(runes)-1])
+						executeSearch(trackers, &hud)
+					}
+					break
+				}
+				if hud.SearchMode && (ev.Key() == tcell.KeyEnter || ev.Key() == tcell.KeyEscape) {
+					hud.SearchMode = false
+					hud.SearchQuery = ""
+					hud.SearchResults = nil
+					hud.SearchCount = 0
+					break
+				}
 				switch ev.Key() {
 				case tcell.KeyCtrlC, tcell.KeyEscape:
 					return nil
@@ -572,8 +628,35 @@ func runWithScreen(ctx context.Context, screen tcell.Screen, harbor *hsim.Harbor
 						if opts.SpeedMultiplier != nil {
 							opts.SpeedMultiplier.Store(speed)
 						}
-					case 'b', 'B':
+					case 'c':
+						hud.Scenario = cycleScenario(hud.Scenario)
+						if err := hsim.ApplyScenario(harbor, hud.Scenario); err == nil {
+							hud.Toast = "SCEN:" + hud.Scenario
+							hud.ToastUntil = time.Now().Add(2 * time.Second)
+						}
+					case 'r':
+						logic.SetRankByCost(!logic.IsRankByCost())
+						mode := "LEX"
+						if logic.IsRankByCost() {
+							mode = "COST"
+						}
+						hud.Toast = "RANK:" + mode
+						hud.ToastUntil = time.Now().Add(2 * time.Second)
+					case 'B':
+						harbor.EnableBelief(!harbor.BeliefEnabled())
+						state := "OFF"
+						if harbor.BeliefEnabled() {
+							state = "ON"
+						}
+						hud.Toast = "BELIEF:" + state
+						hud.ToastUntil = time.Now().Add(2 * time.Second)
+					case 'b':
+						toggleBreakpoint(trackers, &hud)
 					case '/':
+						hud.SearchMode = true
+						hud.SearchQuery = ""
+						hud.SearchResults = nil
+						hud.SearchCount = 0
 					}
 				}
 			case *tcell.EventResize:
@@ -603,7 +686,7 @@ func runWithScreen(ctx context.Context, screen tcell.Screen, harbor *hsim.Harbor
 			}
 			RenderTopBar(screen, harbor, trackers)
 			RenderHarbor(screen, harbor, true, trails)
-			RenderBottomHUD(screen, harbor, trackers, sparkline)
+			RenderBottomHUD(screen, harbor, trackers, sparkline, &hud)
 			// paused indicator
 			if paused {
 				msg := " PAUSED "
@@ -617,6 +700,20 @@ func runWithScreen(ctx context.Context, screen tcell.Screen, harbor *hsim.Harbor
 			style := tcell.StyleDefault.Foreground(tcell.ColorWhite).Background(tcell.ColorGray)
 			for i, ch := range speedMsg {
 				screen.SetContent(60+i, 0, ch, nil, style)
+			}
+			if hud.Toast != "" && time.Now().Before(hud.ToastUntil) {
+				toastStyle := tcell.StyleDefault.Foreground(tcell.ColorBlack).Background(tcell.NewRGBColor(100, 220, 180)).Bold(true)
+				tx := 80 - len(hud.Toast) - 2
+				if tx < 0 {
+					tx = 0
+				}
+				for i, ch := range hud.Toast {
+					if tx+i < 80 {
+						screen.SetContent(tx+i, 0, ch, nil, toastStyle)
+					}
+				}
+			} else if hud.Toast != "" {
+				hud.Toast = ""
 			}
 			screen.Show()
 		}
@@ -637,5 +734,54 @@ func updateTrails(trails map[string][][2]float64, harbor *hsim.Harbor) {
 			}
 			trails[sp.ID] = pts
 		}
+	}
+}
+
+func cycleScenario(current string) string {
+	for i, s := range scenarioOrder {
+		if s == current {
+			return scenarioOrder[(i+1)%len(scenarioOrder)]
+		}
+	}
+	return scenarioOrder[0]
+}
+
+func toggleBreakpoint(trackers []*pabtdebug.Tracker, hud *HUDState) {
+	for _, t := range trackers {
+		if t == nil {
+			continue
+		}
+		bps := t.Breakpoints()
+		if len(bps) > 0 {
+			for _, bp := range bps {
+				t.RemoveBreakpoint(bp.NodePath)
+			}
+			hud.Toast = "BP:CLEARED"
+		} else {
+			t.SetBreakpoint(pabtdebug.Breakpoint{
+				NodePath: "0",
+				Enabled:  true,
+			})
+			hud.Toast = "BP:0"
+		}
+		hud.ToastUntil = time.Now().Add(2 * time.Second)
+		return
+	}
+}
+
+func executeSearch(trackers []*pabtdebug.Tracker, hud *HUDState) {
+	if hud.SearchQuery == "" {
+		hud.SearchResults = nil
+		hud.SearchCount = 0
+		return
+	}
+	for _, t := range trackers {
+		if t == nil {
+			continue
+		}
+		results := t.Search(hud.SearchQuery)
+		hud.SearchResults = results
+		hud.SearchCount = len(results)
+		return
 	}
 }

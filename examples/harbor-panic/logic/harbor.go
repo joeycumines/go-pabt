@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"sync/atomic"
 
 	bt "github.com/joeycumines/go-behaviortree"
 	"github.com/joeycumines/go-pabt"
@@ -87,15 +88,15 @@ type (
 
 var _ pabt.IState = (*harborState)(nil)
 
-var rankByCost bool
+var rankByCost atomic.Bool
 
 func SetRankByCost(enabled bool) {
-	rankByCost = enabled
+	rankByCost.Store(enabled)
 }
 
 // IsRankByCost returns whether cost-based ranking is enabled.
 func IsRankByCost() bool {
-	return rankByCost
+	return rankByCost.Load()
 }
 
 func actionCost(act *simpleAction) float64 {
@@ -313,7 +314,7 @@ func (h *harborState) Actions(failed pabt.Condition) (actions []pabt.IAction, er
 	// When rankByCost is enabled, sort actions by cost ascending.
 	// This changes planner behavior: cheaper actions tried first,
 	// demonstrating that action ordering is a policy choice, not accidental.
-	if rankByCost && len(actions) > 1 {
+	if rankByCost.Load() && len(actions) > 1 {
 		sort.SliceStable(actions, func(i, j int) bool {
 			ai, oki := actions[i].(*simpleAction)
 			aj, okj := actions[j].(*simpleAction)

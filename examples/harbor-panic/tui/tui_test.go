@@ -5,6 +5,7 @@ package tui
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -143,7 +144,7 @@ func TestTuiHeadlessRendering(t *testing.T) {
 	screen.Clear()
 	tracker := pabtdebug.NewTrackerWithID(nil, "harbor-bot-0")
 	RenderTopBar(screen, harbor, []*pabtdebug.Tracker{tracker})
-	RenderBottomHUD(screen, harbor, []*pabtdebug.Tracker{tracker}, []int{1, 5, 3, 8, 2})
+	RenderBottomHUD(screen, harbor, []*pabtdebug.Tracker{tracker}, []int{1, 5, 3, 8, 2}, nil)
 	screen.Show()
 
 	// Trail rendering: advance harbor to build trail history, verify '.' glyphs
@@ -306,4 +307,130 @@ func searchSub(s, sub string) bool {
 		}
 	}
 	return false
+}
+
+func screenRow(t *testing.T, screen tcell.Screen, y int) string {
+	t.Helper()
+	var sb strings.Builder
+	w, _ := screen.Size()
+	for x := 0; x < w; x++ {
+		r, _, _, _ := screen.GetContent(x, y)
+		sb.WriteRune(r)
+	}
+	return sb.String()
+}
+
+// TestTuiCommandDeckKeys simulates the c/r/B/+/-/b// key bindings and asserts
+// the HUD reflects the toggled state after the run loop processes them.
+func TestTuiCommandDeckKeys(t *testing.T) {
+	logic.SetRankByCost(false)
+	defer logic.SetRankByCost(false)
+
+	harbor := hsim.NewHarbor(0, 0, 42)
+	actors := harbor.State().Actors()
+	if len(actors) == 0 {
+		t.Fatal("no actors")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	result := logic.HarborPlan(ctx, harbor, actors[0].ID)
+	tracker := pabtdebug.NewTrackerWithID(result.Plan, "harbor-bot-0")
+
+	screen := tcell.NewSimulationScreen("UTF-8")
+	if err := screen.Init(); err != nil {
+		t.Fatalf("screen init: %v", err)
+	}
+	defer screen.Fini()
+	screen.SetSize(80, 24)
+
+	go func() {
+		time.Sleep(60 * time.Millisecond)
+		screen.InjectKey(tcell.KeyRune, 'c', tcell.ModNone) // cycle scenario
+		time.Sleep(20 * time.Millisecond)
+		screen.InjectKey(tcell.KeyRune, 'r', tcell.ModNone) // toggle rank-by-cost
+		time.Sleep(20 * time.Millisecond)
+		screen.InjectKey(tcell.KeyRune, 'B', tcell.ModNone) // toggle belief
+		time.Sleep(20 * time.Millisecond)
+		screen.InjectKey(tcell.KeyRune, '+', tcell.ModNone) // speed up
+		time.Sleep(20 * time.Millisecond)
+		screen.InjectKey(tcell.KeyRune, '-', tcell.ModNone) // speed down
+		time.Sleep(20 * time.Millisecond)
+		screen.InjectKey(tcell.KeyRune, 'b', tcell.ModNone) // set breakpoint
+		time.Sleep(20 * time.Millisecond)
+		screen.InjectKey(tcell.KeyRune, '/', tcell.ModNone) // open search overlay
+		time.Sleep(20 * time.Millisecond)
+		screen.InjectKey(tcell.KeyEnter, 0, tcell.ModNone)  // close search overlay
+		time.Sleep(80 * time.Millisecond)                   // let the HUD render settle
+		screen.InjectKey(tcell.KeyRune, 'q', tcell.ModNone) // quit
+	}()
+
+	if err := RunWithScreen(ctx, screen, harbor, []*pabtdebug.Tracker{tracker}, Options{}); err != nil {
+		t.Fatalf("RunWithScreen: %v", err)
+	}
+
+	// The screen retains the last rendered frame. The HUD metrics line is at yBase = 1+HarborHeight.
+	row := screenRow(t, screen, 1+HarborHeight)
+	if !strings.Contains(row, "COST") {
+		t.Errorf("expected RANK:COST in HUD after 'r', got %q", row)
+	}
+	if !strings.Contains(row, "calm") {
+		t.Errorf("expected SCEN:calm in HUD after 'c', got %q", row)
+	}
+	if !strings.Contains(row, "BEL:ON") {
+		t.Errorf("expected BEL:ON in HUD after 'B', got %q", row)
+	}
+	if !logic.IsRankByCost() {
+		t.Error("expected rank-by-cost toggled on after 'r'")
+	}
+	if !harbor.BeliefEnabled() {
+		t.Error("expected belief enabled after 'B'")
+	}
+	if len(tracker.Breakpoints()) == 0 {
+		t.Error("expected breakpoint set after 'b'")
+	}
+}
+
+// TestTuiRenderBottomHUDModes verifies the HUD renders scenario, belief, rank,
+// search overlay, and toast state deterministically.
+func TestTuiRenderBottomHUDModes(t *testing.T) {
+	harbor := hsim.NewHarbor(0, 0, 42)
+	screen := tcell.NewSimulationScreen("UTF-8")
+	if err := screen.Init(); err != nil {
+		t.Fatalf("screen init: %v", err)
+	}
+	defer screen.Fini()
+	screen.SetSize(80, 24)
+	screen.Clear()
+
+	logic.SetRankByCost(true)
+	defer logic.SetRankByCost(false)
+	harbor.EnableBelief(true)
+	defer harbor.EnableBelief(false)
+
+	hud := &HUDState{Scenario: "maze", Toast: "RANK:COST", ToastUntil: time.Now().Add(time.Second)}
+	RenderBottomHUD(screen, harbor, nil, []int{2, 4, 6}, hud)
+	screen.Show()
+
+	row := screenRow(t, screen, 1+HarborHeight)
+	if !strings.Contains(row, "COST") {
+		t.Errorf("expected RANK:COST, got %q", row)
+	}
+	if !strings.Contains(row, "maze") {
+		t.Errorf("expected SCEN:maze, got %q", row)
+	}
+	if !strings.Contains(row, "BEL:ON") {
+		t.Errorf("expected BEL:ON, got %q", row)
+	}
+
+	// Search overlay renders on the HUD's second line when active.
+	hud.SearchMode = true
+	hud.SearchQuery = "Action"
+	hud.SearchCount = 3
+	screen.Clear()
+	RenderBottomHUD(screen, harbor, nil, []int{2, 4, 6}, hud)
+	screen.Show()
+	overlayRow := screenRow(t, screen, 1+HarborHeight+1)
+	if !strings.Contains(overlayRow, "Action") {
+		t.Errorf("expected search query in overlay, got %q", overlayRow)
+	}
 }
