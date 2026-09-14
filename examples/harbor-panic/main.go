@@ -193,7 +193,7 @@ func main() {
 				}
 			}
 			log.Printf("burst complete: %d ticks", ticked)
-			<-ctx.Done()
+			cancel()
 		}()
 	} else {
 		manager = bt.NewManager()
