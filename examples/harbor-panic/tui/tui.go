@@ -41,7 +41,7 @@ type Options struct {
 	Paused          *atomic.Bool
 	DebugAddr       string
 	OverflowPath    string
-	SpeedMultiplier float64
+	SpeedMultiplier *atomic.Value
 	StepCh          chan struct{}
 	PauseCh         chan bool
 }
@@ -561,13 +561,17 @@ func runWithScreen(ctx context.Context, screen tcell.Screen, harbor *hsim.Harbor
 						if speed > 5 {
 							speed = 5
 						}
-						opts.SpeedMultiplier = speed
+						if opts.SpeedMultiplier != nil {
+							opts.SpeedMultiplier.Store(speed)
+						}
 					case '-', '_':
 						speed -= 0.5
 						if speed < 0.5 {
 							speed = 0.5
 						}
-						opts.SpeedMultiplier = speed
+						if opts.SpeedMultiplier != nil {
+							opts.SpeedMultiplier.Store(speed)
+						}
 					case 'b', 'B':
 					case '/':
 					}
