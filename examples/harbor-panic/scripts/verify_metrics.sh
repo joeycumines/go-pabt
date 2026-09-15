@@ -144,7 +144,7 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 OVERFLOW_LINES=0
-for pat in "/tmp/harbor-metrics.jsonl*" "/tmp/harbor-marathon.jsonl*" "/tmp/harbor*.jsonl" "/tmp/harbor.jsonl.*" "$REPO_ROOT/scratch/marathon.jsonl*" "$REPO_ROOT/scratch/harbor*.jsonl"; do
+for pat in "/tmp/harbor-metrics.jsonl*" "/tmp/harbor-marathon.jsonl*" "/tmp/harbor*.jsonl" "/tmp/harbor.jsonl.*" "$REPO_ROOT/scratch/marathon.jsonl*" "$REPO_ROOT/scratch/harbor*.jsonl*"; do
   for f in $pat; do
     if [[ -f "$f" && "$f" != *"*" ]]; then
       LINES=$(wc -l < "$f" 2>/dev/null | tr -d ' ' || echo 0)
