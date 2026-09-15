@@ -24,9 +24,8 @@ type Hub struct {
 	maxReplay         int // replay buffer capacity
 	keepAliveInterval time.Duration
 	// Deprecated: global throttle, kept for compatibility with older tests.
-	minInterval   time.Duration
-	lastBroadcast time.Time
-	lastEvent     []byte
+	minInterval time.Duration
+	lastEvent   []byte
 }
 
 // NewHub creates a new SSE hub.
