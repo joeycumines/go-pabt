@@ -2253,3 +2253,36 @@ func TestServer_RegisterTrackerBeforePrimary(t *testing.T) {
 		t.Fatalf("after register legacy timeline: expected 200 got %d: %s", w.Code, w.Body.String())
 	}
 }
+
+// TestTrackerAllocs proves Track() allocations are stable O(1) per call
+// (bounded by tree size), not O(total events). The sliding window eviction
+// and materialized profile map ensure no growth with history depth.
+func TestTrackerAllocs(t *testing.T) {
+	state := &testState{vars: map[any]any{"x": true}}
+	plan, err := pabt.INew(state, []pabt.IConditions{{&testCondition{key: "x", value: true}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tracker := NewTracker(plan)
+
+	for i := 0; i < 1000; i++ {
+		tracker.Track(bt.Success, nil)
+	}
+	allocs1000 := testing.AllocsPerRun(100, func() {
+		tracker.Track(bt.Success, nil)
+	})
+
+	for i := 0; i < 9000; i++ {
+		tracker.Track(bt.Success, nil)
+	}
+	allocs10000 := testing.AllocsPerRun(100, func() {
+		tracker.Track(bt.Success, nil)
+	})
+
+	t.Logf("allocs/Track at 1000 events: %.1f, at 10000 events: %.1f", allocs1000, allocs10000)
+
+	// O(events) would show 10x growth. O(1) stays stable. Allow 2x slack for GC variance.
+	if allocs10000 > allocs1000*2 {
+		t.Errorf("Track() allocs grew with event count: %.1f at 1k vs %.1f at 10k (O(events) suspected)", allocs1000, allocs10000)
+	}
+}
