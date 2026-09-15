@@ -87,13 +87,24 @@ type NodeInfo struct {
 	// Frame holds call site information for leaf nodes, if available.
 	Frame *FrameInfo
 
+	// Status holds tick count and last status for this node, if available.
+	Status *NodeStatus
+
 	// children yields bt.Metadata objects for Walk compatibility.
 	children iter.Seq[bt.Metadata]
 }
 
-// Value implements bt.Valuer. Returns nil for all keys.
-// NodeInfo fields should be accessed directly.
-func (i *NodeInfo) Value(key any) any { return nil }
+// Value implements bt.Valuer. Responds to nodeInfoKey and statusKey
+// so that NodeInfo works correctly when yielded via bt.UseStructure.
+func (i *NodeInfo) Value(key any) any {
+	switch key.(type) {
+	case nodeInfoKey:
+		return i
+	case statusKey:
+		return i.Status
+	}
+	return nil
+}
 
 // Children implements bt.Metadata.
 // Yields the logical children as bt.Metadata for bt.Walk compatibility.

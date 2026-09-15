@@ -54,12 +54,16 @@ func TestNodeInfo_Implements_Metadata(t *testing.T) {
 }
 
 func TestNodeInfo_Value(t *testing.T) {
-	info := &NodeInfo{Type: NodeTypeGoalRoot}
+	status := &NodeStatus{}
+	info := &NodeInfo{Type: NodeTypeGoalRoot, Status: status}
 	if info.Value("anything") != nil {
-		t.Error("NodeInfo.Value should return nil for all keys")
+		t.Error("NodeInfo.Value should return nil for unknown keys")
 	}
-	if info.Value(nodeInfoKey{}) != nil {
-		t.Error("NodeInfo.Value should return nil for nodeInfoKey")
+	if got := info.Value(nodeInfoKey{}); got != info {
+		t.Error("NodeInfo.Value(nodeInfoKey{}) should return the NodeInfo itself")
+	}
+	if got := info.Value(statusKey{}); got != status {
+		t.Error("NodeInfo.Value(statusKey{}) should return the Status")
 	}
 }
 

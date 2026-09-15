@@ -212,6 +212,7 @@ func (n *node[T]) childrenSeq() iter.Seq[bt.Metadata] {
 func (n *node[T]) buildNodeInfo() *NodeInfo {
 	info := &NodeInfo{
 		Type:     n.nodeType(),
+		Status:   n.status,
 		children: n.childrenSeq(),
 	}
 
