@@ -90,6 +90,9 @@ type NodeInfo struct {
 	// Status holds tick count and last status for this node, if available.
 	Status *NodeStatus
 
+	// Name is a human-readable label for this node, derived from its role and content.
+	Name string
+
 	// children yields bt.Metadata objects for Walk compatibility.
 	children iter.Seq[bt.Metadata]
 }

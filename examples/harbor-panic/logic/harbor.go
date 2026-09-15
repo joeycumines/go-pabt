@@ -575,6 +575,26 @@ func (e *simpleEffect) Value() any { return e.value }
 func (c *simpleCond) Key() any             { return c.key }
 func (c *simpleCond) Match(value any) bool { return c.match(value) }
 
+func (v heldItemVar) String() string { return fmt.Sprintf("held(%s)", v.ActorID) }
+func (v positionVar) String() string { return fmt.Sprintf("pos(%s)", v.SpriteID) }
+func (v hiddenVar) String() string   { return fmt.Sprintf("hidden(%s)", v.CubeID) }
+
+func (v *heldItemValue) String() string {
+	if v.ItemID == "" {
+		return "empty"
+	}
+	return v.ItemID
+}
+func (v *positionValue) String() string {
+	return fmt.Sprintf("%d sprites", len(v.Positions))
+}
+func (v *hiddenValue) String() string {
+	if v.Hidden {
+		return "?"
+	}
+	return "visible"
+}
+
 func (a *simpleAction) Conditions() []pabt.IConditions { return a.conditions }
 func (a *simpleAction) Effects() pabt.Effects          { return a.effects }
 func (a *simpleAction) Node() bt.Node                  { return a.node }

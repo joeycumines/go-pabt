@@ -216,6 +216,17 @@ func (n *node[T]) buildNodeInfo() *NodeInfo {
 		children: n.childrenSeq(),
 	}
 
+	switch info.Type {
+	case NodeTypeActionNode:
+		info.Name = n.actionName()
+	case NodeTypePreconditionLeaf:
+		if n.precondition != nil {
+			info.Name = fmt.Sprintf("%v", n.precondition.condition.Key())
+		}
+	default:
+		info.Name = info.Type.String()
+	}
+
 	// Add precondition info
 	if n.precondition != nil && n.precondition.root == n {
 		info.VariableKey = n.precondition.condition.Key()
@@ -233,6 +244,20 @@ func (n *node[T]) buildNodeInfo() *NodeInfo {
 	}
 
 	return info
+}
+
+func (n *node[T]) actionName() string {
+	if n.action == nil || len(n.action.effects) == 0 {
+		return "Action"
+	}
+	name := ""
+	for key, eff := range n.action.effects {
+		if name != "" {
+			name += ", "
+		}
+		name += fmt.Sprintf("%v→%v", key, eff.Value())
+	}
+	return name
 }
 
 func (n *node[T]) nodeType() NodeType {

@@ -541,8 +541,12 @@ func buildTreeFromMetadata(m bt.Metadata, path string) *TreeNode {
 	frame := bt.GetFrame(m)
 
 	displayName := name
-	if displayName == "" && frame != nil {
-		displayName = fmt.Sprintf("%s:%d", frame.File, frame.Line)
+	if displayName == "" {
+		if info := pabt.GetNodeInfo(m); info != nil && info.Name != "" {
+			displayName = info.Name
+		} else if frame != nil {
+			displayName = fmt.Sprintf("%s:%d", frame.File, frame.Line)
+		}
 	}
 
 	status, _ := pabt.GetNodeStatus(m)
