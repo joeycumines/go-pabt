@@ -437,3 +437,69 @@ func TestHarborSafety(t *testing.T) {
 	// The safety endpoint proves live access; this test proves snapshot access.)
 	t.Log("PASS: TestHarborSafety complete")
 }
+
+func TestHarborFuzz(t *testing.T) {
+	scenarios := []string{"", "calm", "stormy", "maze"}
+	ctx := context.Background()
+
+	for _, scen := range scenarios {
+		label := scen
+		if label == "" {
+			label = "default"
+		}
+		t.Run(label, func(t *testing.T) {
+			harbor := hsim.NewHarbor(60, 3.1, 42)
+			if scen != "" {
+				if err := hsim.ApplyScenario(harbor, scen); err != nil {
+					t.Fatalf("ApplyScenario(%s): %v", scen, err)
+				}
+			}
+
+			var lastRev uint64
+			for step := 0; step < 500; step++ {
+				if err := harbor.Step(ctx); err != nil {
+					t.Fatalf("Step(%d) scenario=%s: %v", step, label, err)
+				}
+
+				st := harbor.State()
+
+				if st.Revision <= lastRev {
+					t.Fatalf("revision not monotonic at step %d: %d <= %d", step, st.Revision, lastRev)
+				}
+				lastRev = st.Revision
+
+				heldCount := make(map[string]int)
+				for _, sp := range st.Sprites {
+					if sp.Kind == hsim.KindActor && sp.HeldItem != nil {
+						if sp.HeldItem.Kind != hsim.KindCube {
+							t.Fatalf("step %d: actor %s holds non-cube %s (kind %d)", step, sp.ID, sp.HeldItem.ID, sp.HeldItem.Kind)
+						}
+						heldCount[sp.HeldItem.ID]++
+						if heldCount[sp.HeldItem.ID] > 1 {
+							t.Fatalf("step %d: cube %s held by multiple actors", step, sp.HeldItem.ID)
+						}
+					}
+				}
+
+				for _, sp := range st.Sprites {
+					if sp.Kind == hsim.KindWall {
+						continue
+					}
+					if sp.Kind != hsim.KindActor && sp.Kind != hsim.KindCube && sp.Kind != hsim.KindHumanForklift {
+						continue
+					}
+					for _, w := range st.Walls {
+						if sp.X < w.X+float64(w.W) && sp.X+float64(sp.W) > w.X &&
+							sp.Y < w.Y+float64(w.H) && sp.Y+float64(sp.H) > w.Y {
+							t.Fatalf("step %d: sprite %s (kind %d) overlaps wall %s at (%.1f,%.1f)", step, sp.ID, sp.Kind, w.ID, sp.X, sp.Y)
+						}
+					}
+				}
+			}
+
+			if v := harbor.SafetyViolations(); v != 0 {
+				t.Errorf("scenario=%s: expected 0 safety violations after 500 steps, got %d", label, v)
+			}
+		})
+	}
+}
