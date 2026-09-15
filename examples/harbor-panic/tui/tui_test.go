@@ -320,6 +320,42 @@ func screenRow(t *testing.T, screen tcell.Screen, y int) string {
 	return sb.String()
 }
 
+// TestTuiSparklineRealData verifies the sparkline is populated with real
+// delta payload sizes after 10 simulation steps.
+func TestTuiSparklineRealData(t *testing.T) {
+	harbor := hsim.NewHarbor(0, 0, 42)
+	actors := harbor.State().Actors()
+	if len(actors) == 0 {
+		t.Fatal("no actors")
+	}
+	ctx := context.Background()
+	result := logic.HarborPlan(ctx, harbor, actors[0].ID)
+	tracker := pabtdebug.NewTrackerWithID(result.Plan, "harbor-bot-0")
+
+	sparkline := make([]int, 0, 40)
+	for i := 0; i < 10; i++ {
+		harbor.Step(ctx)
+		status, err := result.Node.Tick()
+		tracker.Track(status, err)
+		v := computeDeltaSize([]*pabtdebug.Tracker{tracker})
+		sparkline = append(sparkline, v)
+	}
+
+	if len(sparkline) == 0 {
+		t.Fatal("expected sparkline len > 0 after 10 steps")
+	}
+	hasNonZero := false
+	for _, v := range sparkline {
+		if v > 0 {
+			hasNonZero = true
+			break
+		}
+	}
+	if !hasNonZero {
+		t.Error("expected sparkline to have non-zero values (not flat)")
+	}
+}
+
 // TestTuiCommandDeckKeys simulates the c/r/B/+/-/b// key bindings and asserts
 // the HUD reflects the toggled state after the run loop processes them.
 func TestTuiCommandDeckKeys(t *testing.T) {
@@ -421,6 +457,12 @@ func TestTuiRenderBottomHUDModes(t *testing.T) {
 	if !strings.Contains(row, "BEL:ON") {
 		t.Errorf("expected BEL:ON, got %q", row)
 	}
+	if !strings.Contains(row, "PROF:") {
+		t.Errorf("expected PROF metric in HUD, got %q", row)
+	}
+	if !strings.Contains(row, "/1000") {
+		t.Errorf("expected TL timeline cap /1000 in HUD, got %q", row)
+	}
 
 	// Search overlay renders on the HUD's second line when active.
 	hud.SearchMode = true
@@ -432,5 +474,43 @@ func TestTuiRenderBottomHUDModes(t *testing.T) {
 	overlayRow := screenRow(t, screen, 1+HarborHeight+1)
 	if !strings.Contains(overlayRow, "Action") {
 		t.Errorf("expected search query in overlay, got %q", overlayRow)
+	}
+}
+
+// TestTuiOverflowCounterIncrements drives real evictions through Track() with a
+// small maxEvents window and asserts overflowLineCount grows as lines hit disk.
+func TestTuiOverflowCounterIncrements(t *testing.T) {
+	dir := t.TempDir()
+	path := dir + "/overflow.jsonl"
+
+	harbor := hsim.NewHarbor(0, 0, 42)
+	actors := harbor.State().Actors()
+	if len(actors) == 0 {
+		t.Fatal("no actors")
+	}
+	ctx := context.Background()
+	result := logic.HarborPlan(ctx, harbor, actors[0].ID)
+	tracker := pabtdebug.NewTrackerWithID(result.Plan, "harbor-bot-0").WithMaxEvents(5)
+	if err := tracker.SetOverflowFile(path); err != nil {
+		t.Fatalf("SetOverflowFile: %v", err)
+	}
+	defer tracker.CloseOverflow()
+
+	trackers := []*pabtdebug.Tracker{tracker}
+
+	before := overflowLineCount(trackers)
+	if before != 0 {
+		t.Fatalf("expected 0 overflow lines initially, got %d", before)
+	}
+
+	for i := 0; i < 10; i++ {
+		harbor.Step(ctx)
+		status, err := result.Node.Tick()
+		tracker.Track(status, err)
+	}
+
+	after := overflowLineCount(trackers)
+	if after <= before {
+		t.Errorf("expected overflow counter to increment, before=%d after=%d", before, after)
 	}
 }

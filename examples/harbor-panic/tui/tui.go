@@ -18,7 +18,9 @@
 package tui
 
 import (
+	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"sync/atomic"
@@ -313,14 +315,23 @@ func RenderBottomHUD(screen tcell.Screen, harbor *hsim.Harbor, trackers []*pabtd
 	if harbor.BeliefEnabled() {
 		beliefLabel = "ON"
 	}
-	metrics := []struct{ label, value string }{
-		{"RANK", rankMode},
-		{"SCEN", scenLabel},
-		{"BEL", beliefLabel},
-		{"DELTA", "0.009"},
-		{"OVF", overflowBytes(trackers)},
-		{"TL", fmt.Sprintf("%d/1000", len(trackersLatestTimeline(trackers)))},
-		{"BP", fmt.Sprintf("%d", countBreakpoints(trackers))},
+	profileMs := measureProfileMs(trackers)
+	profileColor := tcell.ColorGreen
+	if profileMs >= 10 {
+		profileColor = tcell.ColorYellow
+	}
+	metrics := []struct {
+		label string
+		value string
+		color tcell.Color
+	}{
+		{"RANK", rankMode, tcell.ColorDefault},
+		{"SCEN", scenLabel, tcell.ColorDefault},
+		{"BEL", beliefLabel, tcell.ColorDefault},
+		{"PROF", fmt.Sprintf("%.1fms", profileMs), profileColor},
+		{"OVF", fmt.Sprintf("%dL", overflowLineCount(trackers)), tcell.ColorDefault},
+		{"TL", fmt.Sprintf("%d/1000", len(trackersLatestTimeline(trackers))), tcell.ColorDefault},
+		{"BP", fmt.Sprintf("%d", countBreakpoints(trackers)), tcell.ColorDefault},
 	}
 	mx := 0
 	for _, m := range metrics {
@@ -333,9 +344,13 @@ func RenderBottomHUD(screen tcell.Screen, harbor *hsim.Harbor, trackers []*pabtd
 				mx++
 			}
 		}
+		vStyle := valStyle
+		if m.color != tcell.ColorDefault {
+			vStyle = tcell.StyleDefault.Foreground(m.color)
+		}
 		for _, ch := range m.value + "  " {
 			if mx < 80 {
-				screen.SetContent(mx, yBase, ch, nil, valStyle)
+				screen.SetContent(mx, yBase, ch, nil, vStyle)
 				mx++
 			}
 		}
@@ -450,22 +465,6 @@ func countNodes(n *pabtdebug.TreeNode) int {
 		c += countNodes(&n.Children[i])
 	}
 	return c
-}
-
-func overflowBytes(trackers []*pabtdebug.Tracker) string {
-	for _, t := range trackers {
-		if t == nil {
-			continue
-		}
-		p := t.OverflowPath()
-		if p == "" {
-			continue
-		}
-		if fi, err := os.Stat(p); err == nil {
-			return fmt.Sprintf("%dB", fi.Size())
-		}
-	}
-	return "0B"
 }
 
 func trackersLatestTimeline(trackers []*pabtdebug.Tracker) []pabtdebug.TimelineEntry {
@@ -665,20 +664,10 @@ func runWithScreen(ctx context.Context, screen tcell.Screen, harbor *hsim.Harbor
 		case <-ticker.C:
 			// update trails every tick
 			updateTrails(trails, harbor)
-			// update sparkline every 200ms with delta-like synthetic value
+			// update sparkline every 200ms with real delta payload size
 			if time.Since(lastSparkUpdate) > 200*time.Millisecond {
 				lastSparkUpdate = time.Now()
-				// synthesize delta size: nodeCount *10? use tracker events length delta
-				v := 5
-				if len(trackers) > 0 && trackers[0] != nil {
-					evs := trackers[0].Events()
-					if len(evs) > 0 {
-						v = evs[len(evs)-1].NodeCount*3 + 5
-						if v > 80 {
-							v = 80
-						}
-					}
-				}
+				v := computeDeltaSize(trackers)
 				sparkline = append(sparkline, v)
 				if len(sparkline) > 40 {
 					sparkline = sparkline[1:]
@@ -784,4 +773,58 @@ func executeSearch(trackers []*pabtdebug.Tracker, hud *HUDState) {
 		hud.SearchCount = len(results)
 		return
 	}
+}
+
+func computeDeltaSize(trackers []*pabtdebug.Tracker) int {
+	if len(trackers) == 0 || trackers[0] == nil {
+		return 0
+	}
+	evs := trackers[0].Events()
+	if len(evs) == 0 {
+		return 0
+	}
+	latestIter := evs[len(evs)-1].Iteration
+	delta, ok := trackers[0].DeltaForIteration(latestIter)
+	if !ok || delta == nil {
+		return 0
+	}
+	b, err := json.Marshal(delta)
+	if err != nil {
+		return 0
+	}
+	return len(b)
+}
+
+func measureProfileMs(trackers []*pabtdebug.Tracker) float64 {
+	if len(trackers) == 0 || trackers[0] == nil {
+		return 0
+	}
+	start := time.Now()
+	_ = trackers[0].Profile()
+	return float64(time.Since(start).Microseconds()) / 1000.0
+}
+
+func overflowLineCount(trackers []*pabtdebug.Tracker) int {
+	for _, t := range trackers {
+		if t == nil {
+			continue
+		}
+		p := t.OverflowPath()
+		if p == "" {
+			continue
+		}
+		f, err := os.Open(p)
+		if err != nil {
+			continue
+		}
+		defer f.Close()
+		count := 0
+		scanner := bufio.NewScanner(f)
+		scanner.Buffer(make([]byte, 0, 64*1024), 20<<20)
+		for scanner.Scan() {
+			count++
+		}
+		return count
+	}
+	return 0
 }
