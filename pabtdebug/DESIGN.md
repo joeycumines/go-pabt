@@ -154,3 +154,11 @@ entry here.
   Reset recentres the tree bounding box at zoom 1 instead of returning to the
   clipping origin. Drag/wheel interactions set `userAdjustedView` so live re-renders
   never fight the user's viewport.
+- **v6 — 2026-09-16:** 404-gated timeline (sliding-window eviction floor). The server
+  now advertises its oldest retained iteration on every SSE event (`oldestIteration`
+  on `SSEEvent`, additive/omitempty); the UI tracks it as `serverOldestIter`, primes
+  it from the initial `/timeline` load, and clamps older-history fetches to that floor
+  instead of probing down to iteration 1 and silently dropping 404s. A dashed,
+  non-interactive gap row (`.tl-row.tl-gap`) marks evicted ranges with a "Load to
+  restore" hint, and a one-time console notice replaces silent null returns on a 404.
+  Committed @ e77798b; build/vet/`go test -race` green.
