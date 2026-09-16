@@ -414,6 +414,11 @@ body {
 .tl-run { border-radius: 50%; animation: statusPulse 1.4s ease-in-out infinite; }
 .tl-sq { border-radius: 1px; }
 .tl-ring { border-radius: 50%; border: 1.5px solid; background: transparent; box-sizing: border-box; }
+#plan-select { max-width: 170px; text-transform: none; letter-spacing: 0.02em; }
+#plan-activity { display: flex; align-items: center; gap: 4px; }
+.plan-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-secondary); opacity: 0.4; cursor: pointer; }
+.plan-dot.ticking { background: var(--running); opacity: 1; animation: statusPulse 1.4s ease-in-out infinite; }
+.plan-dot.current { opacity: 1; outline: 1px solid var(--accent); outline-offset: 1px; }
 </style>
 </head>
 <body>
@@ -421,6 +426,8 @@ body {
   <header id="header">
     <div id="header-left">
       <h1>PA-BT // DEBUG</h1>
+      <select id="plan-select" class="btn" title="Switch plan" style="padding:2px 6px;font-size:10px;"><option value="">—</option></select>
+      <div id="plan-activity" title="Per-plan activity"></div>
       <div id="conn-dot"></div>
       <span id="conn-status">Connecting...</span>
     </div>
@@ -579,6 +586,13 @@ body {
   let profileCache = null, profileCacheIter = null;
   let lastSeq = 0;
   let serverOldestIter = null, evictedNoticeShown = false;
+  let currentPlanId = null;
+  const planSelect = document.getElementById('plan-select');
+  const planActivity = document.getElementById('plan-activity');
+  const planState = {};
+  const planLastCounts = {};
+  let planProbeTimer = null;
+  let pendingRestoreScroll = null, pendingRestoreNodeId = null;
 
   const svg = document.getElementById('tree-svg');
   const svgContainer = document.getElementById('svg-container');
@@ -720,18 +734,90 @@ body {
     return result;
   }
 
-  function connect() {
+  function planPath(suffix) {
+    return window.location.pathname.replace(/\/ui$/, '/plans/' + encodeURIComponent(currentPlanId || '0') + (suffix || ''));
+  }
+  function switchPlan(planId) {
+    if (planId === currentPlanId) return;
+    if (currentPlanId != null) planState[currentPlanId] = { scrollTop: timelineList.scrollTop, selectedNodeId: selectedNodeId };
+    var restore = planState[planId] || null;
+    pendingRestoreScroll = restore ? restore.scrollTop : null;
+    pendingRestoreNodeId = restore ? restore.selectedNodeId : null;
+    currentPlanId = planId;
+    if (eventSource) { eventSource.close(); eventSource = null; }
+    timelineEvents = []; currentIteration = null; currentTree = null; lastRawTree = null;
+    profileCache = null; profileCacheIter = null; serverOldestIter = null; evictedNoticeShown = false;
+    highlightedIds.clear(); selectedNodeId = null;
+    planActivity.querySelectorAll('.plan-dot').forEach(function(d){ d.classList.toggle('current', d.getAttribute('data-plan') === planId); });
+    var nodesG = document.getElementById('nodes-layer');
+    var edgesG = document.getElementById('edges-layer');
+    if (nodesG) clearSvgChildren(nodesG);
+    if (edgesG) clearSvgChildren(edgesG);
+    ensureTimelineVirtualSpacers();
+    var n = virtualTopSpacer.nextSibling;
+    while (n && n !== virtualBottomSpacer) { var nxt = n.nextSibling; n.remove(); n = nxt; }
+    virtualTopSpacer.style.height = '0px'; virtualBottomSpacer.style.height = '0px';
+    document.getElementById('detail-body').style.display = 'none';
+    document.getElementById('detail-empty').style.display = '';
+    startSSE(planId);
     fetchInitialTimeline();
+  }
+  planSelect.addEventListener('change', function() { switchPlan(this.value); });
+  function renderPlanActivity(plans) {
+    if (!planActivity || !plans) return;
+    planActivity.innerHTML = '';
+    for (var i = 0; i < plans.length; i++) {
+      (function(p){
+        var ticking = planLastCounts[p.id] != null && p.eventCount > planLastCounts[p.id];
+        var d = document.createElement('div');
+        d.className = 'plan-dot' + (p.id === currentPlanId ? ' current' : '') + (ticking ? ' ticking' : '');
+        d.setAttribute('data-plan', p.id);
+        d.title = p.id + ' \u2014 ' + p.eventCount + ' events';
+        d.addEventListener('click', function(){ planSelect.value = p.id; switchPlan(p.id); });
+        planLastCounts[p.id] = p.eventCount;
+        planActivity.appendChild(d);
+      })(plans[i]);
+    }
+  }
+  function schedulePlanProbe() {
+    if (planProbeTimer) return;
+    planProbeTimer = setTimeout(function(){
+      planProbeTimer = null;
+      fetch(window.location.pathname.replace(/\/ui$/, '/plans'))
+        .then(function(r){ return r.ok ? r.json() : null; })
+        .then(function(plans){ if (plans) renderPlanActivity(plans); schedulePlanProbe(); })
+        .catch(function(){ schedulePlanProbe(); });
+    }, 2000);
+  }
+  function connect() {
     fetch(window.location.pathname.replace(/\/ui$/, '/plans'))
       .then(function(r) { return r.ok ? r.json() : []; })
       .then(function(plans) {
-        var planId = (plans && plans.length > 0) ? plans[0].id : '0';
-        startSSE(planId);
+        planSelect.innerHTML = '';
+        if (plans && plans.length > 0) {
+          for (var i = 0; i < plans.length; i++) {
+            var opt = document.createElement('option');
+            opt.value = plans[i].id;
+            opt.textContent = plans[i].id;
+            planSelect.appendChild(opt);
+          }
+          currentPlanId = plans[0].id;
+        } else {
+          var opt = document.createElement('option');
+          opt.value = '0'; opt.textContent = 'plan-0';
+          planSelect.appendChild(opt);
+          currentPlanId = '0';
+        }
+        planSelect.value = currentPlanId;
+        renderPlanActivity(plans);
+        schedulePlanProbe();
+        startSSE(currentPlanId);
+        fetchInitialTimeline();
       })
-      .catch(function() { startSSE('0'); });
+      .catch(function() { currentPlanId = '0'; startSSE('0'); fetchInitialTimeline(); });
   }
   function fetchInitialTimeline() {
-    fetch(window.location.pathname.replace(/\/ui$/, '/timeline'))
+    fetch(planPath('/timeline'))
       .then(function(r) { return r.ok ? r.json() : []; })
       .then(function(tl) {
         if (!tl || !tl.length) return;
@@ -741,6 +827,7 @@ body {
         if (timelineEvents.length && serverOldestIter == null) serverOldestIter = timelineEvents[0].iteration;
         currentIteration = timelineEvents.length ? timelineEvents[timelineEvents.length - 1].iteration : null;
         renderTimelineVirtual();
+        if (pendingRestoreScroll != null) { timelineList.scrollTop = pendingRestoreScroll; pendingRestoreScroll = null; }
         if (currentIteration != null) fetchTimelineIter(currentIteration);
       })
       .catch(function() {});
@@ -931,7 +1018,7 @@ body {
     let pending = toFetch;
     for (let k = 0; k < toFetch; k++) {
       const iter = oldestIter - 1 - k;
-      fetch(window.location.pathname.replace(/\/ui$/, '/timeline/' + iter))
+      fetch(planPath('/timeline/' + iter))
         .then(function(r){
           if (r.status === 404) {
             if (serverOldestIter == null || iter < serverOldestIter) serverOldestIter = iter + 1;
@@ -1036,7 +1123,7 @@ body {
 
 
   function fetchTimelineIter(iter) {
-    fetch(window.location.pathname.replace(/\/ui$/, '/timeline/' + iter))
+    fetch(planPath('/timeline/' + iter))
       .then(function(r) {
         if (r.status === 404) {
           var nodesLayer = document.getElementById('nodes-layer');
@@ -1056,7 +1143,7 @@ body {
         }
         return r.ok ? r.json() : null;
       })
-      .then(function(data) { if (data && data.tree) { lastReconstructedTree = cloneTreeJS(data.tree); lastReconstructedIteration = data.iteration || iter; renderTree(data.tree); } });
+      .then(function(data) { if (data && data.tree) { lastReconstructedTree = cloneTreeJS(data.tree); lastReconstructedIteration = data.iteration || iter; renderTree(data.tree); if (pendingRestoreNodeId) { var rn = findNode(currentTree, pendingRestoreNodeId); pendingRestoreNodeId = null; if (rn) selectNode(rn); } } });
   }
 
   // Layout is stored separately from tree data to avoid mutating shared event objects (D11).
@@ -1686,7 +1773,7 @@ body {
       displayCachedProfile(nodeId, profileCache);
       return;
     }
-    fetch(window.location.pathname.replace(/\/ui$/, '/profile'))
+    fetch(planPath('/profile'))
       .then(function(r) { return r.ok ? r.json() : null; })
       .then(function(data) {
         if (!data) { wrap.style.display = 'none'; return; }
@@ -1922,7 +2009,7 @@ body {
   document.getElementById('btn-breakpoint').addEventListener('click', function() {
     if (!selectedNodeId) return;
     const btn = this;
-    fetch(window.location.pathname.replace(/\/ui$/, '/breakpoints'), {
+    fetch(planPath('/breakpoints'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ id: selectedNodeId, nodePath: selectedNodeId, nodeType: '', enabled: true })
@@ -2056,7 +2143,7 @@ body {
   }
 
   document.getElementById('btn-export').addEventListener('click', function() {
-    fetch(window.location.pathname.replace(/\/ui$/, '/dot'))
+    fetch(planPath('/dot'))
       .then(r => r.ok ? r.text() : '')
       .then(text => {
         if (!text) return;
@@ -2068,7 +2155,7 @@ body {
     const btn = this; const prev = btn.textContent;
     try {
       btn.textContent = 'Saving...'; btn.disabled = true;
-      const res = await fetch(window.location.pathname.replace(/\/ui$/, '/export'));
+      const res = await fetch(planPath('/export'));
       if (!res.ok) throw new Error('export failed: ' + res.status);
       const blob = await res.blob();
       await exportViaFSAPI(blob, 'pabt-session-' + Date.now() + '.jsonl');
@@ -2088,7 +2175,7 @@ body {
       if (!file) { btn.textContent = prev; btn.disabled = false; return; }
       const body = await file.text();
       // POST to /import
-      const res = await fetch(window.location.pathname.replace(/\/ui$/, '/import'), {
+      const res = await fetch(planPath('/import'), {
         method: 'POST',
         headers: { 'Content-Type': 'text/plain' },
         body: body,
@@ -2099,7 +2186,7 @@ body {
       }
       const data = await res.json().catch(function(){ return {}; });
       // Reload timeline from server
-      const tlRes = await fetch(window.location.pathname.replace(/\/ui$/, '/timeline'));
+      const tlRes = await fetch(planPath('/timeline'));
       if (tlRes.ok) {
         const tl = await tlRes.json();
         // Replace local cache with imported timeline: clear virtual spacers first
@@ -2142,7 +2229,7 @@ body {
     const toIter = document.getElementById('diff-to').value;
     if (!fromIter || !toIter) return;
     diffModal.style.display = 'none';
-    fetch(window.location.pathname.replace(/\/ui$/, '/diff?from=' + encodeURIComponent(fromIter) + '&to=' + encodeURIComponent(toIter)))
+    fetch(planPath('/diff?from=' + encodeURIComponent(fromIter) + '&to=' + encodeURIComponent(toIter)))
       .then(r => r.ok ? r.json() : null)
       .then(data => {
         if (!data || !currentTree) return;
