@@ -162,3 +162,17 @@ entry here.
   non-interactive gap row (`.tl-row.tl-gap`) marks evicted ranges with a "Load to
   restore" hint, and a one-time console notice replaces silent null returns on a 404.
   Committed @ e77798b; build/vet/`go test -race` green.
+- **v7 — 2026-09-16:** Multi-plan selector. A `<select id="plan-select">` in the header
+  lists every registered plan (fed by `/plans`); four per-plan activity dots
+  (`#plan-activity .plan-dot`, pulsing when a plan's `eventCount` advances) sit beside
+  it and are also clickable. Selecting a plan calls `switchPlan()`: closes the old SSE,
+  clears timeline/tree/detail/profile/eviction state, resets `initialFitDone` so the v5
+  auto-fit re-runs for the new tree, reconnects SSE + refetches the timeline scoped to
+  the chosen plan, and retains per-plan scroll position + selected node across switches.
+  All eleven legacy fetches now route through `planPath()` (`/plans/{id}/...`) instead
+  of the primary-only routes. `connect()` resolves the plan list first, then issues the
+  plan-scoped history fetch — fixing a defect where the initial fetch hit `/plans/0/...`
+  before `currentPlanId` was known (guaranteed 404 on harbor). Activity probing uses a
+  `setTimeout` chain (no `setInterval`) to preserve the `setInterval == 0` harness
+  invariant. Vision-verified switching harbor-bot-0 → harbor-bot-2; zero non-favicon
+  console errors.

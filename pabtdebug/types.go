@@ -131,17 +131,17 @@ type DeltaChangedNode struct {
 // SSEEvent represents an event broadcast via Server-Sent Events, including
 // a sequence number for future SSE replay support.
 type SSEEvent struct {
-	Seq           int64       `json:"seq"`
-	Iteration     int         `json:"iteration"`
-	Status        bt.Status   `json:"status"`
-	Tree          *TreeNode   `json:"tree,omitempty"`
-	Delta         *TreeDelta  `json:"delta,omitempty"`
-	IsKeyframe    bool        `json:"isKeyframe,omitempty"`
-	Timestamp     time.Time   `json:"timestamp"`
-	DurationMs    float64     `json:"durationMs,omitempty"`
-	NodeCount     int         `json:"nodeCount,omitempty"`
-	BreakpointHit *Breakpoint `json:"breakpointHit,omitempty"`
-	OldestIteration int       `json:"oldestIteration,omitempty"`
+	Seq             int64       `json:"seq"`
+	Iteration       int         `json:"iteration"`
+	Status          bt.Status   `json:"status"`
+	Tree            *TreeNode   `json:"tree,omitempty"`
+	Delta           *TreeDelta  `json:"delta,omitempty"`
+	IsKeyframe      bool        `json:"isKeyframe,omitempty"`
+	Timestamp       time.Time   `json:"timestamp"`
+	DurationMs      float64     `json:"durationMs,omitempty"`
+	NodeCount       int         `json:"nodeCount,omitempty"`
+	BreakpointHit   *Breakpoint `json:"breakpointHit,omitempty"`
+	OldestIteration int         `json:"oldestIteration,omitempty"`
 }
 
 // Breakpoint represents a debug breakpoint on a node.

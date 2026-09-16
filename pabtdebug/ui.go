@@ -747,6 +747,7 @@ body {
     if (eventSource) { eventSource.close(); eventSource = null; }
     timelineEvents = []; currentIteration = null; currentTree = null; lastRawTree = null;
     profileCache = null; profileCacheIter = null; serverOldestIter = null; evictedNoticeShown = false;
+    initialFitDone = false; userAdjustedView = false;
     highlightedIds.clear(); selectedNodeId = null;
     planActivity.querySelectorAll('.plan-dot').forEach(function(d){ d.classList.toggle('current', d.getAttribute('data-plan') === planId); });
     var nodesG = document.getElementById('nodes-layer');
