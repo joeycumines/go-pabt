@@ -507,3 +507,34 @@ func splitLines(s string) []string {
 	}
 	return res
 }
+
+// TestDeltaStorePruning proves the deltaStore sliding-window prune bounds memory:
+// after far more than maxEvents non-keyframe Track calls, len(deltaStore) must stay
+// at most maxEvents rather than growing without bound (the harbor-gate RSS climb).
+func TestDeltaStorePruning(t *testing.T) {
+	state := &testState{vars: map[any]any{"x": true}}
+	plan, err := pabt.INew(state, []pabt.IConditions{{&testCondition{key: "x", value: true}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tr := NewTrackerWithID(plan, "prune")
+	// Force every tick to be a non-keyframe delta so each one stores into deltaStore.
+	tr.keyframeInterval = 0
+	const maxEv = defaultMaxEvents
+	if tr.maxEvents != maxEv {
+		t.Fatalf("setup assumes maxEvents=%d, got %d", maxEv, tr.maxEvents)
+	}
+	const ticks = 5000
+	for i := 0; i < ticks; i++ {
+		tr.Track(bt.Running, nil)
+	}
+	tr.mu.Lock()
+	got := len(tr.deltaStore)
+	tr.mu.Unlock()
+	if got > maxEv {
+		t.Fatalf("deltaStore grew unbounded: len=%d after %d ticks, want <= %d", got, ticks, maxEv)
+	}
+	if got == 0 {
+		t.Fatalf("deltaStore unexpectedly empty after %d non-keyframe ticks", ticks)
+	}
+}

@@ -22,6 +22,8 @@ type Hub struct {
 	seq               int64 // monotonically increasing sequence counter
 	replayBuffer      []replayEntry
 	maxReplay         int // replay buffer capacity
+	replayBytes       int
+	maxReplayBytes    int
 	keepAliveInterval time.Duration
 	// Deprecated: global throttle, kept for compatibility with older tests.
 	minInterval time.Duration
@@ -34,6 +36,7 @@ func NewHub() *Hub {
 		clients:           make(map[chan string]struct{}),
 		maxReplay:         50,
 		replayBuffer:      make([]replayEntry, 0, 50),
+		maxReplayBytes:    8 << 20,
 		keepAliveInterval: 15 * time.Second,
 	}
 }
@@ -55,8 +58,13 @@ func (h *Hub) Broadcast(event SSEEvent) {
 
 	h.lastEvent = data
 	h.replayBuffer = append(h.replayBuffer, replayEntry{seq: event.Seq, msg: msg})
-	if h.maxReplay > 0 && len(h.replayBuffer) > h.maxReplay {
-		h.replayBuffer = h.replayBuffer[len(h.replayBuffer)-h.maxReplay:]
+	h.replayBytes += len(msg)
+	// Evict by entry count AND by total byte budget. Keyframe messages carry a
+	// full marshalled tree, so a growing plan made the count-capped buffer grow
+	// in bytes without bound; the byte budget bounds retained replay memory.
+	for h.maxReplay > 0 && len(h.replayBuffer) > h.maxReplay || h.maxReplayBytes > 0 && h.replayBytes > h.maxReplayBytes && len(h.replayBuffer) > 1 {
+		h.replayBytes -= len(h.replayBuffer[0].msg)
+		h.replayBuffer = h.replayBuffer[1:]
 	}
 
 	// Per-client delivery with backpressure disconnect.

@@ -34,6 +34,8 @@ import (
 
 const defaultMaxEvents = 1000
 const defaultMaxTrees = 100
+const defaultMaxTreeNodes = 60000
+const defaultMaxDeltaNodes = 30000
 
 const defaultKeyframeInterval = 20
 
@@ -66,6 +68,11 @@ type Tracker struct {
 	keyframeInterval int
 	lastTree         *TreeNode
 	deltaStore       map[int]*TreeDelta
+	deltaOrder       []int
+	treeNodes        int
+	deltaNodes       int
+	maxTreeNodes     int
+	maxDeltaNodes    int
 	overflowPath     string
 	overflowFile     *os.File
 	overflowMu       sync.Mutex
@@ -91,6 +98,8 @@ func NewTrackerWithID(plan *pabt.IPlan, id string) *Tracker {
 		eventIndex:       make(map[int]int),
 		maxEvents:        defaultMaxEvents,
 		maxTrees:         defaultMaxTrees,
+		maxTreeNodes:     defaultMaxTreeNodes,
+		maxDeltaNodes:    defaultMaxDeltaNodes,
 		hub:              NewHub(),
 		breakpoints:      make(map[string]*Breakpoint),
 		profiles:         make(map[string]*NodeProfile),
@@ -192,10 +201,17 @@ func (t *Tracker) Track(status bt.Status, err error) {
 	if tree != nil {
 		t.treeStore[iter] = tree
 		t.treeOrder = append(t.treeOrder, iter)
-		if t.maxTrees > 0 && len(t.treeStore) > t.maxTrees {
+		t.treeNodes += nodeCount
+		// Evict by count AND by total retained-node budget. A growing plan tree
+		// makes each of the maxTrees clones larger, so a pure count cap let RSS
+		// climb without bound; the node budget bounds the sum across all clones.
+		for t.maxTrees > 0 && len(t.treeStore) > t.maxTrees || t.maxTreeNodes > 0 && t.treeNodes > t.maxTreeNodes && len(t.treeOrder) > 1 {
 			oldest := t.treeOrder[0]
+			if old, ok := t.treeStore[oldest]; ok {
+				t.treeNodes -= countNodes(old)
+				delete(t.treeStore, oldest)
+			}
 			t.treeOrder = t.treeOrder[1:]
-			delete(t.treeStore, oldest)
 		}
 	}
 	// Persist evicted slice to overflow file if configured.
@@ -270,13 +286,21 @@ func (t *Tracker) Track(status bt.Status, err error) {
 				delta.TargetIteration = iter
 			// Store delta for potential reconstruction tests (optional).
 			if t.deltaStore != nil {
+				added := countDeltaNodes(delta)
 				t.deltaStore[iter] = delta
-				// Bound deltaStore to the maxEvents sliding window: iterations
-				// advance by exactly 1 per Track, so deleting the key maxEvents
-				// behind gives every stored key a deletion turn, keeping at most
-				// maxEvents entries alive (unbounded growth was the RSS climb).
-				if t.maxEvents > 0 {
-					delete(t.deltaStore, iter-t.maxEvents)
+				t.deltaOrder = append(t.deltaOrder, iter)
+				t.deltaNodes += added
+				// Bound deltaStore by entry count AND by total cloned-node budget.
+				// Iterations advance by exactly 1 per Track, so the oldest key is
+				// deltaOrder[0]; evicting from the front keeps both caps satisfied
+				// and stops the unbounded RSS climb as the plan tree grows.
+				for t.maxEvents > 0 && len(t.deltaOrder) > t.maxEvents || t.maxDeltaNodes > 0 && t.deltaNodes > t.maxDeltaNodes && len(t.deltaOrder) > 1 {
+					oldIter := t.deltaOrder[0]
+					if od, ok := t.deltaStore[oldIter]; ok {
+						t.deltaNodes -= countDeltaNodes(od)
+						delete(t.deltaStore, oldIter)
+					}
+					t.deltaOrder = t.deltaOrder[1:]
 				}
 			}
 			}
@@ -618,6 +642,17 @@ func buildTreeFromMetadata(m bt.Metadata, path string) *TreeNode {
 	return tn
 }
 
+func countDeltaNodes(d *TreeDelta) int {
+	if d == nil {
+		return 0
+	}
+	n := len(d.Removed) + len(d.Changed)
+	for i := range d.Added {
+		n += countNodes(&d.Added[i])
+	}
+	return n
+}
+
 func countNodes(tree *TreeNode) int {
 	if tree == nil {
 		return 0
@@ -938,6 +973,8 @@ func (t *Tracker) ReadJSONL(r io.Reader) (int, error) {
 	t.profiles = make(map[string]*NodeProfile)
 	t.profileSeq = 0
 	t.deltaStore = make(map[int]*TreeDelta)
+	t.deltaOrder = nil
+	t.deltaNodes = 0
 	t.lastTree = nil
 	// Use max iteration to set atomic counter
 	maxIter := 0
@@ -996,6 +1033,10 @@ func (t *Tracker) ReadJSONL(r io.Reader) (int, error) {
 			}
 		}
 		t.treeOrder = newOrder
+	}
+	t.treeNodes = 0
+	for _, tr := range t.treeStore {
+		t.treeNodes += countNodes(tr)
 	}
 	t.iteration.Store(int64(maxIter))
 	// Ensure lastTrackTime reflects newest timestamp for duration continuity
