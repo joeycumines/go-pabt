@@ -14,26 +14,44 @@ const uiHTMLStr = `<!DOCTYPE html>
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
 :root {
- --bg-main: #0f0f23;
- --bg-panel: #1a1a2e;
- --bg-card: #16213e;
- --text-primary: #e0e0e0;
- --text-secondary: #888;
+ /* pabtdebug/DESIGN.md v1 — Harbor Mission Control tokens. Update the spec first, then here. */
+ --bg-main: #04070d;
+ --bg-panel: #0a111d;
+ --bg-card: #101a29;
+ --text-primary: #dbe7f4;
+ --text-secondary: #8296ad;
  --text-oncolor: #fff;
- --accent: #00d4ff;
- --success: #4caf50;
- --failure: #f44336;
- --running: #ff9800;
- --border: #333;
- --divider: #222;
+ --accent: #53d8fb;
+ --success: #46d68c;
+ --failure: #f0566a;
+ --running: #f5a524;
+ --border: #1c2a3d;
+ --divider: #14202f;
+ --type-goal: #5aa2ff;
+ --type-ppa: #c792ea;
+ --type-action: #ff9e64;
+ --type-actionnode: #46d68c;
+ --type-pre: #2dd4bf;
+ --type-unknown: #50627a;
+ --font-ui: 'Futura', 'Avenir Next', 'Trebuchet MS', sans-serif;
+ --font-mono: 'SF Mono', 'JetBrains Mono', 'Menlo', monospace;
 }
 body {
- font-family: 'Menlo', 'Monaco', 'Courier New', monospace;
- background: var(--bg-main);
+ font-family: var(--font-mono);
+ background:
+  radial-gradient(1100px 520px at 78% -12%, rgba(83,216,251,0.07), transparent 62%),
+  repeating-linear-gradient(0deg, transparent 0 31px, rgba(83,216,251,0.035) 31px 32px),
+  repeating-linear-gradient(90deg, transparent 0 31px, rgba(83,216,251,0.035) 31px 32px),
+  var(--bg-main);
  color: var(--text-primary);
  overflow: hidden;
  height: 100vh;
  width: 100vw;
+}
+#header h1, .btn, #timeline-header, #detail-header, #detail-empty, .tl-status, .dtl-label {
+ font-family: var(--font-ui);
+ letter-spacing: 0.08em;
+ text-transform: uppercase;
 }
 #app {
  display: grid;
@@ -66,7 +84,7 @@ body {
  width: 8px;
  height: 8px;
  border-radius: 50%;
- background: #f44336;
+ background: var(--failure);
  transition: background 0.3s;
 }
 #conn-dot.connected { background: var(--success); }
@@ -215,8 +233,8 @@ body {
  margin-right: 4px;
  margin-bottom: 3px;
 }
-.dtl-badge-effects { background: rgba(76,175,80,0.2); color: #4caf50; border: 1px solid #4caf50; }
-.dtl-badge-cond { background: rgba(0,188,212,0.2); color: #00bcd4; border: 1px solid #00bcd4; }
+.dtl-badge-effects { background: rgba(70,214,140,0.16); color: var(--success); border: 1px solid var(--success); }
+.dtl-badge-cond { background: rgba(45,212,191,0.16); color: var(--type-pre); border: 1px solid var(--type-pre); }
 #detail-empty {
  color: var(--text-secondary);
  font-style: italic;
@@ -276,58 +294,83 @@ body {
  background: var(--bg-card);
  border: 1px solid var(--border);
  border-radius: 4px;
- padding: 6px 8px;
- font-size: 10px;
- pointer-events: none;
- z-index: 1000;
- max-width: 200px;
- box-shadow: 0 4px 12px rgba(0,0,0,0.5);
- display: none;
+  padding: 8px 10px;
+  font-size: 10.5px;
+  font-family: var(--font-mono);
+  pointer-events: none;
+  z-index: 1000;
+  max-width: 240px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.55);
+  display: none;
 }
 @keyframes nodePulse {
- 0% { filter: drop-shadow(0 0 2px currentColor); }
- 50% { filter: drop-shadow(0 0 8px currentColor); }
- 100% { filter: drop-shadow(0 0 2px currentColor); }
+ 0% { filter: drop-shadow(0 0 2px var(--running)); }
+ 50% { filter: drop-shadow(0 0 9px var(--running)); }
+ 100% { filter: drop-shadow(0 0 2px var(--running)); }
 }
-@keyframes statusFlashGreen {
- 0% { fill: #4caf50; }
- 50% { fill: #81c784; }
- 100% { fill: #4caf50; }
+@keyframes statusPulse {
+ 0% { opacity: 1; }
+ 50% { opacity: 0.32; }
+ 100% { opacity: 1; }
 }
-@keyframes statusFlashRed {
- 0% { transform: translateX(0); }
- 20% { transform: translateX(-2px); }
- 40% { transform: translateX(2px); }
- 60% { transform: translateX(-1px); }
- 80% { transform: translateX(1px); }
- 100% { transform: translateX(0); }
-}
-.node-running .node-rect {
+.node-running .node-card {
  animation: nodePulse 1.5s ease-in-out infinite;
 }
-.node-rect {
- rx: 8;
- ry: 8;
+.node-card {
+ rx: 6;
+ ry: 6;
  cursor: pointer;
- transition: filter 0.2s;
+ transition: filter 0.18s ease-out;
 }
-.node-rect:hover { filter: brightness(1.2); }
+.node-card:hover { filter: brightness(1.18); }
+.node-typebar {
+ rx: 6;
+ ry: 6;
+ pointer-events: none;
+}
 .node-text {
  pointer-events: none;
- font-family: 'Menlo', 'Monaco', 'Courier New', monospace;
+ font-family: var(--font-mono);
 }
-.node-stripe {
- rx: 8;
- ry: 8;
+.node-type-label {
+ pointer-events: none;
+ font-family: var(--font-ui);
+ letter-spacing: 0.12em;
+ text-transform: uppercase;
 }
+.status-glyph-run { animation: statusPulse 1.4s ease-in-out infinite; }
 .node-badge {
  cursor: default;
 }
+.node-meta {
+ pointer-events: none;
+ font-family: var(--font-mono);
+ font-size: 8.5px;
+ fill: var(--text-secondary);
+}
+.pill { cursor: pointer; }
+.pill circle { fill: var(--bg-card); stroke: var(--border); stroke-width: 1; transition: stroke 0.15s; }
+.pill:hover circle { stroke: var(--accent); }
+.pill text {
+ font-family: var(--font-mono);
+ font-size: 8.5px;
+ fill: var(--text-secondary);
+ text-anchor: middle;
+ pointer-events: none;
+}
+.pill:hover text { fill: var(--accent); }
+#stats-readout {
+ font-family: var(--font-mono);
+ font-size: 9.5px;
+ color: var(--text-secondary);
+ margin-left: auto;
+}
+#stats-readout b { color: var(--accent); font-weight: 600; }
 .edge-path {
  fill: none;
- stroke: #555;
+ stroke: var(--border);
  stroke-width: 1.5;
- transition: stroke 0.3s;
+ transition: stroke 0.25s ease-out;
 }
 .edge-path.active {
  stroke: var(--accent);
@@ -340,21 +383,34 @@ body {
 .node-ring {
  fill: none;
  stroke: transparent;
- stroke-width: 3;
- rx: 8;
- ry: 8;
- transition: stroke 0.2s;
+ stroke-width: 2;
+ rx: 6;
+ ry: 6;
+ transition: stroke 0.18s ease-out;
  pointer-events: none;
 }
-.node-ring.selected { stroke: #fff; }
-.node-ring.highlight { stroke: #ffeb3b; }
+.node-ring.selected { stroke: var(--accent); }
+.node-ring.highlight { stroke: var(--running); }
+::selection { background: rgba(83,216,251,0.28); color: var(--text-primary); }
+* { scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+*::-webkit-scrollbar { width: 9px; height: 9px; }
+*::-webkit-scrollbar-thumb { background: var(--border); border-radius: 5px; }
+*::-webkit-scrollbar-thumb:hover { background: var(--text-secondary); }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.status-shape { display: inline-block; width: 7px; height: 7px; box-sizing: border-box; }
+.status-sq { border-radius: 1px; }
+.status-ring { border-radius: 50%; border: 1.6px solid; background: transparent; }
+.status-dotrun { border-radius: 50%; animation: statusPulse 1.4s ease-in-out infinite; }
+.tl-run { border-radius: 50%; animation: statusPulse 1.4s ease-in-out infinite; }
+.tl-sq { border-radius: 1px; }
+.tl-ring { border-radius: 50%; border: 1.5px solid; background: transparent; box-sizing: border-box; }
 </style>
 </head>
 <body>
 <div id="app">
   <header id="header">
     <div id="header-left">
-      <h1>PA-BT Debug</h1>
+      <h1>PA-BT // DEBUG</h1>
       <div id="conn-dot"></div>
       <span id="conn-status">Connecting...</span>
     </div>
@@ -392,7 +448,10 @@ body {
     <div id="main-toolbar">
       <button class="btn" id="btn-fit">Fit</button>
       <button class="btn" id="btn-reset">Reset</button>
-      <span id="zoom-level" style="font-size:10px;color:var(--text-secondary);margin-left:auto;">100%</span>
+      <button class="btn" id="btn-expand-all" title="Expand every branch">Expand all</button>
+      <button class="btn" id="btn-collapse-all" title="Collapse to the active spine">Collapse all</button>
+      <span id="stats-readout"></span>
+      <span id="zoom-level" style="font-size:10px;color:var(--text-secondary);">100%</span>
     </div>
     <div id="svg-container">
       <svg id="tree-svg" xmlns="http://www.w3.org/2000/svg"></svg>
@@ -447,17 +506,17 @@ body {
   <footer id="bottom">
     <div id="profile-bar"></div>
     <div id="legend-bar">
-      <span class="leg-dot" style="background:#2196f3"></span>Goal
-      <span class="leg-dot" style="background:#9c27b0"></span>PPA
-      <span class="leg-dot" style="background:#ff9800"></span>Action
-      <span class="leg-dot" style="background:#4caf50"></span>ActionNode
-      <span class="leg-dot" style="background:#00bcd4"></span>Pre
-      <span class="leg-dot" style="background:#666"></span>Unknown
+      <span class="leg-dot" style="background:var(--type-goal)"></span>Goal
+      <span class="leg-dot" style="background:var(--type-ppa)"></span>PPA
+      <span class="leg-dot" style="background:var(--type-action)"></span>Action
+      <span class="leg-dot" style="background:var(--type-actionnode)"></span>ActionNode
+      <span class="leg-dot" style="background:var(--type-pre)"></span>Pre
+      <span class="leg-dot" style="background:var(--type-unknown)"></span>Unknown
     </div>
     <div id="status-bar">
-      <span class="status-dot" style="background:var(--success)"></span>S
-      <span class="status-dot" style="background:var(--failure)"></span>F
-      <span class="status-dot" style="background:var(--running)"></span>R
+      <span class="status-shape status-sq" style="background:var(--success)"></span>S
+      <span class="status-shape status-ring" style="border-color:var(--failure)"></span>F
+      <span class="status-shape status-dotrun" style="background:var(--running)"></span>R
     </div>
   </footer>
 </div>
@@ -477,21 +536,26 @@ body {
 <script>
 (function() {
   const SVG_NS = 'http://www.w3.org/2000/svg';
-  const NODE_W = 150;
-  const NODE_H = 48;
-  const LEVEL_H = 90;
+  const NODE_W = 210;
+  const NODE_H = 54;
+  const COL_W = 274;
+  const ROW_H = 70;
   const GAP = 20;
-  const UNIT = NODE_W + GAP;
+  const UNIT = ROW_H;
 
+  function cssVar(name, fallback) {
+    var v = getComputedStyle(document.documentElement).getPropertyValue(name);
+    return (v && v.trim()) ? v.trim() : fallback;
+  }
   const TYPE_COLORS = {
-    GoalRoot: '#2196f3', GoalSelector: '#2196f3',
-    PPARoot: '#9c27b0', PPAPost: '#9c27b0',
-    ActionSelector: '#ff9800', ActionRoot: '#ff9800',
-    ActionNode: '#4caf50',
-    PreconditionsRoot: '#00bcd4', PreconditionLeaf: '#00bcd4',
-    Unknown: '#666'
+    GoalRoot: cssVar('--type-goal', '#5aa2ff'), GoalSelector: cssVar('--type-goal', '#5aa2ff'),
+    PPARoot: cssVar('--type-ppa', '#c792ea'), PPAPost: cssVar('--type-ppa', '#c792ea'),
+    ActionSelector: cssVar('--type-action', '#ff9e64'), ActionRoot: cssVar('--type-action', '#ff9e64'),
+    ActionNode: cssVar('--type-actionnode', '#46d68c'),
+    PreconditionsRoot: cssVar('--type-pre', '#2dd4bf'), PreconditionLeaf: cssVar('--type-pre', '#2dd4bf'),
+    Unknown: cssVar('--type-unknown', '#50627a')
   };
-  const STATUS_COLORS = { 1: '#ff9800', 2: '#4caf50', 3: '#f44336' };
+  const STATUS_COLORS = { 1: cssVar('--running', '#f5a524'), 2: cssVar('--success', '#46d68c'), 3: cssVar('--failure', '#f0566a') };
 
   let eventSource = null, reconnectDelay = 1000;
   let currentTree = null, selectedNodeId = null, highlightedIds = new Set();
@@ -525,6 +589,30 @@ body {
     return String(str).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   }
   function safeId(id) { return 'node-' + String(id).replace(/\./g, '-'); }
+  function truncate(s, n) { s = String(s); return s.length > n ? s.slice(0, n - 1) + '\u2026' : s; }
+  function makeStatusGlyph(cx, cy, status, color) {
+    if (status === 1) {
+      var d = document.createElementNS(SVG_NS, 'circle');
+      d.setAttribute('cx', cx); d.setAttribute('cy', cy); d.setAttribute('r', '4');
+      d.setAttribute('fill', color); d.setAttribute('class', 'status-glyph-run');
+      return d;
+    }
+    if (status === 2) {
+      var s = document.createElementNS(SVG_NS, 'rect');
+      s.setAttribute('x', cx - 3.5); s.setAttribute('y', cy - 3.5);
+      s.setAttribute('width', '7'); s.setAttribute('height', '7');
+      s.setAttribute('fill', color); s.setAttribute('class', 'node-badge');
+      return s;
+    }
+    if (status === 3) {
+      var r = document.createElementNS(SVG_NS, 'circle');
+      r.setAttribute('cx', cx); r.setAttribute('cy', cy); r.setAttribute('r', '3.5');
+      r.setAttribute('fill', 'none'); r.setAttribute('stroke', color); r.setAttribute('stroke-width', '1.6');
+      r.setAttribute('class', 'node-badge');
+      return r;
+    }
+    return null;
+  }
   function statusToString(s) { switch(s){ case 1: return 'Running'; case 2: return 'Success'; case 3: return 'Failure'; default: return 'Unknown'; } }
   function cloneTreeJS(tree) { return tree ? JSON.parse(JSON.stringify(tree)) : null; }
   function parentIdJS(id) { var idx = id.lastIndexOf('.'); return idx === -1 ? '' : id.substring(0, idx); }
@@ -658,7 +746,7 @@ body {
       const event = JSON.parse(e.data);
       if (event.seq && lastSeq > 0 && event.seq > lastSeq + 1) {
         connDot.classList.remove('connected');
-        connDot.style.background = '#ff9800';
+        connDot.style.background = cssVar('--running', '#f5a524');
         connStatus.textContent = 'Events missed (seq ' + lastSeq + ' to ' + event.seq + ')';
       }
       lastSeq = event.seq || 0;
@@ -745,7 +833,9 @@ body {
     const st = statusToString(ev.status);
     const sc = STATUS_COLORS[ev.status] || '#888';
     // Use DOM construction for dot to avoid innerHTML fragment parsing cost; keep innerHTML for row template (not container wipe)
-    row.innerHTML = '<span class="tl-dot" style="background:' + escapeAttr(sc) + '"></span>' +
+    var dotClass = 'tl-dot' + (ev.status === 1 ? ' tl-run' : (ev.status === 2 ? ' tl-sq' : (ev.status === 3 ? ' tl-ring' : '')));
+    var dotStyle = ev.status === 3 ? 'border-color:' + escapeAttr(sc) : 'background:' + escapeAttr(sc);
+    row.innerHTML = '<span class="' + dotClass + '" style="' + dotStyle + '"></span>' +
                     '<span class="tl-iter">#' + escapeHtml(ev.iteration) + '</span>' +
                     '<span class="tl-status" style="color:' + escapeAttr(sc) + '">' + escapeHtml(st) + '</span>' +
                     '<span class="tl-duration">' + (ev.durationMs ? ev.durationMs.toFixed(1) + 'ms' : '') + '</span>';
@@ -968,14 +1058,14 @@ body {
       }
       return totalW;
     }
-    function assign(node, parentX) {
+    function assign(node, parentY) {
       if (!node) return;
       const e = map[node.id];
-      e.absX = (parentX + e.x) * UNIT;
-      e.absY = e.level * LEVEL_H + 40;
-      e.bbox = { x: e.absX - NODE_W/2, y: e.absY, w: NODE_W, h: NODE_H };
+      e.absX = e.level * COL_W + 40;
+      e.absY = (parentY + e.x) * UNIT;
+      e.bbox = { x: e.absX, y: e.absY - NODE_H/2, w: NODE_W, h: NODE_H };
       if (node.children) {
-        for (let i = 0; i < node.children.length; i++) assign(node.children[i], parentX + e.x);
+        for (let i = 0; i < node.children.length; i++) assign(node.children[i], parentY + e.x);
       }
     }
     compute(tree, 0);
@@ -1014,38 +1104,125 @@ body {
   }
 
   let currentLayoutMap = null;
+  let lastRawTree = null;
+  let viewVersion = 0;
+  let expandAllMode = false;
+  const unwoundHeads = new Set();
+  const userExpanded = new Set();
+  const userCollapsed = new Set();
+  const searchReveal = new Set();
+  function bumpView() { viewVersion++; }
+  function countSubtree(n, memo) {
+    if (memo.has(n.id)) return memo.get(n.id);
+    let c = 1;
+    if (n.children) for (let i = 0; i < n.children.length; i++) c += countSubtree(n.children[i], memo);
+    memo.set(n.id, c);
+    return c;
+  }
+  function isCollapsedView(tail, depth, active) {
+    if (userCollapsed.has(tail.id)) return true;
+    if (expandAllMode) return false;
+    if (userExpanded.has(tail.id)) return false;
+    if (searchReveal.has(tail.id)) return false;
+    return !!tail.children && tail.children.length >= 2 && depth >= 1 && !active.has(tail.id);
+  }
+  function buildViewModel(tree) {
+    const active = new Set();
+    (function mark(n) {
+      let a = !!(n.status && n.status.LastStatus === 1);
+      if (n.children) for (let i = 0; i < n.children.length; i++) if (mark(n.children[i])) a = true;
+      if (a) active.add(n.id);
+      return a;
+    })(tree);
+    const memo = new Map();
+    let rendered = 0, rawCount = 0, maxDepth = 0;
+    (function rawStats(n, d) { rawCount++; if (d > maxDepth) maxDepth = d; if (n.children) for (let i = 0; i < n.children.length; i++) rawStats(n.children[i], d + 1); })(tree, 0);
+    function vm(n, depth) {
+      rendered++;
+      let run = [n], cur = n;
+      while (cur.children && cur.children.length === 1) { cur = cur.children[0]; run.push(cur); }
+      const tailDepth = depth + run.length - 1;
+      const v = { id: n.id, name: n.name, nodeType: n.nodeType, status: n.status, effects: n.effects, condition: n.condition, postCondition: n.postCondition, frame: n.frame, children: [], _view: { kind: 'node', chainCount: 0, hiddenCount: 0, members: null, tailId: n.id, rep: n } };
+      let tail = n;
+      if (run.length > 2 && !unwoundHeads.has(n.id) && !searchReveal.has(n.id)) {
+        let rep = run[run.length - 1];
+        for (let i = 0; i < run.length; i++) if (run[i].status && run[i].status.LastStatus === 1) { rep = run[i]; break; }
+        v._view = { kind: 'chain', chainCount: run.length, hiddenCount: 0, members: run.map(function(m) { return m.id; }), tailId: run[run.length - 1].id, rep: rep };
+        v.name = rep.name || n.name;
+        v.nodeType = rep.nodeType || n.nodeType;
+        v.status = rep.status || n.status;
+        v.effects = rep.effects;
+        v.condition = rep.condition;
+        v.postCondition = rep.postCondition;
+        tail = run[run.length - 1];
+      }
+      if (tail.children && tail.children.length) {
+        v._view.tailId = tail.id;
+        if (isCollapsedView(tail, tailDepth, active)) {
+          v._view.hiddenCount = countSubtree(tail, memo) - 1;
+          if (v._view.kind === 'node') v._view.kind = 'branch';
+        } else {
+          if (v._view.kind === 'node' && tail.children.length >= 2) v._view.kind = 'branch';
+          for (let i = 0; i < tail.children.length; i++) v.children.push(vm(tail.children[i], tailDepth + 1));
+        }
+      }
+      return v;
+    }
+    const root = vm(tree, 0);
+    root.structureHash = (tree.structureHash || '') + ':' + viewVersion;
+    root._stats = { rendered: rendered, rawCount: rawCount, maxDepth: maxDepth };
+    return root;
+  }
+  function updateStatsReadout(view) {
+    const el = document.getElementById('stats-readout');
+    if (!el || !view._stats) return;
+    el.innerHTML = '<b>' + view._stats.rendered + '</b> cards / ' + view._stats.rawCount + ' nodes / depth <b>' + view._stats.maxDepth + '</b>';
+  }
+  function revealAncestors(ids) {
+    if (!lastRawTree || !ids.size) return false;
+    const parent = new Map();
+    (function walk(n) { if (n.children) for (let i = 0; i < n.children.length; i++) { parent.set(n.children[i].id, n.id); walk(n.children[i]); } })(lastRawTree);
+    let added = false;
+    ids.forEach(function(id) {
+      let p = parent.get(id);
+      while (p) { if (!searchReveal.has(p)) { searchReveal.add(p); added = true; } p = parent.get(p); }
+    });
+    return added;
+  }
   function clearSvgChildren(el) { while (el.firstChild) el.removeChild(el.firstChild); }
   function renderTree(tree) {
     if (!tree) return;
-    const layoutMap = buildLayoutMap(tree);
+    lastRawTree = tree;
+    const view = buildViewModel(tree);
+    const layoutMap = buildLayoutMap(view);
     const needsFullRebuild = currentTree === null ||
       !document.getElementById('nodes-layer') ||
-      currentTree.structureHash !== tree.structureHash;
+      currentTree.structureHash !== view.structureHash;
 
     if (needsFullRebuild) {
-      // No innerHTML wipe: remove via DOM API and rebuild.
       clearSvgChildren(svg);
       const edgesG = document.createElementNS(SVG_NS, 'g');
       const nodesG = document.createElementNS(SVG_NS, 'g');
       edgesG.setAttribute('id', 'edges-layer');
       nodesG.setAttribute('id', 'nodes-layer');
-      drawEdges(tree, edgesG, layoutMap);
-      drawNodes(tree, nodesG, layoutMap);
+      drawEdges(view, edgesG, layoutMap);
+      drawNodes(view, nodesG, layoutMap);
       svg.appendChild(edgesG);
       svg.appendChild(nodesG);
-      currentTree = tree;
+      currentTree = view;
       currentLayoutMap = layoutMap;
     } else {
       const nodesG = document.getElementById('nodes-layer');
       const edgesG = document.getElementById('edges-layer');
       clearSvgChildren(edgesG);
-      drawEdges(tree, edgesG, layoutMap);
-      diffAndUpdateNodes(tree, currentTree, nodesG, layoutMap, currentLayoutMap);
-      currentTree = tree;
+      drawEdges(view, edgesG, layoutMap);
+      diffAndUpdateNodes(view, currentTree, nodesG, layoutMap, currentLayoutMap);
+      currentTree = view;
       currentLayoutMap = layoutMap;
     }
     updateSvgView();
     drawProfileBar();
+    updateStatsReadout(view);
     if (selectedNodeId) highlightNode(selectedNodeId);
     if (highlightedIds.size) highlightSearch();
   }
@@ -1054,8 +1231,8 @@ body {
     const lm = layoutMap ? layoutMap[newNode.id] : null;
     const absX = lm ? lm.absX : newNode._absX;
     const absY = lm ? lm.absY : newNode._absY;
-    const x = absX - NODE_W / 2;
-    const y = absY;
+    const x = absX;
+    const y = absY - NODE_H / 2;
     const typeColor = TYPE_COLORS[newNode.nodeType] || TYPE_COLORS.Unknown;
     const status = newNode.status ? newNode.status.LastStatus : 0;
     const statusColor = STATUS_COLORS[status] || '#555';
@@ -1071,58 +1248,61 @@ body {
       ring.setAttribute('y', y - 3);
     }
 
-    const rect = group.querySelector('.node-rect');
-    if (rect) {
-      rect.setAttribute('x', x);
-      rect.setAttribute('y', y);
-      rect.setAttribute('fill', typeColor);
-      if (!isRunning && status === 0) rect.setAttribute('opacity', '0.5');
-      else rect.setAttribute('opacity', '1');
+    const card = group.querySelector('.node-card');
+    if (card) {
+      card.setAttribute('x', x);
+      card.setAttribute('y', y);
+      card.setAttribute('stroke', typeColor);
+      if (!isRunning && status === 0) card.setAttribute('opacity', '0.45');
+      else card.setAttribute('opacity', '1');
     }
 
-    const stripe = group.querySelector('.node-stripe');
-    if (stripe) {
-      stripe.setAttribute('x', x);
-      stripe.setAttribute('y', y);
-      stripe.setAttribute('fill', statusColor);
+    const typebar = group.querySelector('.node-typebar');
+    if (typebar) {
+      typebar.setAttribute('x', x);
+      typebar.setAttribute('y', y);
+      typebar.setAttribute('fill', typeColor);
     }
 
-    const typeText = group.querySelectorAll('.node-text')[0];
+    group.querySelectorAll('[data-glyph]').forEach(function(g){ g.remove(); });
+    var ng = makeStatusGlyph(x + NODE_W - 14, y + 12, status, statusColor);
+    if (ng) { ng.setAttribute('data-glyph', '1'); group.insertBefore(ng, group.querySelector('.node-type-label')); }
+
+    const typeText = group.querySelector('.node-type-label');
     if (typeText) {
-      typeText.setAttribute('x', x + 10);
+      typeText.setAttribute('x', x + 12);
       typeText.setAttribute('y', y + 18);
+      typeText.setAttribute('fill', typeColor);
       typeText.textContent = newNode.nodeType || 'Unknown';
     }
 
-    const nameText = group.querySelectorAll('.node-text')[1];
+    const nameText = group.querySelector('.node-text');
     if (nameText) {
-      nameText.setAttribute('x', x + 10);
-      nameText.setAttribute('y', y + 34);
-      nameText.textContent = newNode.name || '';
+      nameText.setAttribute('x', x + 12);
+      nameText.setAttribute('y', y + 36);
+      nameText.textContent = truncate(newNode.name || '', 22);
     }
 
-    const existingBadges = group.querySelectorAll('.node-badge');
-    for (let i = 0; i < existingBadges.length; i++) {
-      existingBadges[i].remove();
-    }
+    group.querySelectorAll('.node-badge:not([data-glyph])').forEach(function(b){ b.remove(); });
 
     if (hasEffects) {
-      const badge = document.createElementNS(SVG_NS, 'circle');
-      badge.setAttribute('cx', x + NODE_W - 8);
-      badge.setAttribute('cy', y + 10);
-      badge.setAttribute('r', '5');
-      badge.setAttribute('fill', '#4caf50');
-      badge.setAttribute('class', 'node-badge');
-      group.appendChild(badge);
+      const eb = document.createElementNS(SVG_NS, 'circle');
+      eb.setAttribute('cx', x + NODE_W - 26);
+      eb.setAttribute('cy', y + NODE_H - 12);
+      eb.setAttribute('r', '3');
+      eb.setAttribute('fill', cssVar('--success', '#46d68c'));
+      eb.setAttribute('class', 'node-badge');
+      group.appendChild(eb);
     }
     if (hasCondition) {
-      const badge = document.createElementNS(SVG_NS, 'circle');
-      badge.setAttribute('cx', x + NODE_W - 8);
-      badge.setAttribute('cy', y + 22);
-      badge.setAttribute('r', '5');
-      badge.setAttribute('fill', '#00bcd4');
-      badge.setAttribute('class', 'node-badge');
-      group.appendChild(badge);
+      const cb = document.createElementNS(SVG_NS, 'rect');
+      cb.setAttribute('x', x + NODE_W - 38);
+      cb.setAttribute('y', y + NODE_H - 15);
+      cb.setAttribute('width', '6');
+      cb.setAttribute('height', '6');
+      cb.setAttribute('fill', cssVar('--type-pre', '#2dd4bf'));
+      cb.setAttribute('class', 'node-badge');
+      group.appendChild(cb);
     }
 
     const newGroup = group.cloneNode(true);
@@ -1207,8 +1387,8 @@ body {
   function drawEdges(node, g, layoutMap) {
     if (!node.children) return;
     const lm = layoutMap ? layoutMap[node.id] : null;
-    const px = lm ? lm.absX : node._absX;
-    const py = (lm ? lm.absY : node._absY) + NODE_H;
+    const px = (lm ? lm.absX : node._absX) + NODE_W;
+    const py = lm ? lm.absY : node._absY;
     const vp = layoutMap ? getViewportBounds() : null;
     const padE = 80;
     const evp = vp ? { x: vp.x - padE, y: vp.y - padE, w: vp.w + padE*2, h: vp.h + padE*2 } : null;
@@ -1222,9 +1402,10 @@ body {
       }
       const cx = clm ? clm.absX : c._absX;
       const cy = clm ? clm.absY : c._absY;
+      const midX = (px + cx) / 2;
       const d = 'M ' + px + ' ' + py +
-                ' C ' + px + ' ' + (py + LEVEL_H/2) +
-                ', ' + cx + ' ' + (cy - LEVEL_H/2) +
+                ' C ' + midX + ' ' + py +
+                ', ' + midX + ' ' + cy +
                 ', ' + cx + ' ' + cy;
       const path = document.createElementNS(SVG_NS, 'path');
       path.setAttribute('d', d);
@@ -1253,8 +1434,8 @@ body {
       }
       return;
     }
-    const x = absX - NODE_W / 2;
-    const y = absY;
+    const x = absX;
+    const y = absY - NODE_H / 2;
     const typeColor = TYPE_COLORS[node.nodeType] || TYPE_COLORS.Unknown;
     const status = node.status ? node.status.LastStatus : 0;
     const statusColor = STATUS_COLORS[status] || '#555';
@@ -1277,65 +1458,110 @@ body {
     ring.setAttribute('class', 'node-ring');
     group.appendChild(ring);
 
-    const rect = document.createElementNS(SVG_NS, 'rect');
-    rect.setAttribute('x', x);
-    rect.setAttribute('y', y);
-    rect.setAttribute('width', NODE_W);
-    rect.setAttribute('height', NODE_H);
-    rect.setAttribute('fill', typeColor);
-    rect.setAttribute('class', 'node-rect');
-    rect.setAttribute('rx', '8');
-    rect.setAttribute('ry', '8');
-    if (!isRunning && status === 0) rect.setAttribute('opacity', '0.5');
-    group.appendChild(rect);
+    var card = document.createElementNS(SVG_NS, 'rect');
+    card.setAttribute('x', x);
+    card.setAttribute('y', y);
+    card.setAttribute('width', NODE_W);
+    card.setAttribute('height', NODE_H);
+    card.setAttribute('fill', cssVar('--bg-card', '#101a29'));
+    card.setAttribute('stroke', typeColor);
+    card.setAttribute('stroke-width', '1.5');
+    card.setAttribute('class', 'node-card');
+    card.setAttribute('rx', '6');
+    card.setAttribute('ry', '6');
+    if (!isRunning && status === 0) card.setAttribute('opacity', '0.45');
+    group.appendChild(card);
 
-    const stripe = document.createElementNS(SVG_NS, 'rect');
-    stripe.setAttribute('x', x);
-    stripe.setAttribute('y', y);
-    stripe.setAttribute('width', '4');
-    stripe.setAttribute('height', NODE_H);
-    stripe.setAttribute('fill', statusColor);
-    stripe.setAttribute('class', 'node-stripe');
-    stripe.setAttribute('rx', '8');
-    stripe.setAttribute('ry', '8');
-    group.appendChild(stripe);
+    var typebar = document.createElementNS(SVG_NS, 'rect');
+    typebar.setAttribute('x', x);
+    typebar.setAttribute('y', y);
+    typebar.setAttribute('width', '3');
+    typebar.setAttribute('height', NODE_H);
+    typebar.setAttribute('fill', typeColor);
+    typebar.setAttribute('class', 'node-typebar');
+    group.appendChild(typebar);
 
-    const typeText = document.createElementNS(SVG_NS, 'text');
-    typeText.setAttribute('x', x + 10);
+    var glyph = makeStatusGlyph(x + NODE_W - 14, y + 12, status, statusColor);
+    if (glyph) { glyph.setAttribute('data-glyph', '1'); group.appendChild(glyph); }
+
+    var typeText = document.createElementNS(SVG_NS, 'text');
+    typeText.setAttribute('x', x + 12);
     typeText.setAttribute('y', y + 18);
-    typeText.setAttribute('class', 'node-text');
-    typeText.setAttribute('fill', '#fff');
-    typeText.setAttribute('font-size', '11');
-    typeText.setAttribute('font-weight', 'bold');
+    typeText.setAttribute('class', 'node-type-label');
+    typeText.setAttribute('fill', typeColor);
+    typeText.setAttribute('font-size', '8.5');
     typeText.textContent = node.nodeType || 'Unknown';
     group.appendChild(typeText);
 
-    const nameText = document.createElementNS(SVG_NS, 'text');
-    nameText.setAttribute('x', x + 10);
-    nameText.setAttribute('y', y + 34);
+    var nameText = document.createElementNS(SVG_NS, 'text');
+    nameText.setAttribute('x', x + 12);
+    nameText.setAttribute('y', y + 36);
     nameText.setAttribute('class', 'node-text');
-    nameText.setAttribute('fill', '#ccc');
-    nameText.setAttribute('font-size', '10');
-    nameText.textContent = node.name || '';
+    nameText.setAttribute('fill', cssVar('--text-primary', '#dbe7f4'));
+    nameText.setAttribute('font-size', '10.5');
+    nameText.textContent = truncate(node.name || '', 22);
     group.appendChild(nameText);
 
     if (hasEffects) {
-      const badge = document.createElementNS(SVG_NS, 'circle');
-      badge.setAttribute('cx', x + NODE_W - 8);
-      badge.setAttribute('cy', y + 10);
-      badge.setAttribute('r', '5');
-      badge.setAttribute('fill', '#4caf50');
-      badge.setAttribute('class', 'node-badge');
-      group.appendChild(badge);
+      var eb = document.createElementNS(SVG_NS, 'circle');
+      eb.setAttribute('cx', x + NODE_W - 26);
+      eb.setAttribute('cy', y + NODE_H - 12);
+      eb.setAttribute('r', '3');
+      eb.setAttribute('fill', cssVar('--success', '#46d68c'));
+      eb.setAttribute('class', 'node-badge');
+      group.appendChild(eb);
     }
     if (hasCondition) {
-      const badge = document.createElementNS(SVG_NS, 'circle');
-      badge.setAttribute('cx', x + NODE_W - 8);
-      badge.setAttribute('cy', y + 22);
-      badge.setAttribute('r', '5');
-      badge.setAttribute('fill', '#00bcd4');
-      badge.setAttribute('class', 'node-badge');
-      group.appendChild(badge);
+      var cb = document.createElementNS(SVG_NS, 'rect');
+      cb.setAttribute('x', x + NODE_W - 38);
+      cb.setAttribute('y', y + NODE_H - 15);
+      cb.setAttribute('width', '6');
+      cb.setAttribute('height', '6');
+      cb.setAttribute('fill', cssVar('--type-pre', '#2dd4bf'));
+      cb.setAttribute('class', 'node-badge');
+      group.appendChild(cb);
+    }
+
+    const vw = node._view;
+    if (vw) {
+      let metaTxt = '';
+      if (vw.kind === 'chain') metaTxt = '\u00d7' + vw.chainCount;
+      if (vw.hiddenCount > 0) metaTxt += (metaTxt ? ' ' : '') + '+' + vw.hiddenCount;
+      if (metaTxt) {
+        const mt = document.createElementNS(SVG_NS, 'text');
+        mt.setAttribute('x', x + 12);
+        mt.setAttribute('y', y + NODE_H - 8);
+        mt.setAttribute('class', 'node-meta');
+        mt.textContent = metaTxt;
+        group.appendChild(mt);
+      }
+      let pillLabel = null;
+      if (vw.kind === 'chain') pillLabel = '\u00d7' + vw.chainCount;
+      else if (vw.hiddenCount > 0) pillLabel = '+' + vw.hiddenCount;
+      else if (vw.kind === 'branch') pillLabel = '\u2212';
+      if (pillLabel) {
+        const pg = document.createElementNS(SVG_NS, 'g');
+        pg.setAttribute('class', 'pill');
+        const pc = document.createElementNS(SVG_NS, 'circle');
+        pc.setAttribute('cx', x + NODE_W - 12);
+        pc.setAttribute('cy', y + NODE_H - 12);
+        pc.setAttribute('r', '8');
+        const pt = document.createElementNS(SVG_NS, 'text');
+        pt.setAttribute('x', x + NODE_W - 12);
+        pt.setAttribute('y', y + NODE_H - 9);
+        pt.textContent = pillLabel;
+        pg.appendChild(pc);
+        pg.appendChild(pt);
+        pg.addEventListener('click', function(e) {
+          e.stopPropagation();
+          if (vw.kind === 'chain') unwoundHeads.add(node.id);
+          else if (vw.hiddenCount > 0) { userExpanded.add(vw.tailId); userCollapsed.delete(vw.tailId); }
+          else { userCollapsed.add(vw.tailId); userExpanded.delete(vw.tailId); }
+          bumpView();
+          renderTree(lastRawTree);
+        });
+        group.appendChild(pg);
+      }
     }
 
     group.addEventListener('click', function(e) { e.stopPropagation(); selectNode(node); });
@@ -1419,10 +1645,10 @@ body {
       return '<div style="display:flex;align-items:center;gap:4px;margin-bottom:3px;"><span style="width:50px;font-size:9px;color:var(--text-secondary);">' + label + '</span><div style="width:' + w + 'px;height:8px;background:' + color + ';border-radius:2px;"></div><span style="font-size:9px;">' + val + '</span></div>';
     };
     document.getElementById('dtl-profile').innerHTML =
-      makeBar('Ticks', prof.tickCount, '#888') +
-      makeBar('Success', prof.successCount || 0, '#4caf50') +
-      makeBar('Failure', prof.failureCount || 0, '#f44336') +
-      makeBar('Running', prof.runningCount || 0, '#ff9800');
+      makeBar('Ticks', prof.tickCount, cssVar('--text-secondary', '#8296ad')) +
+      makeBar('Success', prof.successCount || 0, cssVar('--success', '#46d68c')) +
+      makeBar('Failure', prof.failureCount || 0, cssVar('--failure', '#f0566a')) +
+      makeBar('Running', prof.runningCount || 0, cssVar('--running', '#f5a524'));
   }
 
   function fetchProfile(nodeId) {
@@ -1445,7 +1671,9 @@ body {
     const st = node.status ? statusToString(node.status.LastStatus) : 'Unknown';
     tooltip.innerHTML = '<strong>' + escapeHtml(node.name || node.nodeType) + '</strong><br>' +
                         '<span style="color:' + escapeAttr(STATUS_COLORS[node.status ? node.status.LastStatus : 0] || '#888') + '">' + escapeHtml(st) + '</span>' +
-                        (node.status ? ' x' + node.status.TickCount : '');
+                        (node.status ? ' x' + node.status.TickCount : '') +
+                        (node._view && node._view.chainCount > 1 ? '<br>\u00d7' + node._view.chainCount + ' compressed chain' : '') +
+                        (node._view && node._view.hiddenCount > 0 ? '<br>+' + node._view.hiddenCount + ' hidden nodes' : '');
     tooltip.style.display = 'block';
     positionTooltip(e);
   }
@@ -1523,7 +1751,7 @@ body {
   function drawProfileBar() {
     profileBar.innerHTML = '';
     if (!currentTree) return;
-    const flat = flattenTree(currentTree);
+    const flat = flattenTree(lastRawTree || currentTree);
     const maxTicks = Math.max(...flat.map(n => n.status ? n.status.TickCount : 0), 1);
     const totalW = profileBar.clientWidth || 400;
     for (const n of flat) {
@@ -1534,10 +1762,10 @@ body {
       const w = Math.max(2, (ticks / maxTicks) * totalW);
       div.style.width = w + 'px';
       const st = n.status ? n.status.LastStatus : 0;
-      let color = '#666';
-      if (st === 1) color = '#4caf50';
-      else if (st === 2) color = '#f44336';
-      else if (st === 3) color = '#ff9800';
+      let color = cssVar('--type-unknown', '#50627a');
+      if (st === 1) color = cssVar('--running', '#f5a524');
+      else if (st === 2) color = cssVar('--success', '#46d68c');
+      else if (st === 3) color = cssVar('--failure', '#f0566a');
       div.style.background = color;
       div.title = (n.name || n.nodeType) + ' - ' + ticks + ' ticks';
       div.addEventListener('click', function(e) { e.stopPropagation(); selectNode(n); });
@@ -1584,10 +1812,12 @@ body {
       const q = searchInput.value.trim().toLowerCase();
       highlightedIds.clear();
       if (!q || !currentTree) {
+        if (searchReveal.size) { searchReveal.clear(); bumpView(); renderTree(lastRawTree); }
         svg.querySelectorAll('.node-ring.highlight').forEach(r => r.classList.remove('highlight'));
         return;
       }
-      highlightedIds = new Set(findNodesByName(currentTree, q));
+      highlightedIds = new Set(findNodesByName(lastRawTree || currentTree, q));
+      if (revealAncestors(highlightedIds)) { bumpView(); renderTree(lastRawTree); }
       highlightSearch();
       if (highlightedIds.size) {
         const firstId = Array.from(highlightedIds)[0];
@@ -1665,6 +1895,8 @@ body {
 
   document.getElementById('btn-fit').addEventListener('click', fitToTree);
   document.getElementById('btn-reset').addEventListener('click', resetView);
+  document.getElementById('btn-expand-all').addEventListener('click', function() { expandAllMode = true; bumpView(); renderTree(lastRawTree); });
+  document.getElementById('btn-collapse-all').addEventListener('click', function() { expandAllMode = false; userExpanded.clear(); unwoundHeads.clear(); bumpView(); renderTree(lastRawTree); });
 
   btnLive.addEventListener('click', function() {
     liveMode = !liveMode;
@@ -1874,14 +2106,14 @@ body {
       .then(r => r.ok ? r.json() : null)
       .then(data => {
         if (!data || !currentTree) return;
-        svg.querySelectorAll('.node-rect').forEach(r => r.setAttribute('opacity', '0.3'));
+        svg.querySelectorAll('.node-card').forEach(r => r.setAttribute('opacity', '0.3'));
         if (data.added) {
           for (const dn of data.added) {
             const sid = safeId(dn.id);
             const el = document.getElementById(sid);
             if (el) {
-              el.querySelector('.node-rect').setAttribute('opacity', '1');
-              el.querySelector('.node-rect').setAttribute('fill', '#4caf50');
+              el.querySelector('.node-card').setAttribute('opacity', '1');
+              el.querySelector('.node-card').setAttribute('fill', cssVar('--success', '#46d68c'));
             }
           }
         }
@@ -1890,8 +2122,8 @@ body {
             const sid = safeId(dn.id);
             const el = document.getElementById(sid);
             if (el) {
-              el.querySelector('.node-rect').setAttribute('opacity', '1');
-              el.querySelector('.node-rect').setAttribute('fill', '#f44336');
+              el.querySelector('.node-card').setAttribute('opacity', '1');
+              el.querySelector('.node-card').setAttribute('fill', cssVar('--failure', '#f0566a'));
             }
           }
         }
@@ -1900,8 +2132,8 @@ body {
             const sid = safeId(dn.id);
             const el = document.getElementById(sid);
             if (el) {
-              el.querySelector('.node-rect').setAttribute('opacity', '1');
-              el.querySelector('.node-rect').setAttribute('fill', '#ff9800');
+              el.querySelector('.node-card').setAttribute('opacity', '1');
+              el.querySelector('.node-card').setAttribute('fill', cssVar('--running', '#f5a524'));
             }
           }
         }
