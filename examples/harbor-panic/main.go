@@ -40,19 +40,20 @@ import (
 
 func main() {
 	var (
-		debugAddr    string
-		tickMs       int
-		overflowPath string
-		stormEvery   int
-		humanSpeed   float64
-		headless     bool
-		burst        int
-		seedBP       string
-		ticks        int
-		useTUI       bool
-		scenario     string
-		rankByCost   bool
-		beliefFlag   bool
+		debugAddr     string
+		tickMs        int
+		overflowPath  string
+		stormEvery    int
+		humanSpeed    float64
+		headless      bool
+		burst         int
+		seedBP        string
+		ticks         int
+		useTUI        bool
+		scenario      string
+		rankByCost    bool
+		beliefFlag    bool
+		snapshotEvery int
 	)
 	flag.StringVar(&debugAddr, "debug", "", "start debug server at address (e.g. :8080)")
 	flag.IntVar(&tickMs, "tick-ms", 80, "milliseconds between ticks")
@@ -67,6 +68,7 @@ func main() {
 	flag.StringVar(&scenario, "scenario", "", "harbor scenario: calm|stormy|maze (overrides storm/human defaults)")
 	flag.BoolVar(&rankByCost, "rank-by-cost", false, "rank harbor Actions by explicit cost model (demo of accidental ordering)")
 	flag.BoolVar(&beliefFlag, "belief", false, "enable belief partial-observability (hidden containers with sensing)")
+	flag.IntVar(&snapshotEvery, "snapshot-every", 1, "record a debug snapshot every Nth tick (1=every tick; >1 cuts per-tick Track CPU/RSS for sustained UI sessions)")
 	flag.Parse()
 
 	if burst > 0 {
@@ -225,9 +227,13 @@ func main() {
 			tracker := trackers[i]
 			planNode := planNodes[i]
 			origNode := planNode
+			var snapCount int64
 			wrappedNode := bt.New(func(children []bt.Node) (bt.Status, error) {
 				status, err := origNode.Tick()
-				tracker.Track(status, err)
+				snapCount++
+				if snapshotEvery <= 1 || snapCount%int64(snapshotEvery) == 0 {
+					tracker.Track(status, err)
+				}
 				return status, err
 			})
 			ticker := bt.NewTicker(ctx, time.Duration(tickMs)*time.Millisecond, bt.New(
