@@ -152,6 +152,15 @@ body {
 }
 .tl-row:hover { background: #1e1e3a; }
 .tl-row.selected { background: #25254a; }
+.tl-row.tl-gap {
+ cursor: default;
+ border: 1px dashed var(--border);
+ color: var(--text-secondary);
+ font-style: italic;
+ justify-content: center;
+ background: transparent;
+}
+.tl-row.tl-gap:hover { background: transparent; }
 .tl-dot {
  width: 6px;
  height: 6px;
@@ -569,6 +578,7 @@ body {
   let userAdjustedView = false, initialFitDone = false;
   let profileCache = null, profileCacheIter = null;
   let lastSeq = 0;
+  let serverOldestIter = null, evictedNoticeShown = false;
 
   const svg = document.getElementById('tree-svg');
   const svgContainer = document.getElementById('svg-container');
@@ -728,6 +738,7 @@ body {
         timelineEvents = tl.map(function(e) {
           return { iteration: e.iteration, status: (e.status === 'Running' ? 1 : (e.status === 'Success' ? 2 : (e.status === 'Failure' ? 3 : 0))), durationMs: e.durationMs || 0, seq: 0, nodeCount: e.nodeCount || 0 };
         });
+        if (timelineEvents.length && serverOldestIter == null) serverOldestIter = timelineEvents[0].iteration;
         currentIteration = timelineEvents.length ? timelineEvents[timelineEvents.length - 1].iteration : null;
         renderTimelineVirtual();
         if (currentIteration != null) fetchTimelineIter(currentIteration);
@@ -752,6 +763,7 @@ body {
         connStatus.textContent = 'Events missed (seq ' + lastSeq + ' to ' + event.seq + ')';
       }
       lastSeq = event.seq || 0;
+      if (event.oldestIteration != null) serverOldestIter = event.oldestIteration;
       addTimelineEvent(event);
       if (liveMode) {
         var treeToRender = null;
@@ -830,6 +842,12 @@ body {
   }
   function createTimelineRowElement(ev) {
     const row = document.createElement('div');
+    if (ev.evicted) {
+      row.className = 'tl-row tl-gap';
+      row.dataset.iter = ev.iteration;
+      row.innerHTML = '<span>iterations &le; ' + escapeHtml(ev.iteration) + ' evicted &mdash; Load to restore</span>';
+      return row;
+    }
     row.className = 'tl-row' + (ev.iteration === currentIteration ? ' selected' : '');
     row.dataset.iter = ev.iteration;
     const st = statusToString(ev.status);
@@ -906,14 +924,22 @@ body {
     // Fetch up to 20 older entries via individual GET /timeline/{iter}
     virtualFetchingOlder = true;
     const batch = 20;
-    let toFetch = Math.min(batch, oldestIter - 1);
+    const floor = (serverOldestIter != null) ? serverOldestIter : 1;
+    let toFetch = Math.min(batch, oldestIter - floor);
     if (toFetch <= 0) { virtualFetchingOlder = false; return; }
     let fetched = [];
     let pending = toFetch;
     for (let k = 0; k < toFetch; k++) {
       const iter = oldestIter - 1 - k;
       fetch(window.location.pathname.replace(/\/ui$/, '/timeline/' + iter))
-        .then(function(r){ return r.ok ? r.json() : null; })
+        .then(function(r){
+          if (r.status === 404) {
+            if (serverOldestIter == null || iter < serverOldestIter) serverOldestIter = iter + 1;
+            if (!evictedNoticeShown) { evictedNoticeShown = true; console.info('pabtdebug: iteration ' + iter + ' evicted from the sliding window; use Load to restore older history.'); }
+            return null;
+          }
+          return r.ok ? r.json() : null;
+        })
         .then(function(data){
           if (data && data.iteration) {
             fetched.push({ iteration: data.iteration, status: data.status, durationMs: data.durationMs, seq: data.seq || 0, nodeCount: data.nodeCount || 0 });

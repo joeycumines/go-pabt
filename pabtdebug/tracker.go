@@ -247,16 +247,21 @@ func (t *Tracker) Track(status bt.Status, err error) {
 		}
 		// Also treat structural changes that add/remove many nodes as keyframe if delta would be large?
 		// For now strict interval-based.
+		var oldestIter int
+		if len(t.entries) > 0 {
+			oldestIter = t.entries[0].Iteration
+		}
 		if isKeyframe {
 			sseEvent = SSEEvent{
-				Iteration:     iter,
-				Status:        status,
-				Tree:          tree,
-				IsKeyframe:    true,
-				Timestamp:     now,
-				DurationMs:    durationMs,
-				NodeCount:     nodeCount,
-				BreakpointHit: event.BreakpointHit,
+				Iteration:       iter,
+				Status:          status,
+				Tree:            tree,
+				IsKeyframe:      true,
+				Timestamp:       now,
+				DurationMs:      durationMs,
+				NodeCount:       nodeCount,
+				BreakpointHit:   event.BreakpointHit,
+				OldestIteration: oldestIter,
 			}
 		} else {
 			delta := ComputeDelta(t.lastTree, tree)
@@ -269,14 +274,15 @@ func (t *Tracker) Track(status bt.Status, err error) {
 				}
 			}
 			sseEvent = SSEEvent{
-				Iteration:     iter,
-				Status:        status,
-				Delta:         delta,
-				IsKeyframe:    false,
-				Timestamp:     now,
-				DurationMs:    durationMs,
-				NodeCount:     nodeCount,
-				BreakpointHit: event.BreakpointHit,
+				Iteration:       iter,
+				Status:          status,
+				Delta:           delta,
+				IsKeyframe:      false,
+				Timestamp:       now,
+				DurationMs:      durationMs,
+				NodeCount:       nodeCount,
+				BreakpointHit:   event.BreakpointHit,
+				OldestIteration: oldestIter,
 			}
 			if delta == nil {
 				sseEvent.Tree = tree
@@ -288,13 +294,18 @@ func (t *Tracker) Track(status bt.Status, err error) {
 		t.lastTree = CloneTree(tree)
 		// Also update lastIter implicitly via iteration counter.
 	} else {
+		var oldestIter int
+		if len(t.entries) > 0 {
+			oldestIter = t.entries[0].Iteration
+		}
 		sseEvent = SSEEvent{
-			Iteration:     iter,
-			Status:        status,
-			Timestamp:     now,
-			DurationMs:    durationMs,
-			NodeCount:     nodeCount,
-			BreakpointHit: event.BreakpointHit,
+			Iteration:       iter,
+			Status:          status,
+			Timestamp:       now,
+			DurationMs:      durationMs,
+			NodeCount:       nodeCount,
+			BreakpointHit:   event.BreakpointHit,
+			OldestIteration: oldestIter,
 		}
 	}
 

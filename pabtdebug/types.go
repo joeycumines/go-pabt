@@ -141,6 +141,7 @@ type SSEEvent struct {
 	DurationMs    float64     `json:"durationMs,omitempty"`
 	NodeCount     int         `json:"nodeCount,omitempty"`
 	BreakpointHit *Breakpoint `json:"breakpointHit,omitempty"`
+	OldestIteration int       `json:"oldestIteration,omitempty"`
 }
 
 // Breakpoint represents a debug breakpoint on a node.
