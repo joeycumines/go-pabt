@@ -566,6 +566,7 @@ body {
   let keyframeTree = null, lastReconstructedTree = null, lastReconstructedIteration = null;
   let liveMode = true, playback = false, playbackIdx = 0, playbackRaf = null, playbackLastTime = 0, playbackSpeed = 1;
   let pan = { x: 0, y: 0 }, zoom = 1, isDragging = false, dragStart = null, panStart = { x: 0, y: 0 };
+  let userAdjustedView = false, initialFitDone = false;
   let profileCache = null, profileCacheIter = null;
   let lastSeq = 0;
 
@@ -1222,6 +1223,7 @@ body {
       currentLayoutMap = layoutMap;
     }
     updateSvgView();
+    if (!initialFitDone && !userAdjustedView && currentTree) { initialFitDone = true; fitToTree(); }
     drawProfileBar();
     updateStatsReadout(view);
     if (selectedNodeId) highlightNode(selectedNodeId);
@@ -1745,7 +1747,16 @@ body {
 
   function resetView() {
     zoom = 1;
-    pan = { x: 0, y: 0 };
+    var bbox = null;
+    try { bbox = svg.getBBox(); } catch (e) { bbox = null; }
+    const cw = svgContainer.clientWidth || 800;
+    const ch = svgContainer.clientHeight || 600;
+    if (bbox && bbox.width && bbox.height) {
+      pan.x = bbox.x + bbox.width / 2 - cw / 2;
+      pan.y = bbox.y + bbox.height / 2 - ch / 2;
+    } else {
+      pan = { x: 0, y: 0 };
+    }
     updateSvgView();
   }
 
@@ -1852,6 +1863,7 @@ body {
     const dy = (e.clientY - dragStart.y) / zoom;
     pan.x = panStart.x - dx;
     pan.y = panStart.y - dy;
+    userAdjustedView = true;
     updateSvgView();
   });
   window.addEventListener('mouseup', function() { isDragging = false; });
@@ -1859,6 +1871,7 @@ body {
     e.preventDefault();
     const zoomFactor = e.deltaY > 0 ? 0.9 : 1.1;
     zoom = Math.min(Math.max(zoom * zoomFactor, 0.1), 5);
+    userAdjustedView = true;
     updateSvgView();
   }, { passive: false });
   svgContainer.addEventListener('dblclick', function(e) {

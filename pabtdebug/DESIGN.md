@@ -147,3 +147,10 @@ entry here.
   timeline 220px, inspector 280px, footer 60px) and the stats readout's home
   documented as the canvas toolbar, where it proves compression next to the tree.
   Vision-verified; no behavioural change.
+- **v5 — 2026-09-16:** Initial-view auto-fit + Reset recentering. The layout centres
+  the root at y=0, so the default viewBox (pan 0,0 at zoom 1) clipped the top of the
+  tree — the root card sat half off-canvas. The first render now auto-fits once
+  (`fitToTree`) unless the user has already panned/zoomed (`userAdjustedView`), and
+  Reset recentres the tree bounding box at zoom 1 instead of returning to the
+  clipping origin. Drag/wheel interactions set `userAdjustedView` so live re-renders
+  never fight the user's viewport.
