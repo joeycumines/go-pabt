@@ -101,6 +101,28 @@ body {
  width: 180px;
 }
 #search-input:focus { outline: none; border-color: var(--accent); }
+#search-count { font-size: 10px; color: var(--text-secondary); min-width: 52px; text-align: right; font-variant-numeric: tabular-nums; }
+#search-count.has-matches { color: var(--accent); }
+#conn-banner {
+ position: absolute;
+ top: 46px;
+ left: 50%;
+ transform: translateX(-50%);
+ display: none;
+ z-index: 6;
+ background: rgba(10,17,29,0.92);
+ border: 1px solid var(--failure);
+ color: var(--failure);
+ font-family: var(--font-ui);
+ font-size: 10px;
+ letter-spacing: 0.08em;
+ text-transform: uppercase;
+ padding: 6px 12px;
+ border-radius: 4px;
+ pointer-events: none;
+}
+#conn-banner.stale { border-color: var(--running); color: var(--running); }
+#tree-svg.stale { opacity: 0.45; transition: opacity 0.4s; }
 #header-right { display: flex; align-items: center; gap: 8px; }
 .btn {
  background: var(--bg-card);
@@ -434,6 +456,10 @@ body {
     <div id="search-wrap">
       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color:#888;vertical-align:middle;"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
       <input id="search-input" type="text" placeholder="Search nodes..." autocomplete="off">
+      <span id="search-count" title="Matches in the current tree"></span>
+      <button class="btn" id="search-prev" title="Previous match (Shift+Enter)" style="padding:2px 6px;">&#8593;</button>
+      <button class="btn" id="search-next" title="Next match (Enter)" style="padding:2px 6px;">&#8595;</button>
+      <button class="btn" id="search-clear" title="Clear search (Escape)" style="padding:2px 6px;">&#10005;</button>
     </div>
     <div id="header-right">
       <button class="btn" id="btn-save" title="Save Session (File System Access API or download)">Save</button>
@@ -472,6 +498,7 @@ body {
     </div>
     <div id="svg-container">
       <svg id="tree-svg" xmlns="http://www.w3.org/2000/svg"></svg>
+      <div id="conn-banner" role="status"></div>
     </div>
     <div id="tooltip" class="tooltip"></div>
   </main>
@@ -586,7 +613,9 @@ body {
   let profileCache = null, profileCacheIter = null;
   let lastSeq = 0;
   let serverOldestIter = null, evictedNoticeShown = false;
+  let searchMatches = [], searchMatchIdx = -1;
   let currentPlanId = null;
+  let lastEventAt = Date.now(), disconnectedAt = null, connProbeTimer = null;
   const planSelect = document.getElementById('plan-select');
   const planActivity = document.getElementById('plan-activity');
   const planState = {};
@@ -833,6 +862,30 @@ body {
       })
       .catch(function() {});
   }
+  function setConnBanner(kind, text) {
+    var b = document.getElementById('conn-banner');
+    if (!b) return;
+    if (!kind) { b.style.display = 'none'; b.textContent = ''; b.className = ''; return; }
+    b.textContent = text;
+    b.className = (kind === 'stale') ? 'stale' : '';
+    b.style.display = 'block';
+  }
+  function scheduleConnProbe() {
+    if (connProbeTimer) return;
+    connProbeTimer = setTimeout(function() {
+      connProbeTimer = null;
+      var idle = Date.now() - lastEventAt;
+      var b = document.getElementById('conn-banner');
+      if (disconnectedAt == null && liveMode && idle > 10000) {
+        setConnBanner('stale', 'Data stale \u2014 no events for ' + Math.round(idle / 1000) + 's');
+        svg.classList.add('stale');
+      } else if (disconnectedAt == null && b && b.className === 'stale') {
+        setConnBanner(null);
+        svg.classList.remove('stale');
+      }
+      scheduleConnProbe();
+    }, 2000);
+  }
   function startSSE(planId) {
     const url = window.location.pathname.replace(/\/ui$/, '/plans/' + encodeURIComponent(planId) + '/events');
     eventSource = new EventSource(url);
@@ -842,6 +895,11 @@ body {
       connStatus.textContent = 'Connected';
       reconnectDelay = 1000;
       lastSeq = 0;
+      disconnectedAt = null;
+      lastEventAt = Date.now();
+      setConnBanner(null);
+      svg.classList.remove('stale');
+      scheduleConnProbe();
     };
     eventSource.onmessage = function(e) {
       const event = JSON.parse(e.data);
@@ -851,6 +909,7 @@ body {
         connStatus.textContent = 'Events missed (seq ' + lastSeq + ' to ' + event.seq + ')';
       }
       lastSeq = event.seq || 0;
+      lastEventAt = Date.now();
       if (event.oldestIteration != null) serverOldestIter = event.oldestIteration;
       addTimelineEvent(event);
       if (liveMode) {
@@ -898,10 +957,14 @@ body {
     };
     eventSource.onerror = function() {
       connDot.classList.remove('connected');
-      connStatus.textContent = 'Reconnecting in ' + (reconnectDelay/1000) + 's...';
+      disconnectedAt = Date.now();
+      connStatus.textContent = 'Disconnected';
+      setConnBanner('disconnected', 'Server disconnected \u2014 last iteration ' + (currentIteration != null ? currentIteration : '?') + ' \u2014 reconnecting');
+      svg.classList.add('stale');
       eventSource.close();
       setTimeout(function() {
         reconnectDelay = Math.min(reconnectDelay * 2, 30000);
+        connStatus.textContent = 'Reconnecting in ' + (reconnectDelay/1000) + 's...';
         connect();
       }, reconnectDelay);
     };
@@ -1342,6 +1405,12 @@ body {
     updateStatsReadout(view);
     if (selectedNodeId) highlightNode(selectedNodeId);
     if (highlightedIds.size) highlightSearch();
+    if (searchInput.value.trim() && lastRawTree) {
+      searchMatches = findNodesByName(lastRawTree, searchInput.value.trim().toLowerCase());
+      highlightedIds = new Set(searchMatches);
+      if (searchMatchIdx >= searchMatches.length) searchMatchIdx = Math.max(0, searchMatches.length - 1);
+      updateSearchCount();
+    }
   }
 
   function updateNodeGroup(group, newNode, layoutMap) {
@@ -1931,34 +2000,66 @@ body {
     return res;
   }
 
+  function panToNodeId(id) {
+    const el = document.getElementById(safeId(id));
+    if (!el) return;
+    const rect = el.getBBox();
+    const cw = svgContainer.clientWidth || 800;
+    const ch = svgContainer.clientHeight || 600;
+    pan.x = rect.x - cw / (zoom * 2) + NODE_W / 2;
+    pan.y = rect.y - ch / (zoom * 2) + NODE_H / 2;
+    updateSvgView();
+  }
+  function updateSearchCount() {
+    const el = document.getElementById('search-count');
+    if (!el) return;
+    if (!searchInput.value.trim()) { el.textContent = ''; el.classList.remove('has-matches'); return; }
+    if (!searchMatches.length) { el.textContent = '0 matches'; el.classList.remove('has-matches'); return; }
+    el.textContent = (searchMatchIdx + 1) + '/' + searchMatches.length;
+    el.classList.add('has-matches');
+  }
+  function cycleSearchMatch(delta) {
+    if (!searchMatches.length) return;
+    searchMatchIdx = (searchMatchIdx + delta + searchMatches.length) % searchMatches.length;
+    panToNodeId(searchMatches[searchMatchIdx]);
+    updateSearchCount();
+  }
+  function clearSearch() {
+    searchInput.value = '';
+    highlightedIds.clear();
+    searchMatches = []; searchMatchIdx = -1;
+    if (searchReveal.size) { searchReveal.clear(); bumpView(); renderTree(lastRawTree); }
+    svg.querySelectorAll('.node-ring.highlight').forEach(r => r.classList.remove('highlight'));
+    updateSearchCount();
+  }
   let searchDebounce = null;
   searchInput.addEventListener('input', function() {
     clearTimeout(searchDebounce);
     searchDebounce = setTimeout(function() {
       const q = searchInput.value.trim().toLowerCase();
       highlightedIds.clear();
+      searchMatches = []; searchMatchIdx = -1;
       if (!q || !currentTree) {
         if (searchReveal.size) { searchReveal.clear(); bumpView(); renderTree(lastRawTree); }
         svg.querySelectorAll('.node-ring.highlight').forEach(r => r.classList.remove('highlight'));
+        updateSearchCount();
         return;
       }
-      highlightedIds = new Set(findNodesByName(lastRawTree || currentTree, q));
+      searchMatches = findNodesByName(lastRawTree || currentTree, q);
+      highlightedIds = new Set(searchMatches);
       if (revealAncestors(highlightedIds)) { bumpView(); renderTree(lastRawTree); }
       highlightSearch();
-      if (highlightedIds.size) {
-        const firstId = Array.from(highlightedIds)[0];
-        const el = document.getElementById(safeId(firstId));
-        if (el) {
-          const rect = el.getBBox();
-          const cw = svgContainer.clientWidth || 800;
-          const ch = svgContainer.clientHeight || 600;
-          pan.x = rect.x - cw / (zoom * 2) + NODE_W / 2;
-          pan.y = rect.y - ch / (zoom * 2) + NODE_H / 2;
-          updateSvgView();
-        }
-      }
+      if (searchMatches.length) { searchMatchIdx = 0; panToNodeId(searchMatches[0]); }
+      updateSearchCount();
     }, 300);
   });
+  searchInput.addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') { e.preventDefault(); cycleSearchMatch(e.shiftKey ? -1 : 1); }
+    else if (e.key === 'Escape') { e.preventDefault(); clearSearch(); searchInput.blur(); }
+  });
+  document.getElementById('search-next').addEventListener('click', function() { cycleSearchMatch(1); });
+  document.getElementById('search-prev').addEventListener('click', function() { cycleSearchMatch(-1); });
+  document.getElementById('search-clear').addEventListener('click', clearSearch);
 
   svgContainer.addEventListener('mousedown', function(e) {
     if (e.button === 0 || e.button === 1) {
