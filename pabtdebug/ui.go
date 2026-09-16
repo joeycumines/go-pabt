@@ -2055,7 +2055,9 @@ body {
   });
   searchInput.addEventListener('keydown', function(e) {
     if (e.key === 'Enter') { e.preventDefault(); cycleSearchMatch(e.shiftKey ? -1 : 1); }
-    else if (e.key === 'Escape') { e.preventDefault(); clearSearch(); searchInput.blur(); }
+    else if (e.key === 'ArrowDown') { e.preventDefault(); cycleSearchMatch(1); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); cycleSearchMatch(-1); }
+    else if (e.key === 'Escape') { e.preventDefault(); clearSearch(); this.blur(); }
   });
   document.getElementById('search-next').addEventListener('click', function() { cycleSearchMatch(1); });
   document.getElementById('search-prev').addEventListener('click', function() { cycleSearchMatch(-1); });

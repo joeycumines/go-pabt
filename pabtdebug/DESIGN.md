@@ -176,3 +176,7 @@ entry here.
   `setTimeout` chain (no `setInterval`) to preserve the `setInterval == 0` harness
   invariant. Vision-verified switching harbor-bot-0 → harbor-bot-2; zero non-favicon
   console errors.
+- **v8 — 2026-09-17:** Search match navigation keys. ArrowDown / ArrowUp now cycle
+  matches in addition to Enter / Shift+Enter (the search-results acceptance requires
+  arrow-key cycling); Escape clears and blurs. Count badge, prev/next buttons and
+  live recompute-on-render unchanged from v7-era landing.
