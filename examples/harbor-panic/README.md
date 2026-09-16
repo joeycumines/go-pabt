@@ -225,7 +225,7 @@ Unit tests prove each `D` fix; Harbor proves they compose. Specifically:
 
 ## 7. Known Trade-offs (Disclosed, Not Hidden)
 
-- `Tracker.deltaStore` is uncapped — harbor's 1050 ticks hold 1050 deltas in RAM (treeStore capped at 100 keeps head low, but delta chain not yet trimmed; rearch doc `P9 persistent vectors` would fix). Documented in `WIP.md` traps, acceptable because delta payload is small and overflow covers history.
+- Retention stores are capped by entry count AND by content budget (`maxTreeNodes` 6000 retained tree nodes, `maxDeltaNodes` 2000 cloned delta nodes, Hub replay 1 MiB): once a budget binds, older timeline snapshots evict sooner and the UI reports them via its evicted-iteration notice instead of silently gap-ing. The harbor example additionally sets `debug.SetMemoryLimit(256MiB)` + `SetGCPercent(50)` when the debug server is enabled, bounding RSS for sustained sessions.
 - Harbor sim is `//go:build example`-gated, so `go test ./...` (without `-tags example`) does not run `examples/harbor-panic` tests — matches `tcell-pick-and-place` convention and keeps CI root clean; harbor-specific tests are `<name>_test.go` with same build tag.
 - Tiny profile benchmark (7 nodes) extrapolates to 1000 nodes (~0.4 ms) — still sub-ms per acceptance, but harbor pushes a real 300-node profile at handheld `time curl`.
 

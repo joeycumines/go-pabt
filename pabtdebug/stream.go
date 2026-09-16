@@ -36,7 +36,7 @@ func NewHub() *Hub {
 		clients:           make(map[chan string]struct{}),
 		maxReplay:         50,
 		replayBuffer:      make([]replayEntry, 0, 50),
-		maxReplayBytes:    8 << 20,
+		maxReplayBytes:    1 << 20,
 		keepAliveInterval: 15 * time.Second,
 	}
 }

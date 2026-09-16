@@ -34,8 +34,8 @@ import (
 
 const defaultMaxEvents = 1000
 const defaultMaxTrees = 100
-const defaultMaxTreeNodes = 60000
-const defaultMaxDeltaNodes = 30000
+const defaultMaxTreeNodes = 6000
+const defaultMaxDeltaNodes = 2000
 
 const defaultKeyframeInterval = 20
 
@@ -284,25 +284,25 @@ func (t *Tracker) Track(status bt.Status, err error) {
 			if delta != nil {
 				delta.BaseIteration = iter - 1
 				delta.TargetIteration = iter
-			// Store delta for potential reconstruction tests (optional).
-			if t.deltaStore != nil {
-				added := countDeltaNodes(delta)
-				t.deltaStore[iter] = delta
-				t.deltaOrder = append(t.deltaOrder, iter)
-				t.deltaNodes += added
-				// Bound deltaStore by entry count AND by total cloned-node budget.
-				// Iterations advance by exactly 1 per Track, so the oldest key is
-				// deltaOrder[0]; evicting from the front keeps both caps satisfied
-				// and stops the unbounded RSS climb as the plan tree grows.
-				for t.maxEvents > 0 && len(t.deltaOrder) > t.maxEvents || t.maxDeltaNodes > 0 && t.deltaNodes > t.maxDeltaNodes && len(t.deltaOrder) > 1 {
-					oldIter := t.deltaOrder[0]
-					if od, ok := t.deltaStore[oldIter]; ok {
-						t.deltaNodes -= countDeltaNodes(od)
-						delete(t.deltaStore, oldIter)
+				// Store delta for potential reconstruction tests (optional).
+				if t.deltaStore != nil {
+					added := countDeltaNodes(delta)
+					t.deltaStore[iter] = delta
+					t.deltaOrder = append(t.deltaOrder, iter)
+					t.deltaNodes += added
+					// Bound deltaStore by entry count AND by total cloned-node budget.
+					// Iterations advance by exactly 1 per Track, so the oldest key is
+					// deltaOrder[0]; evicting from the front keeps both caps satisfied
+					// and stops the unbounded RSS climb as the plan tree grows.
+					for t.maxEvents > 0 && len(t.deltaOrder) > t.maxEvents || t.maxDeltaNodes > 0 && t.deltaNodes > t.maxDeltaNodes && len(t.deltaOrder) > 1 {
+						oldIter := t.deltaOrder[0]
+						if od, ok := t.deltaStore[oldIter]; ok {
+							t.deltaNodes -= countDeltaNodes(od)
+							delete(t.deltaStore, oldIter)
+						}
+						t.deltaOrder = t.deltaOrder[1:]
 					}
-					t.deltaOrder = t.deltaOrder[1:]
 				}
-			}
 			}
 			sseEvent = SSEEvent{
 				Iteration:       iter,
@@ -544,6 +544,20 @@ func (t *Tracker) WithMaxTrees(n int) *Tracker {
 	return t
 }
 
+func (t *Tracker) WithMaxTreeNodes(n int) *Tracker {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.maxTreeNodes = n
+	return t
+}
+
+func (t *Tracker) WithMaxDeltaNodes(n int) *Tracker {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.maxDeltaNodes = n
+	return t
+}
+
 func (t *Tracker) checkBreakpoints(event *TickEvent) *Breakpoint {
 	if event.Tree == nil {
 		return nil
@@ -637,9 +651,28 @@ func buildTreeFromMetadata(m bt.Metadata, path string) *TreeNode {
 		return true
 	})
 
+	propagatePostConditions(tn)
+
 	tn.StructureHash = fmt.Sprintf("%s:%d", tn.NodeType, len(tn.Children))
 
 	return tn
+}
+
+func propagatePostConditions(tn *TreeNode) {
+	if tn == nil || tn.PostCondition != "" {
+		return
+	}
+	for i := range tn.Children {
+		if tn.Children[i].NodeType != pabt.NodeTypePPAPost.String() {
+			continue
+		}
+		if c := tn.Children[i].Condition; c != "" {
+			tn.PostCondition = c
+		} else {
+			tn.PostCondition = tn.Children[i].Name
+		}
+		return
+	}
 }
 
 func countDeltaNodes(d *TreeDelta) int {

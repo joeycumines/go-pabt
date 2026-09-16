@@ -26,6 +26,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"runtime/debug"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -103,6 +104,12 @@ func main() {
 
 	if len(actors) < 4 {
 		log.Fatalf("expected 4 actors, got %d", len(actors))
+	}
+
+	if debugAddr != "" {
+		// Cap RSS for sustained debug sessions: trade GC CPU for a bounded heap.
+		debug.SetGCPercent(50)
+		debug.SetMemoryLimit(256 << 20)
 	}
 
 	var debugServer *pabtdebug.Server
