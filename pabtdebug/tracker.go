@@ -268,10 +268,17 @@ func (t *Tracker) Track(status bt.Status, err error) {
 			if delta != nil {
 				delta.BaseIteration = iter - 1
 				delta.TargetIteration = iter
-				// Store delta for potential reconstruction tests (optional).
-				if t.deltaStore != nil {
-					t.deltaStore[iter] = delta
+			// Store delta for potential reconstruction tests (optional).
+			if t.deltaStore != nil {
+				t.deltaStore[iter] = delta
+				// Bound deltaStore to the maxEvents sliding window: iterations
+				// advance by exactly 1 per Track, so deleting the key maxEvents
+				// behind gives every stored key a deletion turn, keeping at most
+				// maxEvents entries alive (unbounded growth was the RSS climb).
+				if t.maxEvents > 0 {
+					delete(t.deltaStore, iter-t.maxEvents)
 				}
+			}
 			}
 			sseEvent = SSEEvent{
 				Iteration:       iter,
