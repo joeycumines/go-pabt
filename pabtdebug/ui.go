@@ -163,7 +163,8 @@ body {
 .tl-duration { color: var(--text-secondary); margin-left: auto; }
 #main {
  grid-area: main;
- background: var(--bg-main);
+ /* transparent so the body instrument-grid + radial glow (DESIGN.md §2) read through */
+ background: transparent;
  position: relative;
  overflow: hidden;
  display: flex;

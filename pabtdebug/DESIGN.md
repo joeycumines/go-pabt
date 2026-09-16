@@ -70,9 +70,12 @@ row pitch 70. Gaps: 8 inline / 16 stacked / 24 between regions.
 
 ## 6. Layout regions
 
-Header 44px (brand · connection · plan select + search · actions). Timeline left 240px.
-Canvas centre. Inspector right 300px. Footer 40px (profile strip, legend, and the stats
-readout: total nodes / rendered cards / raw depth).
+Header 40px (brand · connection · search · actions). Timeline left 220px.
+Canvas centre with its own toolbar (Fit / Reset / Expand all / Collapse all · stats
+readout · zoom) — the readout lives there because it proves compression exactly where
+the tree is visible. Inspector right 280px. Footer 60px (profile strip + status
+legend). The canvas itself is transparent so the body's instrument-grid and radial
+glow (§2) read through behind the tree; all other regions keep opaque panel fills.
 
 ## 7. Tree rendering rules
 
@@ -137,3 +140,10 @@ entry here.
   node._level= 0, setInterval 0. Still outstanding (next increments): 404-gated
   timeline (serverOldestIter), multi-plan selector dropdown, connection-resilience
   indicator (reconnect logic exists but chrome incomplete).
+- **v4 — 2026-09-16:** Canvas occlusion fix + spec reconciliation. `#main` painted an
+  opaque `--bg-main` sheet over the body's instrument-grid / radial glow, so the §2
+  atmosphere never showed behind the tree; the canvas is now transparent (its toolbar
+  keeps `--bg-panel`). §6 geometry corrected to the measured values (header 40px,
+  timeline 220px, inspector 280px, footer 60px) and the stats readout's home
+  documented as the canvas toolbar, where it proves compression next to the tree.
+  Vision-verified; no behavioural change.
