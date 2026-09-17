@@ -315,6 +315,7 @@ body {
  position: relative;
  overflow: hidden;
  cursor: grab;
+ touch-action: none;
 }
 #svg-container:active { cursor: grabbing; }
 #tree-svg {
@@ -433,7 +434,8 @@ body {
   font-family: var(--font-mono);
   pointer-events: none;
   z-index: 1000;
-  max-width: 240px;
+  max-width: 320px;
+  line-height: 1.45;
   box-shadow: 0 8px 24px rgba(0,0,0,0.55);
   display: none;
 }
@@ -491,13 +493,15 @@ body {
  opacity: 0.85;
 }
 .pill { cursor: pointer; }
-.pill circle { fill: var(--bg-card); stroke: var(--border); stroke-width: 1; transition: stroke 0.15s; }
-.pill:hover circle { stroke: var(--accent); }
+.pill .cap { fill: var(--bg-card); stroke: var(--border); stroke-width: 1.25; transition: stroke 0.15s, fill 0.15s; }
+.pill:hover .cap { stroke: var(--accent); fill: rgba(83,216,251,0.12); }
 .pill text {
  font-family: var(--font-mono);
- font-size: 8.5px;
- fill: var(--text-secondary);
+ font-size: 9px;
+ font-weight: 600;
+ fill: var(--text-primary);
  text-anchor: middle;
+ dominant-baseline: central;
  pointer-events: none;
 }
 .pill:hover text { fill: var(--accent); }
@@ -551,6 +555,44 @@ body {
 .plan-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-secondary); opacity: 0.4; cursor: pointer; }
 .plan-dot.ticking { background: var(--running); opacity: 1; animation: statusPulse 1.4s ease-in-out infinite; }
 .plan-dot.current { opacity: 1; outline: 1px solid var(--accent); outline-offset: 1px; }
+#minimap {
+ position: absolute;
+ bottom: 10px;
+ right: 10px;
+ width: 140px;
+ height: 100px;
+ background: rgba(10,17,29,0.88);
+ border: 1px solid var(--border);
+ border-radius: 6px;
+ overflow: hidden;
+ z-index: 40;
+ box-shadow: 0 8px 24px rgba(0,0,0,0.55);
+}
+#minimap-svg { display: block; }
+#minimap-viewport {
+ position: absolute;
+ border: 1px solid var(--accent);
+ background: rgba(83,216,251,0.10);
+ pointer-events: none;
+ box-sizing: border-box;
+}
+#shortcuts-overlay {
+ position: fixed;
+ inset: 0;
+ background: rgba(4,7,13,0.72);
+ z-index: 2000;
+ align-items: center;
+ justify-content: center;
+}
+#shortcuts-panel {
+ background: var(--bg-panel);
+ border: 1px solid var(--border);
+ border-radius: 8px;
+ padding: 16px 20px;
+ min-width: 340px;
+ max-width: 440px;
+ box-shadow: 0 16px 48px rgba(0,0,0,0.6);
+}
 </style>
 </head>
 <body>
@@ -621,6 +663,10 @@ body {
     <div id="svg-container">
       <svg id="tree-svg" xmlns="http://www.w3.org/2000/svg"></svg>
       <div id="conn-banner" role="status"></div>
+      <div id="minimap" title="Overview — click to navigate">
+        <svg id="minimap-svg" width="140" height="100"></svg>
+        <div id="minimap-viewport"></div>
+      </div>
     </div>
     <div id="tooltip" class="tooltip"></div>
   </main>
@@ -696,6 +742,32 @@ body {
       <button class="btn" id="btn-diff-cancel">Cancel</button>
       <button class="btn" id="btn-diff-run">Run</button>
     </div>
+  </div>
+</div>
+
+<div id="shortcuts-overlay" style="display:none;">
+  <div id="shortcuts-panel">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+      <strong style="font-family:var(--font-mono);font-size:12px;color:var(--accent);letter-spacing:0.1em;">KEYBOARD SHORTCUTS</strong>
+      <button class="btn" id="btn-close-shortcuts" style="padding:2px 8px;">&#10005;</button>
+    </div>
+    <table style="width:100%;border-collapse:collapse;font-family:var(--font-mono);font-size:10px;">
+      <tr><td style="padding:3px 8px;color:var(--accent);">?</td><td style="padding:3px 8px;color:var(--text-secondary);">Toggle this overlay</td></tr>
+      <tr><td style="padding:3px 8px;color:var(--accent);">drag / scroll</td><td style="padding:3px 8px;color:var(--text-secondary);">Pan the canvas</td></tr>
+      <tr><td style="padding:3px 8px;color:var(--accent);">pinch / &#8984;+scroll</td><td style="padding:3px 8px;color:var(--text-secondary);">Zoom at cursor</td></tr>
+      <tr><td style="padding:3px 8px;color:var(--accent);">+ / &#8722; / 0</td><td style="padding:3px 8px;color:var(--text-secondary);">Zoom in / out / reset view</td></tr>
+      <tr><td style="padding:3px 8px;color:var(--accent);">Space</td><td style="padding:3px 8px;color:var(--text-secondary);">Play/pause playback</td></tr>
+      <tr><td style="padding:3px 8px;color:var(--accent);">L</td><td style="padding:3px 8px;color:var(--text-secondary);">Toggle live mode</td></tr>
+      <tr><td style="padding:3px 8px;color:var(--accent);">&#8592; / &#8594;</td><td style="padding:3px 8px;color:var(--text-secondary);">Step timeline one iteration</td></tr>
+      <tr><td style="padding:3px 8px;color:var(--accent);">Home / End</td><td style="padding:3px 8px;color:var(--text-secondary);">First / last iteration</td></tr>
+      <tr><td style="padding:3px 8px;color:var(--accent);">F</td><td style="padding:3px 8px;color:var(--text-secondary);">Jump to next failure</td></tr>
+      <tr><td style="padding:3px 8px;color:var(--accent);">C</td><td style="padding:3px 8px;color:var(--text-secondary);">Jump to next structural change</td></tr>
+      <tr><td style="padding:3px 8px;color:var(--accent);">E</td><td style="padding:3px 8px;color:var(--text-secondary);">Expand all nodes</td></tr>
+      <tr><td style="padding:3px 8px;color:var(--accent);">W</td><td style="padding:3px 8px;color:var(--text-secondary);">Toggle Why? causal overlay</td></tr>
+      <tr><td style="padding:3px 8px;color:var(--accent);">1&#8211;4</td><td style="padding:3px 8px;color:var(--text-secondary);">Heat mode: Off / Heat / Fail / Recent</td></tr>
+      <tr><td style="padding:3px 8px;color:var(--accent);">Enter / Shift+Enter</td><td style="padding:3px 8px;color:var(--text-secondary);">Next / previous search match</td></tr>
+      <tr><td style="padding:3px 8px;color:var(--accent);">Escape</td><td style="padding:3px 8px;color:var(--text-secondary);">Clear search / close overlay</td></tr>
+    </table>
   </div>
 </div>
 
@@ -1736,6 +1808,17 @@ body {
     else if (e.key === 'End') { e.preventDefault(); if (timelineEvents.length) jumpToIteration(timelineEvents[timelineEvents.length - 1].iteration); }
     else if (e.key === 'f' || e.key === 'F') { e.preventDefault(); jumpToNextFailure(); }
     else if (e.key === 'c' && !e.ctrlKey && !e.metaKey) { e.preventDefault(); jumpToNextChange(); }
+    else if (e.key === '?') { e.preventDefault(); toggleShortcutsOverlay(); }
+    else if (e.key === 'Escape') {
+      const ov = document.getElementById('shortcuts-overlay');
+      if (ov && ov.style.display !== 'none') { ov.style.display = 'none'; e.preventDefault(); }
+    }
+    else if (e.key === '+' || e.key === '=') { e.preventDefault(); const r = svgContainer.getBoundingClientRect(); zoomAtPoint(r.left + r.width / 2, r.top + r.height / 2, 1.2); }
+    else if (e.key === '-' || e.key === '_') { e.preventDefault(); const r = svgContainer.getBoundingClientRect(); zoomAtPoint(r.left + r.width / 2, r.top + r.height / 2, 1 / 1.2); }
+    else if (e.key === '0') { e.preventDefault(); resetView(); }
+    else if (e.key === 'e' || e.key === 'E') { e.preventDefault(); expandAllMode = true; bumpView(); renderTree(lastRawTree); }
+    else if (e.key === 'w' || e.key === 'W') { e.preventDefault(); document.getElementById('btn-why').click(); }
+    else if (e.key >= '1' && e.key <= '4') { const bs = document.querySelectorAll('.btn-heat'); const b = bs[Number(e.key) - 1]; if (b) b.click(); }
   });
 
   function stepIteration(delta) {
@@ -1876,8 +1959,10 @@ body {
       }
     }
   }
+  let lastRenderMs = 0;
   function renderTree(tree) {
     if (!tree) return;
+    const t0 = performance.now();
     lastRawTree = tree;
     const view = buildViewModel(tree);
     const layoutMap = buildLayoutMap(view);
@@ -1912,11 +1997,12 @@ body {
     updateSvgView();
     updateMinimap();
     if (!initialFitDone && !userAdjustedView && currentTree) { initialFitDone = true; fitToTree(); }
-    drawProfileBar();
+    scheduleIdleWork(function() { drawProfileBar(); });
     drawCausalOverlay();
-    drawScrubStrip();
+    scheduleIdleWork(function() { drawScrubStrip(); });
     applyHeatGlow();
     updateStatsReadout(view);
+    lastRenderMs = performance.now() - t0;
     if (selectedNodeId) highlightNode(selectedNodeId);
     if (highlightedIds.size) highlightSearch();
     if (searchInput.value.trim() && lastRawTree) {
@@ -2001,10 +2087,11 @@ body {
 
     group.querySelectorAll('.node-badge:not([data-glyph])').forEach(function(b){ b.remove(); });
     group.querySelectorAll('.node-detail').forEach(function(d){ d.remove(); });
+    group.querySelectorAll('.pill').forEach(function(p){ p.remove(); });
 
     if (hasEffects) {
       const eb = document.createElementNS(SVG_NS, 'circle');
-      eb.setAttribute('cx', x + NODE_W - 26);
+      eb.setAttribute('cx', x + 16);
       eb.setAttribute('cy', y + NODE_H - 12);
       eb.setAttribute('r', '3');
       eb.setAttribute('fill', cssVar('--success', '#46d68c'));
@@ -2013,7 +2100,7 @@ body {
     }
     if (hasCondition) {
       const cb = document.createElementNS(SVG_NS, 'rect');
-      cb.setAttribute('x', x + NODE_W - 38);
+      cb.setAttribute('x', x + 26);
       cb.setAttribute('y', y + NODE_H - 15);
       cb.setAttribute('width', '6');
       cb.setAttribute('height', '6');
@@ -2023,6 +2110,11 @@ body {
     }
 
     appendDetailText(group, newNode, x, y, zoomTier());
+    const vwU = newNode._view;
+    if (vwU) {
+      const pgU = makePill(newNode, vwU, x, y);
+      if (pgU) group.appendChild(pgU);
+    }
 
     const newGroup = group.cloneNode(true);
     group.parentNode.replaceChild(newGroup, group);
@@ -2156,6 +2248,49 @@ body {
       group.appendChild(dt);
     }
   }
+  function makePill(node, vw, x, y) {
+    let pillLabel = null;
+    if (vw.kind === 'chain') pillLabel = '\u00d7' + vw.chainCount;
+    else if (vw.hiddenCount > 0) pillLabel = '+' + vw.hiddenCount;
+    else if (vw.kind === 'branch') pillLabel = '\u2212';
+    if (!pillLabel) return null;
+    const pw = Math.max(30, pillLabel.length * 6.2 + 16);
+    const ph = 20;
+    const px = x + NODE_W - pw - 6;
+    const py = y + NODE_H - ph - 6;
+    const pg = document.createElementNS(SVG_NS, 'g');
+    pg.setAttribute('class', 'pill');
+    const hit = document.createElementNS(SVG_NS, 'rect');
+    hit.setAttribute('x', px - 5);
+    hit.setAttribute('y', py - 5);
+    hit.setAttribute('width', pw + 10);
+    hit.setAttribute('height', ph + 10);
+    hit.setAttribute('fill', 'transparent');
+    pg.appendChild(hit);
+    const pr = document.createElementNS(SVG_NS, 'rect');
+    pr.setAttribute('class', 'cap');
+    pr.setAttribute('x', px);
+    pr.setAttribute('y', py);
+    pr.setAttribute('width', pw);
+    pr.setAttribute('height', ph);
+    pr.setAttribute('rx', ph / 2);
+    pr.setAttribute('ry', ph / 2);
+    const pt = document.createElementNS(SVG_NS, 'text');
+    pt.setAttribute('x', px + pw / 2);
+    pt.setAttribute('y', py + ph / 2);
+    pt.textContent = pillLabel;
+    pg.appendChild(pr);
+    pg.appendChild(pt);
+    pg.addEventListener('click', function(e) {
+      e.stopPropagation();
+      if (vw.kind === 'chain') unwoundHeads.add(node.id);
+      else if (vw.hiddenCount > 0) { userExpanded.add(vw.tailId); userCollapsed.delete(vw.tailId); }
+      else { userCollapsed.add(vw.tailId); userExpanded.delete(vw.tailId); }
+      bumpView();
+      renderTree(lastRawTree);
+    });
+    return pg;
+  }
   function drawNodes(node, g, layoutMap) {
     const lm = layoutMap ? layoutMap[node.id] : null;
     const absX = lm ? lm.absX : node._absX;
@@ -2269,7 +2404,7 @@ body {
 
     if (hasEffects) {
       var eb = document.createElementNS(SVG_NS, 'circle');
-      eb.setAttribute('cx', x + NODE_W - 26);
+      eb.setAttribute('cx', x + 16);
       eb.setAttribute('cy', y + NODE_H - 12);
       eb.setAttribute('r', '3');
       eb.setAttribute('fill', cssVar('--success', '#46d68c'));
@@ -2278,7 +2413,7 @@ body {
     }
     if (hasCondition) {
       var cb = document.createElementNS(SVG_NS, 'rect');
-      cb.setAttribute('x', x + NODE_W - 38);
+      cb.setAttribute('x', x + 26);
       cb.setAttribute('y', y + NODE_H - 15);
       cb.setAttribute('width', '6');
       cb.setAttribute('height', '6');
@@ -2289,44 +2424,8 @@ body {
 
     const vw = node._view;
     if (vw) {
-      let metaTxt = '';
-      if (vw.kind === 'chain') metaTxt = '\u00d7' + vw.chainCount;
-      if (vw.hiddenCount > 0) metaTxt += (metaTxt ? ' ' : '') + '+' + vw.hiddenCount;
-      if (metaTxt) {
-        const mt = document.createElementNS(SVG_NS, 'text');
-        mt.setAttribute('x', x + 12);
-        mt.setAttribute('y', y + NODE_H - 8);
-        mt.setAttribute('class', 'node-meta');
-        mt.textContent = metaTxt;
-        group.appendChild(mt);
-      }
-      let pillLabel = null;
-      if (vw.kind === 'chain') pillLabel = '\u00d7' + vw.chainCount;
-      else if (vw.hiddenCount > 0) pillLabel = '+' + vw.hiddenCount;
-      else if (vw.kind === 'branch') pillLabel = '\u2212';
-      if (pillLabel) {
-        const pg = document.createElementNS(SVG_NS, 'g');
-        pg.setAttribute('class', 'pill');
-        const pc = document.createElementNS(SVG_NS, 'circle');
-        pc.setAttribute('cx', x + NODE_W - 12);
-        pc.setAttribute('cy', y + NODE_H - 12);
-        pc.setAttribute('r', '8');
-        const pt = document.createElementNS(SVG_NS, 'text');
-        pt.setAttribute('x', x + NODE_W - 12);
-        pt.setAttribute('y', y + NODE_H - 9);
-        pt.textContent = pillLabel;
-        pg.appendChild(pc);
-        pg.appendChild(pt);
-        pg.addEventListener('click', function(e) {
-          e.stopPropagation();
-          if (vw.kind === 'chain') unwoundHeads.add(node.id);
-          else if (vw.hiddenCount > 0) { userExpanded.add(vw.tailId); userCollapsed.delete(vw.tailId); }
-          else { userCollapsed.add(vw.tailId); userExpanded.delete(vw.tailId); }
-          bumpView();
-          renderTree(lastRawTree);
-        });
-        group.appendChild(pg);
-      }
+      const pg = makePill(node, vw, x, y);
+      if (pg) group.appendChild(pg);
     }
 
     appendDetailText(group, node, x, y, zoomTier());
@@ -2512,21 +2611,57 @@ body {
     });
   })();
 
+  function subtreeBreakdown(node) {
+    const counts = {};
+    let running = 0;
+    (function walk(n) {
+      if (n.nodeType) counts[n.nodeType] = (counts[n.nodeType] || 0) + 1;
+      if (n.status && n.status.LastStatus === 1) running++;
+      if (n.children) for (let i = 0; i < n.children.length; i++) walk(n.children[i]);
+    })(node);
+    const parts = Object.keys(counts).sort(function(a, b) { return counts[b] - counts[a]; }).slice(0, 4).map(function(k) { return counts[k] + ' ' + k; });
+    return { parts: parts, running: running, total: Object.keys(counts).reduce(function(s, k) { return s + counts[k]; }, 0) };
+  }
   function showTooltip(e, node) {
     const st = node.status ? statusToString(node.status.LastStatus) : 'Unknown';
-    tooltip.innerHTML = '<strong>' + escapeHtml(node.name || node.nodeType) + '</strong><br>' +
-                        '<span style="color:' + escapeAttr(STATUS_COLORS[node.status ? node.status.LastStatus : 0] || '#888') + '">' + escapeHtml(st) + '</span>' +
-                        (node.status ? ' x' + node.status.TickCount : '') +
-                        (node._view && node._view.chainCount > 1 ? '<br>\u00d7' + node._view.chainCount + ' compressed chain' : '') +
-                        (node._view && node._view.hiddenCount > 0 ? '<br>+' + node._view.hiddenCount + ' hidden nodes' : '');
+    const stColor = STATUS_COLORS[node.status ? node.status.LastStatus : 0] || '#888';
+    const role = node.nodeType || 'Unknown';
+    const vw = node._view;
+    let html = '<div style="font-weight:600;color:var(--text-primary);margin-bottom:3px;">' + escapeHtml(node.name || role) + '</div>';
+    html += '<div style="display:flex;gap:6px;align-items:center;margin-bottom:4px;">';
+    html += '<span style="background:' + escapeAttr(TYPE_COLORS[role] || '#50627a') + ';color:#fff;padding:1px 5px;border-radius:3px;font-size:9px;">' + escapeHtml(role) + '</span>';
+    html += '<span style="color:' + escapeAttr(stColor) + ';">' + escapeHtml(st) + '</span>';
+    if (node.status) html += '<span style="color:var(--text-secondary);">\u00d7' + node.status.TickCount + ' ticks</span>';
+    html += '</div>';
+    if (node.condition) html += '<div style="color:var(--type-pre);font-size:9.5px;">cond: ' + escapeHtml(truncate(node.condition, 40)) + '</div>';
+    if (node.postCondition && node.postCondition !== node.condition) html += '<div style="color:var(--type-ppa);font-size:9.5px;">post: ' + escapeHtml(truncate(node.postCondition, 40)) + '</div>';
+    if (node.effects && node.effects.length) html += '<div style="color:var(--success);font-size:9.5px;">eff: ' + escapeHtml(node.effects.map(function(ef) { return ef.key + '=' + ef.value; }).join(', ')) + '</div>';
+    if (vw && vw.kind === 'chain' && vw.chainCount > 1) html += '<div style="color:var(--text-secondary);font-size:9.5px;margin-top:3px;">\u00d7' + vw.chainCount + ' compressed chain (click pill to unwind)</div>';
+    if (vw && vw.hiddenCount > 0) {
+      const tail = findNode(lastRawTree || currentTree, vw.tailId) || node;
+      const bd = subtreeBreakdown(tail);
+      html += '<div style="color:var(--text-secondary);font-size:9.5px;margin-top:3px;">+' + vw.hiddenCount + ' hidden inside';
+      if (bd.parts.length) html += ': ' + escapeHtml(bd.parts.join(', '));
+      if (bd.running > 0) html += ' <span style="color:var(--running);">(' + bd.running + ' running)</span>';
+      html += '</div>';
+    }
+    if (vw && vw.onActive) html += '<div style="color:var(--accent);font-size:9.5px;margin-top:3px;">\u25b8 on active path</div>';
+    tooltip.innerHTML = html;
     tooltip.style.display = 'block';
     positionTooltip(e);
   }
   function hideTooltip() { tooltip.style.display = 'none'; }
   function positionTooltip(e) {
-    const rect = svgContainer.getBoundingClientRect();
-    tooltip.style.left = (e.clientX - rect.left + 12) + 'px';
-    tooltip.style.top = (e.clientY - rect.top + 12) + 'px';
+    const host = tooltip.offsetParent || svgContainer;
+    const rect = host.getBoundingClientRect();
+    let lx = e.clientX - rect.left + 14;
+    let ly = e.clientY - rect.top + 14;
+    const tw = tooltip.offsetWidth || 260;
+    const th = tooltip.offsetHeight || 90;
+    if (lx + tw > rect.width - 8) lx = e.clientX - rect.left - tw - 14;
+    if (ly + th > rect.height - 8) ly = e.clientY - rect.top - th - 14;
+    tooltip.style.left = Math.max(4, lx) + 'px';
+    tooltip.style.top = Math.max(4, ly) + 'px';
   }
 
   function highlightNode(id) {
@@ -2561,6 +2696,13 @@ body {
       if (currentTree) renderTree(currentTree);
       cullingRenderInProgress = false;
     });
+  }
+  function scheduleIdleWork(fn) {
+    if (typeof requestIdleCallback === 'function') {
+      requestIdleCallback(fn, { timeout: 200 });
+    } else {
+      setTimeout(fn, 16);
+    }
   }
   function updateSvgView() {
     const w = svgContainer.clientWidth || 800;
@@ -2748,13 +2890,87 @@ body {
     updateSvgView();
   });
   window.addEventListener('mouseup', function() { isDragging = false; });
-  svgContainer.addEventListener('wheel', function(e) {
-    e.preventDefault();
-    const zoomFactor = e.deltaY > 0 ? 0.9 : 1.1;
-    zoom = Math.min(Math.max(zoom * zoomFactor, 0.1), 5);
+  function zoomAtPoint(clientX, clientY, factor) {
+    const rect = svgContainer.getBoundingClientRect();
+    const vb = svg.getAttribute('viewBox');
+    if (!vb) { zoom = Math.min(Math.max(zoom * factor, 0.1), 5); userAdjustedView = true; updateSvgView(); return; }
+    const parts = vb.split(/[\s,]+/).map(Number);
+    if (parts.length !== 4) { zoom = Math.min(Math.max(zoom * factor, 0.1), 5); userAdjustedView = true; updateSvgView(); return; }
+    const vx = parts[0], vy = parts[1], vw = parts[2], vh = parts[3];
+    const worldX = vx + ((clientX - rect.left) / rect.width) * vw;
+    const worldY = vy + ((clientY - rect.top) / rect.height) * vh;
+    const newZoom = Math.min(Math.max(zoom * factor, 0.1), 5);
+    const newVw = rect.width / newZoom;
+    const newVh = rect.height / newZoom;
+    pan.x = worldX - ((clientX - rect.left) / rect.width) * newVw;
+    pan.y = worldY - ((clientY - rect.top) / rect.height) * newVh;
+    zoom = newZoom;
     userAdjustedView = true;
     updateSvgView();
+  }
+  // Trackpad pinch arrives as ctrl/meta+wheel with small deltaY; plain scroll is pan.
+  svgContainer.addEventListener('wheel', function(e) {
+    e.preventDefault();
+    if (e.ctrlKey || e.metaKey) {
+      zoomAtPoint(e.clientX, e.clientY, Math.pow(0.99, e.deltaY));
+    } else {
+      pan.x += e.deltaX / zoom;
+      pan.y += e.deltaY / zoom;
+      userAdjustedView = true;
+      updateSvgView();
+    }
   }, { passive: false });
+  let gestureScale = 1;
+  svgContainer.addEventListener('gesturestart', function(e) { e.preventDefault(); gestureScale = 1; }, { passive: false });
+  svgContainer.addEventListener('gesturechange', function(e) {
+    e.preventDefault();
+    if (e.scale && e.scale > 0) {
+      zoomAtPoint(e.clientX, e.clientY, e.scale / gestureScale);
+      gestureScale = e.scale;
+    }
+  }, { passive: false });
+  svgContainer.addEventListener('gestureend', function() { gestureScale = 1; }, { passive: false });
+  let touchState = null;
+  svgContainer.addEventListener('touchstart', function(e) {
+    if (e.touches.length === 1) {
+      const t = e.touches[0];
+      touchState = { mode: 'pan', x: t.clientX, y: t.clientY };
+    } else if (e.touches.length === 2) {
+      const a = e.touches[0], b = e.touches[1];
+      touchState = { mode: 'pinch', dist: Math.hypot(b.clientX - a.clientX, b.clientY - a.clientY), cx: (a.clientX + b.clientX) / 2, cy: (a.clientY + b.clientY) / 2 };
+    } else {
+      touchState = null;
+    }
+  }, { passive: true });
+  svgContainer.addEventListener('touchmove', function(e) {
+    if (!touchState) return;
+    e.preventDefault();
+    if (touchState.mode === 'pan' && e.touches.length === 1) {
+      const t = e.touches[0];
+      pan.x -= (t.clientX - touchState.x) / zoom;
+      pan.y -= (t.clientY - touchState.y) / zoom;
+      touchState.x = t.clientX;
+      touchState.y = t.clientY;
+      userAdjustedView = true;
+      updateSvgView();
+    } else if (touchState.mode === 'pinch' && e.touches.length === 2) {
+      const a = e.touches[0], b = e.touches[1];
+      const dist = Math.hypot(b.clientX - a.clientX, b.clientY - a.clientY);
+      const cx = (a.clientX + b.clientX) / 2, cy = (a.clientY + b.clientY) / 2;
+      if (touchState.dist > 0 && dist > 0) zoomAtPoint(cx, cy, dist / touchState.dist);
+      pan.x -= (cx - touchState.cx) / zoom;
+      pan.y -= (cy - touchState.cy) / zoom;
+      touchState.dist = dist;
+      touchState.cx = cx;
+      touchState.cy = cy;
+      userAdjustedView = true;
+      updateSvgView();
+    }
+  }, { passive: false });
+  svgContainer.addEventListener('touchend', function(e) {
+    if (e.touches.length === 0) touchState = null;
+    else if (e.touches.length === 1) { const t = e.touches[0]; touchState = { mode: 'pan', x: t.clientX, y: t.clientY }; }
+  }, { passive: true });
   svgContainer.addEventListener('dblclick', function(e) {
     const target = e.target.closest('[data-id]');
     if (target) {
