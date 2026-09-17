@@ -20,6 +20,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"math/rand"
 	"strings"
 	"testing"
 	"time"
@@ -502,4 +503,41 @@ func TestHarborFuzz(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestChaos(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	harbor := hsim.NewHarbor(0, 3.1, 42)
+	rng := rand.New(rand.NewSource(99))
+
+	const totalTicks = 2000
+	var lastRev uint64
+	for tick := 1; tick <= totalTicks; tick++ {
+		if tick%100 == 0 {
+			hsim.InjectChaos(harbor, rng)
+		}
+		if err := harbor.Step(ctx); err != nil {
+			t.Fatalf("tick %d: %v", tick, err)
+		}
+		rev := harbor.Revision()
+		if rev <= lastRev {
+			t.Fatalf("tick %d: revision not monotonic: %d <= %d", tick, rev, lastRev)
+		}
+		lastRev = rev
+	}
+
+	sv := harbor.SafetyViolations()
+	if sv > 0 {
+		t.Errorf("chaos produced %d safety violations", sv)
+	}
+
+	st := harbor.State()
+	human := st.Sprites["HUMAN"]
+	if human == nil {
+		t.Fatal("HUMAN missing after chaos")
+	}
+
+	t.Logf("TestChaos: %d ticks, %d chaos injections, 0 violations, revision=%d", totalTicks, totalTicks/100, lastRev)
 }
