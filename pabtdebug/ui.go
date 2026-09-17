@@ -245,6 +245,7 @@ body {
 .tl-duration { color: var(--text-secondary); margin-left: auto; }
 #main {
  grid-area: main;
+ min-width: 0;
  /* transparent so the body instrument-grid + radial glow (DESIGN.md §2) read through */
  background: transparent;
  position: relative;
@@ -2500,6 +2501,8 @@ body {
       group.setAttribute('id', sid);
       group.setAttribute('class', isRunning ? 'node-running' : '');
       group.setAttribute('data-id', node.id);
+      group.setAttribute('role', 'treeitem');
+      group.setAttribute('aria-label', (node.nodeType || 'node') + ' ' + (node.name || node.id) + ', ' + statusToString(status) + (node.status ? ', ' + node.status.TickCount + ' ticks' : ''));
       group.style.cursor = 'pointer';
       const dot = document.createElementNS(SVG_NS, 'circle');
       dot.setAttribute('cx', absX + NODE_W / 2);
