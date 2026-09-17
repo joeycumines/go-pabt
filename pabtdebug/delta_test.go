@@ -3,6 +3,7 @@ package pabtdebug
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
 	"testing"
 
 	bt "github.com/joeycumines/go-behaviortree"
@@ -189,22 +190,29 @@ func TestDelta_PayloadSize_Proportional(t *testing.T) {
 		t.Fatalf("synthetic tree nodes = %d want ~500", n)
 	}
 	cur := CloneTree(base)
-	// Change 3 leaf nodes' status (deterministically pick 3 deep nodes)
-	changed := 0
 	flat := flattenTree(cur)
+	// Select leaves by sorted ID so the selection is deterministic. Each flip
+	// must land on a genuinely different status: since TickCount-only churn is
+	// excluded from deltas, writing a status the node already holds is a no-op
+	// and would silently reduce the changed count.
+	leafIDs := make([]string, 0, 8)
 	for id, node := range flat {
-		if changed >= 3 {
-			break
-		}
-		// Pick leaves (no children) for status change
-		if len(node.Children) == 0 && id != "0" {
-			node.Status.SetLastStatus(bt.Failure)
-			node.Status.SetTickCount(node.Status.TickCount() + 1)
-			changed++
+		if len(node.Children) == 0 && id != "0" && node.Status != nil {
+			leafIDs = append(leafIDs, id)
 		}
 	}
-	if changed != 3 {
-		t.Fatalf("could not find 3 leaves to change, got %d", changed)
+	sort.Strings(leafIDs)
+	if len(leafIDs) < 3 {
+		t.Fatalf("need at least 3 leaves to change, got %d", len(leafIDs))
+	}
+	for _, id := range leafIDs[:3] {
+		node := flat[id]
+		next := bt.Failure
+		if node.Status.LastStatus() == bt.Failure {
+			next = bt.Success
+		}
+		node.Status.SetLastStatus(next)
+		node.Status.SetTickCount(node.Status.TickCount() + 1)
 	}
 
 	delta := ComputeDelta(base, cur)
