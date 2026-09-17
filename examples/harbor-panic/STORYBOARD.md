@@ -25,3 +25,13 @@ The final beat activates fleet mode, spawning three independent harbor instances
 ## Technical Notes
 
 The tour executes via `RunTour(ctx, harbor, DefaultBeats())` which steps the harbor simulation for the specified tick count per beat. Results serialize to JSON via `WriteTourJSON` capturing revision ranges for verification. The `verify_cinematic.sh` script drives this headlessly and validates the output structure. All five beats compose into a single continuous simulation rather than isolated scenarios, meaning state carries forward: a container stolen in beat 3 remains displaced into beats 4 and 5, forcing genuine cross-beat replanning chains that exercise the full PA-BT lifecycle.
+
+---
+
+## Appendix: The Debug UI — Seeing the Algorithm Think
+
+The tree visualization you watched is itself a feat of engineering. The `pabtdebug` package streams every tick as a Server-Sent Event, computing sparse deltas that transmit only what changed — not the full 20,000-node tree. At harbor scale, this means ~10KB deltas instead of 26MB keyframes, keeping the browser responsive even as the planner churns through thousands of restructuring cycles per second.
+
+The UI renders the tree in three semantic zoom tiers: dots for the overview, cards for individual nodes, and expanded views showing conditions, effects, and post-conditions. Chain compression collapses linear sequences into "×N" pills. The minimap provides spatial orientation. Heat modes reveal failure density, recency, and execution flow. And the playback system lets you scrub through history, watching the tree grow, shrink, and restructure at any speed from 0.5× to 4×.
+
+This isn't just a debugger. It's a window into the mind of a planning algorithm — showing you not just *what* it decided, but *why*, *when*, and *how it changed its mind*.
