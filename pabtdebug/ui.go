@@ -10,6 +10,7 @@ const uiHTMLStr = `<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="icon" href="data:,">
 <title>PA-BT Debug</title>
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -368,9 +369,13 @@ body {
  overflow: hidden;
  cursor: grab;
  touch-action: none;
+ min-width: 0;
 }
 #svg-container:active { cursor: grabbing; }
 #tree-svg {
+ position: absolute;
+ top: 0;
+ left: 0;
  width: 100%;
  height: 100%;
  display: block;
@@ -438,6 +443,7 @@ body {
  padding: 0 10px;
  gap: 12px;
  font-size: 10px;
+ min-width: 0;
 }
 #profile-bar {
  flex: 1;
@@ -2944,16 +2950,35 @@ body {
 
   function fitToTree() {
     if (!currentTree) return;
-    var bbox;
-    try { bbox = svg.getBBox(); } catch (e) { return; }
-    if (!bbox.width || !bbox.height) return;
+    var bbox = null;
+    try { bbox = svg.getBBox(); } catch (e) { bbox = null; }
+    if (!bbox || !bbox.width || !bbox.height) {
+      // All nodes may be culled (empty SVG geometry) — fall back to layout bounds.
+      bbox = layoutBoundsFromMap(currentLayoutMap);
+    }
+    if (!bbox || !bbox.width || !bbox.height) return;
     const pad = 40;
     const cw = svgContainer.clientWidth || 800;
     const ch = svgContainer.clientHeight || 600;
-    zoom = Math.min(Math.max(Math.min(cw / (bbox.width + pad * 2), ch / (bbox.height + pad * 2), 2), 0.1), 0.1);
-    pan.x = bbox.x - pad;
-    pan.y = bbox.y - pad;
+    zoom = Math.max(Math.min(cw / (bbox.width + pad * 2), ch / (bbox.height + pad * 2), 2), 0.1);
+    // Center the tree in the viewport rather than pinning it to the top-left.
+    pan.x = bbox.x + bbox.width / 2 - (cw / zoom) / 2;
+    pan.y = bbox.y + bbox.height / 2 - (ch / zoom) / 2;
     updateSvgView();
+  }
+  function layoutBoundsFromMap(layoutMap) {
+    if (!layoutMap) return null;
+    var minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (var id in layoutMap) {
+      var e = layoutMap[id];
+      if (!e) continue;
+      if (e.absX < minX) minX = e.absX;
+      if (e.absY - NODE_H / 2 < minY) minY = e.absY - NODE_H / 2;
+      if (e.absX + NODE_W > maxX) maxX = e.absX + NODE_W;
+      if (e.absY + NODE_H / 2 > maxY) maxY = e.absY + NODE_H / 2;
+    }
+    if (!isFinite(minX) || !isFinite(minY) || maxX <= minX || maxY <= minY) return null;
+    return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
   }
 
   function resetView() {
