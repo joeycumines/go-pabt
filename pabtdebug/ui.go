@@ -530,6 +530,8 @@ body {
     <div id="timeline-header">
       <span>Timeline</span>
       <div>
+        <button class="btn" id="btn-next-fail" title="Jump to next failure (F)">&#8595;F</button>
+        <button class="btn" id="btn-next-change" title="Jump to next structural change (C)">&#8595;C</button>
         <button class="btn" id="btn-live">Live</button>
         <button class="btn" id="btn-play">&#9654;</button>
         <select class="btn" id="speed-select" style="padding:2px 4px;">
@@ -1428,6 +1430,144 @@ body {
   }
   function clearSvgChildren(el) { while (el.firstChild) el.removeChild(el.firstChild); }
 
+  // Explorability 2: scrub strip sparkline. 1px per iter, colored by root status.
+  function drawScrubStrip() {
+    const strip = document.getElementById('scrub-strip');
+    if (!strip) return;
+    strip.innerHTML = '';
+    if (!timelineEvents.length) return;
+    const minIter = timelineEvents[0].iteration;
+    const maxIter = timelineEvents[timelineEvents.length - 1].iteration;
+    const range = Math.max(1, maxIter - minIter + 1);
+    const stripW = strip.clientWidth || 200;
+    const pxPerIter = stripW / range;
+    for (const ev of timelineEvents) {
+      const bar = document.createElement('div');
+      bar.className = 'scrub-bar';
+      const x = (ev.iteration - minIter) * pxPerIter;
+      bar.style.left = x + 'px';
+      bar.style.width = Math.max(1, pxPerIter) + 'px';
+      const st = ev.status === 'Running' ? 1 : (ev.status === 'Success' ? 2 : (ev.status === 'Failure' ? 3 : 0));
+      bar.style.background = STATUS_COLORS[st] || '#555';
+      strip.appendChild(bar);
+    }
+    // Playhead at current iteration
+    if (currentIteration != null && currentIteration >= minIter && currentIteration <= maxIter) {
+      const ph = document.createElement('div');
+      ph.className = 'scrub-playhead';
+      ph.style.left = ((currentIteration - minIter) * pxPerIter) + 'px';
+      strip.appendChild(ph);
+    }
+  }
+
+  // Scrub strip click handler: jump to iteration at click position.
+  (function() {
+    const strip = document.getElementById('scrub-strip');
+    if (!strip) return;
+    function iterFromX(clientX) {
+      const rect = strip.getBoundingClientRect();
+      const frac = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+      if (!timelineEvents.length) return null;
+      const minIter = timelineEvents[0].iteration;
+      const maxIter = timelineEvents[timelineEvents.length - 1].iteration;
+      return Math.round(minIter + frac * (maxIter - minIter));
+    }
+    strip.addEventListener('click', function(e) {
+      const iter = iterFromX(e.clientX);
+      if (iter != null) jumpToIteration(iter);
+    });
+    let dragging = false;
+    strip.addEventListener('mousedown', function(e) { dragging = true; });
+    document.addEventListener('mousemove', function(e) {
+      if (!dragging) return;
+      const iter = iterFromX(e.clientX);
+      if (iter != null) jumpToIteration(iter);
+    });
+    document.addEventListener('mouseup', function() { dragging = false; });
+  })();
+
+  function jumpToIteration(iter) {
+    liveMode = false;
+    btnLive.classList.remove('active');
+    currentIteration = iter;
+    fetchTimelineIter(iter);
+    drawScrubStrip();
+  }
+
+  // Explorability 2: keyboard jog. Guarded by activeElement for inputs.
+  document.addEventListener('keydown', function(e) {
+    const tag = (document.activeElement && document.activeElement.tagName) || '';
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+    if (e.key === 'ArrowLeft') { e.preventDefault(); stepIteration(-1); }
+    else if (e.key === 'ArrowRight') { e.preventDefault(); stepIteration(1); }
+    else if (e.key === ' ') { e.preventDefault(); togglePlayback(); }
+    else if (e.key === 'l' || e.key === 'L') { liveMode = !liveMode; btnLive.classList.toggle('active', liveMode); }
+    else if (e.key === 'Home') { e.preventDefault(); if (timelineEvents.length) jumpToIteration(timelineEvents[0].iteration); }
+    else if (e.key === 'End') { e.preventDefault(); if (timelineEvents.length) jumpToIteration(timelineEvents[timelineEvents.length - 1].iteration); }
+    else if (e.key === 'f' || e.key === 'F') { e.preventDefault(); jumpToNextFailure(); }
+    else if (e.key === 'c' && !e.ctrlKey && !e.metaKey) { e.preventDefault(); jumpToNextChange(); }
+  });
+
+  function stepIteration(delta) {
+    if (!timelineEvents.length) return;
+    if (currentIteration == null) { jumpToIteration(timelineEvents[0].iteration); return; }
+    // Find nearest timeline event index and step
+    let idx = -1;
+    for (let i = 0; i < timelineEvents.length; i++) {
+      if (timelineEvents[i].iteration === currentIteration) { idx = i; break; }
+    }
+    if (idx < 0) {
+      // Find closest
+      let bestDist = Infinity;
+      for (let i = 0; i < timelineEvents.length; i++) {
+        const d = Math.abs(timelineEvents[i].iteration - currentIteration);
+        if (d < bestDist) { bestDist = d; idx = i; }
+      }
+    }
+    const newIdx = Math.max(0, Math.min(timelineEvents.length - 1, idx + delta));
+    jumpToIteration(timelineEvents[newIdx].iteration);
+  }
+
+  function togglePlayback() {
+    playback = !playback;
+    btnPlay.textContent = playback ? '\u23F8' : '\u25B6';
+    if (playback) {
+      if (!timelineEvents.length) return;
+      if (currentIteration == null) playbackIdx = 0;
+      else {
+        for (let i = 0; i < timelineEvents.length; i++) {
+          if (timelineEvents[i].iteration === currentIteration) { playbackIdx = i; break; }
+        }
+      }
+      playbackRafStep(performance.now());
+    } else {
+      cancelPlaybackRaf();
+    }
+  }
+
+  function jumpToNextFailure() {
+    if (!timelineEvents.length) return;
+    const startIdx = currentIteration != null ? timelineEvents.findIndex(e => e.iteration >= currentIteration) + 1 : 0;
+    for (let i = startIdx; i < timelineEvents.length; i++) {
+      if (timelineEvents[i].status === 'Failure') { jumpToIteration(timelineEvents[i].iteration); return; }
+    }
+    // Wrap around
+    for (let i = 0; i < startIdx && i < timelineEvents.length; i++) {
+      if (timelineEvents[i].status === 'Failure') { jumpToIteration(timelineEvents[i].iteration); return; }
+    }
+  }
+
+  function jumpToNextChange() {
+    if (timelineEvents.length < 2) return;
+    const startIdx = currentIteration != null ? timelineEvents.findIndex(e => e.iteration >= currentIteration) + 1 : 1;
+    for (let i = Math.max(1, startIdx); i < timelineEvents.length; i++) {
+      if (timelineEvents[i].nodeCount !== timelineEvents[i-1].nodeCount) { jumpToIteration(timelineEvents[i].iteration); return; }
+    }
+    for (let i = 1; i < startIdx && i < timelineEvents.length; i++) {
+      if (timelineEvents[i].nodeCount !== timelineEvents[i-1].nodeCount) { jumpToIteration(timelineEvents[i].iteration); return; }
+    }
+  }
+
   // Explorability 1: breadcrumb path bar. Walks up parentID chain from selectedNodeId.
   function updateBreadcrumb(nodeId) {
     const bar = document.getElementById('breadcrumb-bar');
@@ -1540,6 +1680,7 @@ body {
     if (!initialFitDone && !userAdjustedView && currentTree) { initialFitDone = true; fitToTree(); }
     drawProfileBar();
     drawCausalOverlay();
+    drawScrubStrip();
     updateStatsReadout(view);
     if (selectedNodeId) highlightNode(selectedNodeId);
     if (highlightedIds.size) highlightSearch();
@@ -2531,6 +2672,9 @@ body {
         }
       });
   });
+
+  document.getElementById('btn-next-fail').addEventListener('click', function() { jumpToNextFailure(); });
+  document.getElementById('btn-next-change').addEventListener('click', function() { jumpToNextChange(); });
 
   document.getElementById('btn-fullscreen').addEventListener('click', function() {
     if (!document.fullscreenElement) {
