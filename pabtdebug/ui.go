@@ -3280,8 +3280,8 @@ body {
   svg.addEventListener('mouseover', function(e) {
     const g = e.target.closest ? e.target.closest('[data-id]') : null;
     if (!g || (e.relatedTarget && g.contains(e.relatedTarget))) return;
-    const node = currentViewById ? currentViewById.get(g.getAttribute('data-id')) : null;
-    if (node) showTooltip(e, node);
+    // Node details belong to the click-selected inspector; hover must not paint over the tree.
+    hideTooltip();
   });
   svg.addEventListener('mouseout', function(e) {
     const g = e.target.closest ? e.target.closest('[data-id]') : null;

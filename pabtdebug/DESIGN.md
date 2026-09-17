@@ -187,3 +187,8 @@ entry here.
   Full node detail remains in the inspector. This is a presentation-only increment;
   no tree geometry or governance markers change. Hover placement prefers the open
   space above/left of the pointer and only falls back inward at viewport edges.
+
+- **v10 — 2026-09-18:** Tree hover is non-obscuring. Node hover no longer opens an
+  absolutely positioned diagnostic panel over neighboring cards; click selects the node
+  and the inspector remains the authoritative full-detail surface. Profile/timeline hover
+  disclosures remain available where they do not cover the tree canvas.
