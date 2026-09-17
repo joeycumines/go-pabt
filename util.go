@@ -19,6 +19,7 @@ package pabt
 import (
 	"fmt"
 	"iter"
+	"sort"
 
 	bt "github.com/joeycumines/go-behaviortree"
 )
@@ -250,12 +251,19 @@ func (n *node[T]) actionName() string {
 	if n.action == nil || len(n.action.effects) == 0 {
 		return "Action"
 	}
+	keys := make([]any, 0, len(n.action.effects))
+	for key := range n.action.effects {
+		keys = append(keys, key)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		return fmt.Sprintf("%v", keys[i]) < fmt.Sprintf("%v", keys[j])
+	})
 	name := ""
-	for key, eff := range n.action.effects {
+	for _, key := range keys {
 		if name != "" {
 			name += ", "
 		}
-		name += fmt.Sprintf("%v→%v", key, eff.Value())
+		name += fmt.Sprintf("%v→%v", key, n.action.effects[key].Value())
 	}
 	return name
 }
@@ -295,9 +303,16 @@ func (n *node[T]) buildEffects() Effects {
 	if n.action == nil {
 		return nil
 	}
-	effects := make(Effects, 0, len(n.action.effects))
-	for _, e := range n.action.effects {
-		effects = append(effects, e)
+	keys := make([]any, 0, len(n.action.effects))
+	for key := range n.action.effects {
+		keys = append(keys, key)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		return fmt.Sprintf("%v", keys[i]) < fmt.Sprintf("%v", keys[j])
+	})
+	effects := make(Effects, 0, len(keys))
+	for _, key := range keys {
+		effects = append(effects, n.action.effects[key])
 	}
 	return effects
 }
