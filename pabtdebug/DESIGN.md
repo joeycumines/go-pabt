@@ -185,4 +185,5 @@ entry here.
   secondary to the tree: it is capped at 240px wide and 120px tall, with overflow
   clipped so dense node metadata cannot become a second panel over neighboring cards.
   Full node detail remains in the inspector. This is a presentation-only increment;
-  no tree geometry or governance markers change.
+  no tree geometry or governance markers change. Hover placement prefers the open
+  space above/left of the pointer and only falls back inward at viewport edges.

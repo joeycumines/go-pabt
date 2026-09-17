@@ -2884,12 +2884,14 @@ body {
   function positionTooltip(e) {
     const host = tooltip.offsetParent || svgContainer;
     const rect = host.getBoundingClientRect();
-    let lx = e.clientX - rect.left + 14;
-    let ly = e.clientY - rect.top + 14;
     const tw = tooltip.offsetWidth || 260;
     const th = tooltip.offsetHeight || 90;
-    if (lx + tw > rect.width - 8) lx = e.clientX - rect.left - tw - 14;
-    if (ly + th > rect.height - 8) ly = e.clientY - rect.top - th - 14;
+    let lx = e.clientX - rect.left - tw - 14;
+    let ly = e.clientY - rect.top - th - 14;
+    if (lx < 4) lx = e.clientX - rect.left + 14;
+    if (ly < 4) ly = e.clientY - rect.top + 14;
+    if (lx + tw > rect.width - 8) lx = rect.width - tw - 8;
+    if (ly + th > rect.height - 8) ly = rect.height - th - 8;
     tooltip.style.left = Math.max(4, lx) + 'px';
     tooltip.style.top = Math.max(4, ly) + 'px';
   }
