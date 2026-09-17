@@ -1808,6 +1808,7 @@ body {
 
   function jumpToIteration(iter) {
     liveMode = false;
+    writeUrlState(true);
     btnLive.classList.remove('active');
     currentIteration = iter;
     fetchTimelineIter(iter);
@@ -2504,6 +2505,7 @@ body {
 
   function selectNode(node) {
     selectedNodeId = node.id;
+    writeUrlState(true);
     document.getElementById('detail-empty').style.display = 'none';
     document.getElementById('detail-body').style.display = 'block';
 
@@ -2656,6 +2658,53 @@ body {
       updateSvgView();
     };
   }
+
+  // URL state: #plan=<id>&iter=<n>&node=<path> deep-links a debug moment.
+  let urlSuppress = false;
+  function writeUrlState(push) {
+    if (urlSuppress) return;
+    const parts = [];
+    if (currentPlanId) parts.push('plan=' + encodeURIComponent(currentPlanId));
+    if (currentIteration != null) parts.push('iter=' + currentIteration);
+    if (selectedNodeId) parts.push('node=' + encodeURIComponent(selectedNodeId));
+    const hash = '#' + parts.join('&');
+    if (hash === window.location.hash) return;
+    if (push) history.pushState(null, '', hash);
+    else history.replaceState(null, '', hash);
+  }
+  function parseUrlState() {
+    const h = window.location.hash.replace(/^#/, '');
+    const out = {};
+    if (!h) return out;
+    h.split('&').forEach(function(kv) {
+      const i = kv.indexOf('=');
+      if (i < 0) return;
+      out[kv.slice(0, i)] = decodeURIComponent(kv.slice(i + 1));
+    });
+    return out;
+  }
+  function applyUrlState(st) {
+    if (!st) return;
+    urlSuppress = true;
+    if (st.plan && st.plan !== currentPlanId && planSelect.querySelector('option[value="' + CSS.escape(st.plan) + '"]')) {
+      planSelect.value = st.plan;
+      switchPlan(st.plan);
+    }
+    const iter = st.iter != null ? parseInt(st.iter, 10) : NaN;
+    const node = st.node || null;
+    const finish = function() {
+      if (node) {
+        const n = findNode(currentTree || lastRawTree, node);
+        if (n) { selectNode(n); panToNodeId(node); }
+        else pendingRestoreNodeId = node;
+      }
+      urlSuppress = false;
+    };
+    if (!isNaN(iter)) { jumpToIteration(iter); setTimeout(finish, 350); }
+    else setTimeout(finish, 50);
+  }
+  window.addEventListener('popstate', function() { applyUrlState(parseUrlState()); });
+  window.addEventListener('hashchange', function() { applyUrlState(parseUrlState()); });
 
   function toggleShortcutsOverlay() {
     const overlay = document.getElementById('shortcuts-overlay');
@@ -3354,7 +3403,9 @@ body {
     if (eventSource) eventSource.close();
   });
 
+  const initialState = parseUrlState();
   connect();
+  if (initialState.plan || initialState.iter || initialState.node) setTimeout(function() { applyUrlState(initialState); }, 400);
 })();
 </script>
 </body>
