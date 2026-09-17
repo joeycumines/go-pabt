@@ -109,21 +109,72 @@ func TestDelta_ComputeAndApply_Basic(t *testing.T) {
 	if delta == nil {
 		t.Fatal("expected non-nil delta")
 	}
-	if len(delta.Changed) != 2 { // root tickcount + one leaf status
-		// root and leaf changed; leaf changed from Success to Failure, root tickcount bump
-		t.Fatalf("expected 2 changed nodes (root + leaf), got %d: %+v", len(delta.Changed), delta.Changed)
+	// Only the leaf's status flip is semantic. The root's TickCount-only bump is
+	// profiling metadata and must not inflate the delta (see nodesDiffer).
+	if len(delta.Changed) != 1 {
+		t.Fatalf("expected 1 changed node (leaf status flip), got %d: %+v", len(delta.Changed), delta.Changed)
 	}
 	if len(delta.Added) != 0 || len(delta.Removed) != 0 {
 		t.Fatalf("expected no added/removed, got added %d removed %d", len(delta.Added), len(delta.Removed))
 	}
 	recon := ApplyDelta(base, delta)
-	if !TreesEqual(recon, cur) {
-		t.Fatalf("ApplyDelta did not reconstruct cur")
+	if !TreesEqualSemantic(recon, cur) {
+		t.Fatalf("ApplyDelta did not semantically reconstruct cur")
+	}
+	if TreesEqual(recon, cur) {
+		t.Fatal("strict equality held unexpectedly: TickCount-only root bump must not round-trip")
 	}
 	// Also test clone isolation: modifying cur should not affect base
 	cur.Children[0].Status.SetLastStatus(bt.Running)
 	if base.Children[0].Status.LastStatus() == bt.Running {
 		t.Error("base was mutated via shared status")
+	}
+}
+
+// TestDelta_TickCountOnlyExcluded locks the delta-sparsity contract: TickCount
+// churn alone must produce an empty delta, because at harbor scale the active
+// path bumps TickCount on thousands of nodes every tick, and counting those as
+// changes inflated SSE deltas to ~20% of the full tree (0.21 measured ratio
+// against the <0.05 gate). A semantic flip on top must still be detected and
+// carry its full status, including the current TickCount.
+func TestDelta_TickCountOnlyExcluded(t *testing.T) {
+	base := makeSyntheticTree(100)
+	cur := CloneTree(base)
+	for _, node := range flattenTree(cur) {
+		if node.Status != nil {
+			node.Status.SetTickCount(node.Status.TickCount() + 1)
+		}
+	}
+	delta := ComputeDelta(base, cur)
+	if delta == nil {
+		t.Fatal("expected non-nil delta")
+	}
+	if len(delta.Changed) != 0 || len(delta.Added) != 0 || len(delta.Removed) != 0 {
+		t.Fatalf("TickCount-only churn must produce an empty delta, got changed %d added %d removed %d",
+			len(delta.Changed), len(delta.Added), len(delta.Removed))
+	}
+	var leaf *TreeNode
+	for id, node := range flattenTree(cur) {
+		if len(node.Children) == 0 && id != "0" && node.Status != nil {
+			leaf = node
+			break
+		}
+	}
+	if leaf == nil {
+		t.Fatal("no status-bearing leaf found")
+	}
+	next := bt.Failure
+	if leaf.Status.LastStatus() == bt.Failure {
+		next = bt.Success
+	}
+	leaf.Status.SetLastStatus(next)
+	delta2 := ComputeDelta(base, cur)
+	if len(delta2.Changed) != 1 {
+		t.Fatalf("expected exactly the flipped leaf, got %d changed", len(delta2.Changed))
+	}
+	got := delta2.Changed[0].Status
+	if got == nil || got.LastStatus() != next || got.TickCount() != leaf.Status.TickCount() {
+		t.Fatalf("semantic change must carry full current status, got %+v", got)
 	}
 }
 

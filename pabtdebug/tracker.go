@@ -1269,8 +1269,11 @@ func nodesDiffer(a, b *TreeNode) bool {
 	if a.Status == nil && b.Status != nil || a.Status != nil && b.Status == nil {
 		return true
 	}
+	// TickCount is profiling metadata, not semantic state. Excluding it from the
+	// delta trigger keeps payloads sparse at harbor scale, where the active path
+	// bumps TickCount on thousands of nodes every tick without any visual change.
 	if a.Status != nil && b.Status != nil {
-		if a.Status.LastStatus() != b.Status.LastStatus() || a.Status.TickCount() != b.Status.TickCount() {
+		if a.Status.LastStatus() != b.Status.LastStatus() {
 			return true
 		}
 	}
@@ -1450,6 +1453,42 @@ func TreesEqual(a, b *TreeNode) bool {
 	}
 	for i := range a.Children {
 		if !TreesEqual(&a.Children[i], &b.Children[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+// TreesEqualSemantic compares two trees for semantic equality, ignoring TickCount.
+// TickCount is profiling metadata intentionally excluded from delta encoding to
+// keep SSE payloads sparse; reconstruction via delta preserves all semantic state
+// but may leave TickCount stale on nodes that only had profiling bumps.
+func TreesEqualSemantic(a, b *TreeNode) bool {
+	if a == nil && b == nil {
+		return true
+	}
+	if a == nil || b == nil {
+		return false
+	}
+	if a.ID != b.ID || a.Name != b.Name || a.NodeType != b.NodeType || a.Condition != b.Condition || a.PostCondition != b.PostCondition || a.Frame != b.Frame || a.StructureHash != b.StructureHash {
+		return false
+	}
+	if a.Status == nil && b.Status != nil || a.Status != nil && b.Status == nil {
+		return false
+	}
+	if a.Status != nil && b.Status != nil {
+		if a.Status.LastStatus() != b.Status.LastStatus() {
+			return false
+		}
+	}
+	if !effectsEqual(a.Effects, b.Effects) {
+		return false
+	}
+	if len(a.Children) != len(b.Children) {
+		return false
+	}
+	for i := range a.Children {
+		if !TreesEqualSemantic(&a.Children[i], &b.Children[i]) {
 			return false
 		}
 	}

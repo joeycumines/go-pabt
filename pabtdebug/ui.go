@@ -926,9 +926,8 @@ body {
   function parseIndexJS(s) { if (!s) return -1; for (var i=0;i<s.length;i++){ var c=s.charCodeAt(i); if(c<48||c>57) return -1;} return parseInt(s,10); }
   function nodesDifferJS(a,b){
     if (a.name!==b.name || a.nodeType!==b.nodeType || a.condition!==b.condition || a.postCondition!==b.postCondition || a.frame!==b.frame || a.structureHash!==b.structureHash) return true;
-    var sa=a.status, sb=b.status;
-    if (!sa && sb || sa && !sb) return true;
-    if (sa && sb) { if (sa.LastStatus!==sb.LastStatus || sa.TickCount!==sb.TickCount) return true; }
+    var sa=a.status||{}, sb=b.status||{};
+    if (sa.LastStatus!==sb.LastStatus) return true;
     var ea=a.effects||[], eb=b.effects||[];
     if (ea.length!==eb.length) return true;
     for (var i=0;i<ea.length;i++){ if(ea[i].key!==eb[i].key || ea[i].value!==eb[i].value) return true; }
