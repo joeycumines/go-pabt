@@ -15,7 +15,7 @@ type Beat struct {
 }
 
 type TourResult struct {
-	Beats   []Beat `json:"beats"`
+	Beats     []Beat `json:"beats"`
 	RevBefore uint64 `json:"revBefore"`
 	RevAfter  uint64 `json:"revAfter"`
 }

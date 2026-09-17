@@ -55,6 +55,7 @@ func main() {
 		beliefFlag    bool
 		snapshotEvery int
 		fleetFlag     bool
+		tuiAudit      bool
 	)
 	flag.StringVar(&debugAddr, "debug", "", "start debug server at address (e.g. :8080)")
 	flag.IntVar(&tickMs, "tick-ms", 80, "milliseconds between ticks")
@@ -71,7 +72,13 @@ func main() {
 	flag.BoolVar(&beliefFlag, "belief", false, "enable belief partial-observability (hidden containers with sensing)")
 	flag.IntVar(&snapshotEvery, "snapshot-every", 1, "record a debug snapshot every Nth tick (1=every tick; >1 cuts per-tick Track CPU/RSS for sustained UI sessions)")
 	flag.BoolVar(&fleetFlag, "fleet", false, "spawn 3 harbors x 4 actors = 12 concurrent plans for fleet stress")
+	flag.BoolVar(&tuiAudit, "tui-audit", false, "print TUI design token audit table and exit")
 	flag.Parse()
+
+	if tuiAudit {
+		tui.PrintAuditTable()
+		return
+	}
 
 	if burst > 0 {
 		headless = true

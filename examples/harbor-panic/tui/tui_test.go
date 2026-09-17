@@ -514,3 +514,17 @@ func TestTuiOverflowCounterIncrements(t *testing.T) {
 		t.Errorf("expected overflow counter to increment, before=%d after=%d", before, after)
 	}
 }
+
+func TestDesignTokens(t *testing.T) {
+	bg := tcell.ColorBlack
+	for _, tok := range DesignTokens {
+		ratio := ContrastRatio(tok.Foreground, bg)
+		if ratio < 4.5 {
+			t.Errorf("token %s contrast %.2f < 4.5", tok.Name, ratio)
+		}
+	}
+	if len(DesignTokens) < 10 {
+		t.Errorf("expected at least 10 design tokens, got %d", len(DesignTokens))
+	}
+	t.Logf("TestDesignTokens: %d tokens, all contrast >= 4.5", len(DesignTokens))
+}

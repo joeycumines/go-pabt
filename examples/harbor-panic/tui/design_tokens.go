@@ -34,19 +34,19 @@ func relativeLuminance(r, g, b uint8) float64 {
 func ContrastRatio(fg, bg tcell.Color) float64 {
 	fr, fg2, fb := fg.RGB()
 	br, bg2, bb := bg.RGB()
-	l1 := relativeLuminance(uint8(fr>>8), uint8(fg2>>8), uint8(fb>>8))
-	l2 := relativeLuminance(uint8(br>>8), uint8(bg2>>8), uint8(bb>>8))
+	l1 := relativeLuminance(uint8(fr), uint8(fg2), uint8(fb))
+	l2 := relativeLuminance(uint8(br), uint8(bg2), uint8(bb))
 	lighter := math.Max(l1, l2)
 	darker := math.Min(l1, l2)
 	return (lighter + 0.05) / (darker + 0.05)
 }
 
 var DesignTokens = []TokenDef{
-	{Name: "wall", Kind: hsim.KindWall, Foreground: tcell.ColorSlateGray, Background: tcell.ColorBlack},
+	{Name: "wall", Kind: hsim.KindWall, Foreground: tcell.NewRGBColor(140, 150, 165), Background: tcell.ColorBlack},
 	{Name: "goal", Kind: hsim.KindGoal, Foreground: tcell.ColorLightBlue, Background: tcell.ColorBlack, Bold: true},
 	{Name: "cube-R", Kind: hsim.KindCube, Foreground: tcell.ColorRed, Background: tcell.ColorBlack, Bold: true},
-	{Name: "cube-G", Kind: hsim.KindCube, Foreground: tcell.ColorGreen, Background: tcell.ColorBlack, Bold: true},
-	{Name: "cube-B", Kind: hsim.KindCube, Foreground: tcell.ColorBlue, Background: tcell.ColorBlack, Bold: true},
+	{Name: "cube-G", Kind: hsim.KindCube, Foreground: tcell.NewRGBColor(0, 210, 0), Background: tcell.ColorBlack, Bold: true},
+	{Name: "cube-B", Kind: hsim.KindCube, Foreground: tcell.NewRGBColor(100, 149, 237), Background: tcell.ColorBlack, Bold: true},
 	{Name: "cube-Y", Kind: hsim.KindCube, Foreground: tcell.ColorYellow, Background: tcell.ColorBlack, Bold: true},
 	{Name: "cube-M", Kind: hsim.KindCube, Foreground: tcell.ColorFuchsia, Background: tcell.ColorBlack, Bold: true},
 	{Name: "cube-C", Kind: hsim.KindCube, Foreground: tcell.ColorAqua, Background: tcell.ColorBlack, Bold: true},

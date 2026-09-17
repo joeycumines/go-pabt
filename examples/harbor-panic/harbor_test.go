@@ -18,7 +18,9 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"math/rand"
 	"strings"
@@ -540,4 +542,100 @@ func TestChaos(t *testing.T) {
 	}
 
 	t.Logf("TestChaos: %d ticks, %d chaos injections, 0 violations, revision=%d", totalTicks, totalTicks/100, lastRev)
+}
+
+func TestCinematic(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	harbor := hsim.NewHarbor(0, 3.1, 42)
+	beats := hsim.DefaultBeats()
+	if len(beats) != 5 {
+		t.Fatalf("expected 5 beats, got %d", len(beats))
+	}
+
+	result, err := hsim.RunTour(ctx, harbor, beats)
+	if err != nil {
+		t.Fatalf("RunTour: %v", err)
+	}
+	if result.RevAfter <= result.RevBefore {
+		t.Fatalf("revision did not advance: %d <= %d", result.RevAfter, result.RevBefore)
+	}
+
+	var buf bytes.Buffer
+	if err := hsim.WriteTourJSON(&buf, result); err != nil {
+		t.Fatalf("WriteTourJSON: %v", err)
+	}
+	if buf.Len() == 0 {
+		t.Fatal("WriteTourJSON produced empty output")
+	}
+
+	var parsed hsim.TourResult
+	if err := json.Unmarshal(buf.Bytes(), &parsed); err != nil {
+		t.Fatalf("WriteTourJSON output not valid JSON: %v", err)
+	}
+	if len(parsed.Beats) != 5 {
+		t.Fatalf("parsed beats count %d != 5", len(parsed.Beats))
+	}
+
+	t.Logf("TestCinematic: 5 beats, rev %d->%d", result.RevBefore, result.RevAfter)
+}
+
+func TestFormal(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	harbor := hsim.NewHarbor(0, 3.1, 42)
+	for i := 0; i < 100; i++ {
+		if err := harbor.Step(ctx); err != nil {
+			t.Fatalf("tick %d: %v", i, err)
+		}
+	}
+
+	var buf bytes.Buffer
+	for i := 0; i < 100; i++ {
+		if err := harbor.Step(ctx); err != nil {
+			t.Fatalf("tick %d: %v", i+100, err)
+		}
+		if err := logic.ExportTrace(harbor, &buf); err != nil {
+			t.Fatalf("ExportTrace tick %d: %v", i+100, err)
+		}
+	}
+
+	lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
+	if len(lines) < 100 {
+		t.Fatalf("expected >= 100 trace lines, got %d", len(lines))
+	}
+
+	for i, line := range lines {
+		var entry map[string]interface{}
+		if err := json.Unmarshal([]byte(line), &entry); err != nil {
+			t.Fatalf("trace line %d invalid JSON: %v", i, err)
+		}
+		if _, ok := entry["safetyViolations"]; !ok {
+			t.Fatalf("trace line %d missing safetyViolations", i)
+		}
+	}
+
+	t.Logf("TestFormal: %d trace lines, all valid JSON with required fields", len(lines))
+}
+
+func TestNoGood(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	harbor := hsim.NewHarbor(0, 3.1, 42)
+	for i := 0; i < 500; i++ {
+		if err := harbor.Step(ctx); err != nil {
+			t.Fatalf("tick %d: %v", i, err)
+		}
+	}
+
+	de := harbor.DeadEnds()
+	cy := harbor.Cycles()
+	if cy >= 5 {
+		t.Errorf("cycles %d >= 5", cy)
+	}
+
+	t.Logf("TestNoGood: 500 steps, deadEnds=%d, cycles=%d", de, cy)
 }

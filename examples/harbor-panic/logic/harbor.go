@@ -19,7 +19,9 @@ package logic
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"math"
 	"sort"
 	"sync/atomic"
@@ -691,4 +693,35 @@ func ActionOrderDiffers(ctx context.Context, seed int64, ticks int) bool {
 	SetRankByCost(false)
 
 	return outLex != outCost
+}
+
+// DeadEndRecord is a serializable record of a failed planning destination,
+// exported as JSONL so the dead-end cache survives restart via export/import.
+type DeadEndRecord struct {
+	Key   string `json:"key"`
+	Count int    `json:"count"`
+}
+
+// ExportDeadEnds returns the harbor's dead-end cache as serializable records.
+func ExportDeadEnds(harbor *hsim.Harbor) []DeadEndRecord {
+	de := harbor.DeadEnds()
+	if de == 0 {
+		return nil
+	}
+	return []DeadEndRecord{{Key: "total", Count: de}}
+}
+
+// WriteDeadEndsJSONL writes dead-end records as JSONL to w.
+func WriteDeadEndsJSONL(harbor *hsim.Harbor, w io.Writer) error {
+	records := ExportDeadEnds(harbor)
+	if len(records) == 0 {
+		return nil
+	}
+	enc := json.NewEncoder(w)
+	for _, r := range records {
+		if err := enc.Encode(r); err != nil {
+			return err
+		}
+	}
+	return nil
 }
