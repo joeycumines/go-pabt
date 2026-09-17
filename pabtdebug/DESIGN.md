@@ -209,3 +209,8 @@ entry here.
   to an `ActionNode` now collects its sibling `PreconditionLeaf` values from the retained
   raw snapshot, even when the canvas is compressed. The strip remains bounded to the
   selected action and does not alter card geometry.
+
+- **v14 — 2026-09-18:** Deep-link selection uses the retained raw snapshot as a fallback
+  when compression has removed the requested action from the rendered view. This keeps
+  the rationale strip and inspector reachable without forcing every hidden branch into
+  the canvas.

@@ -1526,7 +1526,7 @@ body {
         }
         return r.ok ? r.json() : null;
       })
-      .then(function(data) { if (data && data.tree) { lastReconstructedTree = cloneTreeJS(data.tree); lastReconstructedIteration = data.iteration || iter; renderTree(data.tree); if (pendingRestoreNodeId) { var rn = findNode(currentTree, pendingRestoreNodeId); pendingRestoreNodeId = null; if (rn) selectNode(rn); } } });
+      .then(function(data) { if (data && data.tree) { lastReconstructedTree = cloneTreeJS(data.tree); lastReconstructedIteration = data.iteration || iter; renderTree(data.tree); if (pendingRestoreNodeId) { var rn = (currentTree && findNode(currentTree, pendingRestoreNodeId)) || (lastRawTree && findNode(lastRawTree, pendingRestoreNodeId)); pendingRestoreNodeId = null; if (rn) selectNode(rn); } } });
   }
 
   // Layout is stored separately from tree data to avoid mutating shared event objects (D11).
