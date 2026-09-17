@@ -180,3 +180,9 @@ entry here.
   matches in addition to Enter / Shift+Enter (the search-results acceptance requires
   arrow-key cycling); Escape clears and blurs. Count badge, prev/next buttons and
   live recompute-on-render unchanged from v7-era landing.
+
+- **v9 — 2026-09-18:** Bounded hover disclosure. The canvas tooltip is deliberately
+  secondary to the tree: it is capped at 240px wide and 120px tall, with overflow
+  clipped so dense node metadata cannot become a second panel over neighboring cards.
+  Full node detail remains in the inspector. This is a presentation-only increment;
+  no tree geometry or governance markers change.
