@@ -105,7 +105,11 @@ body {
   #timeline { border-right: none; border-bottom: 1px solid var(--border); }
   #resize-tl, #resize-dt { display: none; }
   #minimap { display: none; }
-  #header { flex-wrap: wrap; height: auto; min-height: 40px; padding: 4px 8px; }
+  #header { flex-wrap: wrap; height: auto; min-height: 40px; padding: 4px 8px; gap: 6px; }
+  #header-left, #search-wrap, #header-right { min-width: 0; flex-shrink: 1; }
+  #search-input { width: 100%; max-width: 160px; }
+  #app { width: 100%; }
+  body { overflow-x: hidden; }
 }
 #header {
  grid-area: header;
@@ -411,9 +415,10 @@ body {
  padding: 2px 6px;
  border-radius: var(--radius-sm);
  font-size: 9px;
- font-weight: 500;
+ font-weight: 600;
  margin: 1px 2px;
  letter-spacing: 0.02em;
+ color: #fff;
 }
 .dtl-badge-effects { background: rgba(70,214,140,0.16); color: var(--success); border: 1px solid var(--success); }
 .dtl-badge-cond { background: rgba(45,212,191,0.16); color: var(--type-pre); border: 1px solid var(--type-pre); }
@@ -632,13 +637,13 @@ body {
  justify-content: center;
 }
 #shortcuts-panel {
- background: var(--bg-panel);
- border: 1px solid var(--border);
- border-radius: 8px;
- padding: 16px 20px;
- min-width: 340px;
- max-width: 440px;
- box-shadow: 0 16px 48px rgba(0,0,0,0.6);
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px 20px;
+  width: min(440px, calc(100vw - 24px));
+  max-width: calc(100vw - 24px);
+  box-shadow: 0 16px 48px rgba(0,0,0,0.6);
 }
 </style>
 </head>
@@ -688,7 +693,7 @@ body {
         </select>
       </div>
     </div>
-    <div id="timeline-list"></div>
+    <div id="timeline-list" aria-label="Tick history" tabindex="0"></div>
   </aside>
 
   <main id="main">
@@ -709,6 +714,7 @@ body {
     </div>
     <div id="breadcrumb-bar"></div>
     <div id="narration-bar"></div>
+    <div id="scrub-strip" title="Drag to scrub the timeline"></div>
     <div id="svg-container" tabindex="-1" aria-label="Planning tree canvas">
       <svg id="tree-svg" xmlns="http://www.w3.org/2000/svg" role="tree" aria-label="PA-BT planning tree"></svg>
       <div id="conn-banner" role="status"></div>
@@ -1029,6 +1035,8 @@ body {
     var edgesG = document.getElementById('edges-layer');
     if (nodesG) clearSvgChildren(nodesG);
     if (edgesG) clearSvgChildren(edgesG);
+    ['tombstone-layer', 'conflict-overlay', 'causal-overlay'].forEach(function(lid) { var l = document.getElementById(lid); if (l) clearSvgChildren(l); });
+    var bc = document.getElementById('breadcrumb-bar'); if (bc) bc.innerHTML = '';
     ensureTimelineVirtualSpacers();
     var n = virtualTopSpacer.nextSibling;
     while (n && n !== virtualBottomSpacer) { var nxt = n.nextSibling; n.remove(); n = nxt; }
@@ -1097,6 +1105,7 @@ body {
       .then(function(r) { return r.ok ? r.json() : []; })
       .then(function(tl) {
         if (!tl || !tl.length) return;
+        if (tl.length > MAX_TIMELINE_EVENTS) tl = tl.slice(tl.length - MAX_TIMELINE_EVENTS);
         timelineEvents = tl.map(function(e) {
           return { iteration: e.iteration, status: (e.status === 'Running' ? 1 : (e.status === 'Success' ? 2 : (e.status === 'Failure' ? 3 : 0))), durationMs: e.durationMs || 0, seq: 0, nodeCount: e.nodeCount || 0 };
         });
@@ -1664,7 +1673,9 @@ body {
       tombstoneG.setAttribute('id', 'tombstone-layer');
       svg.insertBefore(tombstoneG, nodesG);
     }
+    let tombstoned = 0;
     for (const rid of delta.removed) {
+      if (tombstoned >= 20) break;
       const el = document.getElementById(safeId(rid));
       if (el) {
         const clone = el.cloneNode(true);
@@ -1672,6 +1683,7 @@ body {
           c.classList.add('tombstone');
         });
         tombstoneG.appendChild(clone);
+        tombstoned++;
         setTimeout(function() { if (clone.parentNode) clone.parentNode.removeChild(clone); }, 800);
       }
     }
@@ -1679,12 +1691,15 @@ body {
   // Flash added nodes green — must run AFTER render (nodes only exist post-render).
   function flashReplanAdded(delta) {
     if (!delta || !delta.added) return;
+    let flashed = 0;
     for (const added of delta.added) {
+      if (flashed >= 20) break;
       const el = document.getElementById(safeId(added.id));
       if (el) {
         const card = el.querySelector('.node-card');
         if (card) {
           card.classList.add('added-flash');
+          flashed++;
           setTimeout(function() { card.classList.remove('added-flash'); }, 600);
         }
       }
@@ -1708,12 +1723,15 @@ body {
       overlayG.setAttribute('id', 'conflict-overlay');
       svg.appendChild(overlayG);
     }
+    let conflicts = 0;
     for (const added of delta.added) {
+      if (conflicts >= 20) break;
       if (added.structureHash && removedHashes[added.structureHash]) {
         const oldId = removedHashes[added.structureHash];
         const oldLm = oldLayoutMap[oldId];
         const newLm = currentLayoutMap[added.id];
         if (oldLm && newLm) {
+          conflicts++;
           const line = document.createElementNS(SVG_NS, 'line');
           line.setAttribute('x1', oldLm.absX + NODE_W / 2);
           line.setAttribute('y1', oldLm.absY);
@@ -1918,17 +1936,35 @@ body {
     playback = !playback;
     btnPlay.textContent = playback ? '\u23F8' : '\u25B6';
     if (playback) {
-      if (!timelineEvents.length) return;
+      if (!timelineEvents.length) { playback = false; btnPlay.textContent = '\u25B6'; return; }
       if (currentIteration == null) playbackIdx = 0;
       else {
+        playbackIdx = -1;
         for (let i = 0; i < timelineEvents.length; i++) {
           if (timelineEvents[i].iteration === currentIteration) { playbackIdx = i; break; }
         }
+        if (playbackIdx < 0) playbackIdx = 0;
       }
-      playbackRafStep(performance.now());
+      playbackLastTime = performance.now() - 1000 / Math.max(0.1, playbackSpeed);
+      playbackRaf = requestAnimationFrame(playbackRafStep);
     } else {
       cancelPlaybackRaf();
     }
+  }
+  function playbackRafStep(now) {
+    if (!playback) return;
+    const interval = 1000 / Math.max(0.1, playbackSpeed);
+    if (now - playbackLastTime >= interval) {
+      playbackLastTime = now - ((now - playbackLastTime) % interval);
+      if (playbackIdx >= timelineEvents.length - 1) {
+        playback = false;
+        cancelPlaybackRaf();
+        btnPlay.textContent = '\u25B6';
+        return;
+      }
+      stepIteration(1);
+    }
+    playbackRaf = requestAnimationFrame(playbackRafStep);
   }
 
   function jumpToNextFailure() {
@@ -2095,7 +2131,9 @@ body {
       const edgesG = document.createElementNS(SVG_NS, 'g');
       const nodesG = document.createElementNS(SVG_NS, 'g');
       edgesG.setAttribute('id', 'edges-layer');
+      edgesG.setAttribute('aria-hidden', 'true');
       nodesG.setAttribute('id', 'nodes-layer');
+      nodesG.setAttribute('role', 'group');
       drawEdges(view, edgesG, layoutMap);
       drawNodes(view, nodesG, layoutMap);
       svg.appendChild(edgesG);
@@ -2146,7 +2184,6 @@ body {
 
     group.setAttribute('class', isRunning ? 'node-running' : '');
     group.setAttribute('aria-label', (newNode.nodeType || 'node') + ' ' + (newNode.name || newNode.id) + ', ' + statusToString(status) + (newNode.status ? ', ' + newNode.status.TickCount + ' ticks' : ''));
-    if (vw0HasChildren(newNode)) group.setAttribute('aria-expanded', vw0Expanded(newNode) ? 'true' : 'false');
 
     if (zoomTier() === 0) {
       const dot = group.querySelector('.node-dot');
@@ -2473,9 +2510,7 @@ body {
     group.setAttribute('class', isRunning ? 'node-running' : '');
     group.setAttribute('data-id', node.id);
     group.setAttribute('role', 'treeitem');
-    group.setAttribute('tabindex', '0');
     group.setAttribute('aria-label', (node.nodeType || 'node') + ' ' + (node.name || node.id) + ', ' + statusToString(status) + (node.status ? ', ' + node.status.TickCount + ' ticks' : ''));
-    if (vw0HasChildren(node)) group.setAttribute('aria-expanded', vw0Expanded(node) ? 'true' : 'false');
     group.style.cursor = 'pointer';
 
     const ring = document.createElementNS(SVG_NS, 'rect');
@@ -2755,7 +2790,8 @@ body {
     const node = st.node || null;
     const finish = function() {
       if (node) {
-        const n = findNode(currentTree || lastRawTree, node);
+        const tree = currentTree || lastRawTree;
+        const n = tree ? findNode(tree, node) : null;
         if (n) { selectNode(n); panToNodeId(node); }
         else pendingRestoreNodeId = node;
       }
@@ -2801,7 +2837,7 @@ body {
     const vw = node._view;
     let html = '<div style="font-weight:600;color:var(--text-primary);margin-bottom:3px;">' + escapeHtml(node.name || role) + '</div>';
     html += '<div style="display:flex;gap:6px;align-items:center;margin-bottom:4px;">';
-    html += '<span style="background:' + escapeAttr(TYPE_COLORS[role] || '#50627a') + ';color:#fff;padding:1px 5px;border-radius:3px;font-size:9px;">' + escapeHtml(role) + '</span>';
+    html += '<span style="background:#0a111d;color:' + escapeAttr(TYPE_COLORS[role] || '#9fb4cc') + ';border:1px solid ' + escapeAttr(TYPE_COLORS[role] || '#50627a') + ';padding:1px 5px;border-radius:3px;font-size:9px;font-weight:600;">' + escapeHtml(role) + '</span>';
     html += '<span style="color:' + escapeAttr(stColor) + ';">' + escapeHtml(st) + '</span>';
     if (node.status) html += '<span style="color:var(--text-secondary);">\u00d7' + node.status.TickCount + ' ticks</span>';
     html += '</div>';
@@ -2900,7 +2936,7 @@ body {
     const pad = 40;
     const cw = svgContainer.clientWidth || 800;
     const ch = svgContainer.clientHeight || 600;
-    zoom = Math.min(cw / (bbox.width + pad * 2), ch / (bbox.height + pad * 2), 2);
+    zoom = Math.min(Math.max(Math.min(cw / (bbox.width + pad * 2), ch / (bbox.height + pad * 2), 2), 0.1), 0.1);
     pan.x = bbox.x - pad;
     pan.y = bbox.y - pad;
     updateSvgView();
@@ -3064,18 +3100,22 @@ body {
   window.addEventListener('mouseup', function() { isDragging = false; });
   function zoomAtPoint(clientX, clientY, factor) {
     const rect = svgContainer.getBoundingClientRect();
+    if (!rect.width || !rect.height || !isFinite(clientX) || !isFinite(clientY) || !isFinite(factor) || factor <= 0) return;
     const vb = svg.getAttribute('viewBox');
     if (!vb) { zoom = Math.min(Math.max(zoom * factor, 0.1), 5); userAdjustedView = true; updateSvgView(); return; }
     const parts = vb.split(/[\s,]+/).map(Number);
-    if (parts.length !== 4) { zoom = Math.min(Math.max(zoom * factor, 0.1), 5); userAdjustedView = true; updateSvgView(); return; }
+    if (parts.length !== 4 || parts.some(function(p) { return !isFinite(p); })) { zoom = Math.min(Math.max(zoom * factor, 0.1), 5); userAdjustedView = true; updateSvgView(); return; }
     const vx = parts[0], vy = parts[1], vw = parts[2], vh = parts[3];
     const worldX = vx + ((clientX - rect.left) / rect.width) * vw;
     const worldY = vy + ((clientY - rect.top) / rect.height) * vh;
     const newZoom = Math.min(Math.max(zoom * factor, 0.1), 5);
     const newVw = rect.width / newZoom;
     const newVh = rect.height / newZoom;
-    pan.x = worldX - ((clientX - rect.left) / rect.width) * newVw;
-    pan.y = worldY - ((clientY - rect.top) / rect.height) * newVh;
+    const nx = worldX - ((clientX - rect.left) / rect.width) * newVw;
+    const ny = worldY - ((clientY - rect.top) / rect.height) * newVh;
+    if (!isFinite(nx) || !isFinite(ny)) return;
+    pan.x = nx;
+    pan.y = ny;
     zoom = newZoom;
     userAdjustedView = true;
     updateSvgView();
@@ -3202,10 +3242,11 @@ body {
     hideTooltip();
   });
   svgContainer.addEventListener('dblclick', function(e) {
-    const target = e.target.closest('[data-id]');
+    const target = (e.target && e.target.closest) ? e.target.closest('[data-id]') : null;
     if (target) {
       const id = target.getAttribute('data-id');
-      const node = findNode(currentTree, id);
+      const tree = currentTree || lastRawTree;
+      const node = tree ? findNode(tree, id) : null;
       if (node) {
         const bbox = target.getBBox();
         const cw = svgContainer.clientWidth || 800;
@@ -3410,7 +3451,8 @@ body {
       if (tlRes.ok) {
         const tl = await tlRes.json();
         // Replace local cache with imported timeline: clear virtual spacers first
-        timelineEvents = tl.map(function(e){ return { iteration: e.iteration, status: (e.status==='Running'?1:(e.status==='Success'?2:(e.status==='Failure'?3:0))), durationMs: e.durationMs||0, seq: 0, nodeCount: e.nodeCount||0 }; });
+          if (tl.length > MAX_TIMELINE_EVENTS) tl = tl.slice(tl.length - MAX_TIMELINE_EVENTS);
+          timelineEvents = tl.map(function(e){ return { iteration: e.iteration, status: (e.status==='Running'?1:(e.status==='Success'?2:(e.status==='Failure'?3:0))), durationMs: e.durationMs||0, seq: 0, nodeCount: e.nodeCount||0 }; });
         // Status strings are "Success"/"Failure"/"Running"; fallback already handled; but server may return string
         // Re-normalize status strings if numeric not matched
         timelineEvents = timelineEvents.map(function(entry, idx){
