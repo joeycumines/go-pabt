@@ -906,7 +906,7 @@ body {
   const planState = {};
   const planLastCounts = {};
   let planProbeTimer = null;
-  let pendingRestoreScroll = null, pendingRestoreNodeId = null;
+  let pendingRestoreScroll = null, pendingRestoreNodeId = null, pendingSearchPanId = null;
 
   const svg = document.getElementById('tree-svg');
   const svgContainer = document.getElementById('svg-container');
@@ -2196,6 +2196,14 @@ body {
       currentLayoutMap = layoutMap;
     }
     renderedTier = tier;
+    if (pendingSearchPanId && layoutMap[pendingSearchPanId]) {
+      const target = layoutMap[pendingSearchPanId];
+      const cw = svgContainer.clientWidth || 800;
+      const ch = svgContainer.clientHeight || 600;
+      pan.x = target.absX + NODE_W / 2 - (cw / zoom) / 2;
+      pan.y = target.absY - (ch / zoom) / 2;
+      pendingSearchPanId = null;
+    }
     updateSvgView();
     updateMinimap();
     if (!initialFitDone && !userAdjustedView && currentTree) { initialFitDone = true; fitToTree(); }
@@ -3160,9 +3168,13 @@ body {
       }
       searchMatches = findNodesByName(lastRawTree || currentTree, q);
       highlightedIds = new Set(searchMatches);
+      if (searchMatches.length) {
+        searchMatchIdx = 0;
+        pendingSearchPanId = searchMatches[0];
+      }
       if (revealAncestors(highlightedIds)) { bumpView(); renderTree(lastRawTree); }
+      else if (searchMatches.length) { panToNodeId(searchMatches[0]); }
       highlightSearch();
-      if (searchMatches.length) { searchMatchIdx = 0; panToNodeId(searchMatches[0]); }
       updateSearchCount();
     }, 300);
   });

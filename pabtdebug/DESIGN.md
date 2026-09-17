@@ -219,3 +219,8 @@ entry here.
   snapshot, including the live SSE path. A compressed action can therefore populate the
   inspector/rationale strip once its raw snapshot arrives instead of being lost during the
   initial connection race.
+
+- **v16 — 2026-09-18:** Search-to-node centering waits for the asynchronous tree render.
+  Search reveals can trigger a worker/layout pass; the first result's world position is
+  applied from the completed layout map instead of trying to pan against a stale or culled
+  DOM element. This is interaction plumbing only and does not change tree geometry.
