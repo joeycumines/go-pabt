@@ -242,6 +242,16 @@ body {
   background: var(--accent) !important;
   color: var(--bg-main) !important;
 }
+.heat-ctrl { display: inline-flex; gap: 2px; margin-left: 4px; }
+.btn-heat { font-size: 9px !important; padding: 2px 5px !important; opacity: 0.6; }
+.btn-heat.active { opacity: 1; background: var(--accent) !important; color: var(--bg-main) !important; }
+.node-card.heat-glow { filter: drop-shadow(0 0 3px var(--heat-color, transparent)); }
+.node-card.fail-glow { stroke: var(--failure); }
+.node-card.recent-pulse { animation: recentPulse 1.2s ease-out; }
+@keyframes recentPulse {
+  0% { filter: drop-shadow(0 0 6px var(--accent)); }
+  100% { filter: none; }
+}
 .causal-path {
   fill: none;
   stroke: var(--accent);
@@ -552,6 +562,12 @@ body {
       <button class="btn" id="btn-expand-all" title="Expand every branch">Expand all</button>
       <button class="btn" id="btn-collapse-all" title="Collapse to the active spine">Collapse all</button>
       <button class="btn" id="btn-why" title="Toggle causal-link overlay (precondition → action)">Why?</button>
+      <span class="heat-ctrl">
+        <button class="btn btn-heat" data-heat="off" title="No glow">Off</button>
+        <button class="btn btn-heat" data-heat="heat" title="Glow by tick frequency">Heat</button>
+        <button class="btn btn-heat" data-heat="fail" title="Glow by failure rate">Fail</button>
+        <button class="btn btn-heat" data-heat="recent" title="Glow on recently ticked">Recent</button>
+      </span>
       <span id="stats-readout"></span>
       <span id="zoom-level" style="font-size:10px;color:var(--text-secondary);">100%</span>
     </div>
@@ -1430,6 +1446,56 @@ body {
   }
   function clearSvgChildren(el) { while (el.firstChild) el.removeChild(el.firstChild); }
 
+  // Explorability 3: heat/failure/recency glow modes.
+  var heatMode = 'off';
+  var prevTickCount = {};
+  function applyHeatGlow() {
+    if (!profileCache || !profileCache.length) return;
+    const maxTicks = profileCache.reduce((m, p) => Math.max(m, p.TickCount || 0), 1);
+    const nodesG = document.getElementById('nodes-layer');
+    if (!nodesG) return;
+    nodesG.querySelectorAll('.node-card').forEach(function(card) {
+      card.classList.remove('heat-glow', 'fail-glow', 'recent-pulse');
+      card.removeAttribute('style');
+    });
+    if (heatMode === 'off') return;
+    for (const p of profileCache) {
+      const el = document.getElementById(safeId(p.id));
+      if (!el) continue;
+      const card = el.querySelector('.node-card');
+      if (!card) continue;
+      if (heatMode === 'heat') {
+        const intensity = (p.TickCount || 0) / maxTicks;
+        if (intensity > 0.1) {
+          card.classList.add('heat-glow');
+          card.style.setProperty('--heat-color', 'hsl(' + Math.round(60 - intensity * 60) + ',100%,50%)');
+          card.style.filter = 'drop-shadow(0 0 ' + Math.round(intensity * 6) + 'px hsl(' + Math.round(60 - intensity * 60) + ',100%,50%))';
+        }
+      } else if (heatMode === 'fail') {
+        const failRate = p.TickCount > 0 ? (p.FailureCount || 0) / p.TickCount : 0;
+        if (failRate > 0.05) {
+          card.classList.add('fail-glow');
+          card.setAttribute('stroke-width', String(1.5 + failRate * 3));
+        }
+      } else if (heatMode === 'recent') {
+        const prev = prevTickCount[p.id] || 0;
+        if ((p.TickCount || 0) > prev) {
+          card.classList.add('recent-pulse');
+        }
+      }
+    }
+  }
+
+  document.querySelectorAll('.btn-heat').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      heatMode = btn.getAttribute('data-heat');
+      document.querySelectorAll('.btn-heat').forEach(function(b) { b.classList.toggle('active', b === btn); });
+      applyHeatGlow();
+    });
+  });
+  // Default: Off active
+  document.querySelector('.btn-heat[data-heat="off"]').classList.add('active');
+
   // Explorability 2: scrub strip sparkline. 1px per iter, colored by root status.
   function drawScrubStrip() {
     const strip = document.getElementById('scrub-strip');
@@ -1681,6 +1747,7 @@ body {
     drawProfileBar();
     drawCausalOverlay();
     drawScrubStrip();
+    applyHeatGlow();
     updateStatsReadout(view);
     if (selectedNodeId) highlightNode(selectedNodeId);
     if (highlightedIds.size) highlightSearch();
