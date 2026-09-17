@@ -2206,6 +2206,11 @@ body {
     updateStatsReadout(view);
     lastRenderMs = performance.now() - t0;
     if (selectedNodeId) highlightNode(selectedNodeId);
+    if (pendingRestoreNodeId && lastRawTree) {
+      const restored = findNode(lastRawTree, pendingRestoreNodeId);
+      pendingRestoreNodeId = null;
+      if (restored) selectNode(restored);
+    }
     if (highlightedIds.size) highlightSearch();
     if (searchInput.value.trim() && lastRawTree) {
       searchMatches = findNodesByName(lastRawTree, searchInput.value.trim().toLowerCase());

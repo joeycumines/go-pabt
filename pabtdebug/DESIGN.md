@@ -214,3 +214,8 @@ entry here.
   when compression has removed the requested action from the rendered view. This keeps
   the rationale strip and inspector reachable without forcing every hidden branch into
   the canvas.
+
+- **v15 — 2026-09-18:** Pending deep-link selections are applied after every rendered
+  snapshot, including the live SSE path. A compressed action can therefore populate the
+  inspector/rationale strip once its raw snapshot arrives instead of being lost during the
+  initial connection race.
