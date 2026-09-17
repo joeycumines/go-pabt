@@ -101,7 +101,7 @@ func IsRankByCost() bool {
 	return rankByCost.Load()
 }
 
-func actionCost(act *simpleAction) float64 {
+func actionCost(act *simpleAction, actorX, actorY float64) float64 {
 	if act == nil {
 		return 0
 	}
@@ -110,25 +110,23 @@ func actionCost(act *simpleAction) float64 {
 	hasHeldItemCond := false
 	hasPosCond := false
 	var targetX, targetY float64
-	var actorX, actorY float64
 	hasTarget := false
-	hasActor := false
 
 	for _, conds := range act.conditions {
 		for _, c := range conds {
-			switch k := c.Key().(type) {
+			switch c.Key().(type) {
 			case heldItemVar:
 				hasHeldItemCond = true
 			case positionVar:
 				hasPosCond = true
-				// Try to extract target position from effect values
 				for _, eff := range act.effects {
-					if pv, ok := eff.Key().(positionVar); ok && pv.SpriteID == k.SpriteID {
+					if pv, ok := eff.Key().(positionVar); ok {
 						if pval, ok := eff.Value().(*positionValue); ok {
-							if info, ok := pval.Positions[k.SpriteID]; ok {
+							if info, ok := pval.Positions[pv.SpriteID]; ok {
 								targetX = info.X
 								targetY = info.Y
 								hasTarget = true
+								break
 							}
 						}
 					}
@@ -137,22 +135,11 @@ func actionCost(act *simpleAction) float64 {
 		}
 	}
 
-	// Extract actor position from position effects
-	for _, eff := range act.effects {
-		if _, ok := eff.Key().(positionVar); ok {
-			if pval, ok := eff.Value().(*positionValue); ok {
-				for _, info := range pval.Positions {
-					actorX = info.X
-					actorY = info.Y
-					hasActor = true
-					break
-				}
-			}
-		}
-	}
-
 	dist := 0.0
-	if hasTarget && hasActor {
+	if hasTarget {
+		// Distance is measured from the actor's current position, not the
+		// destination, so nearer moves/places rank cheaper and the ordering
+		// is observable to the planner.
 		dist = math.Hypot(targetX-actorX, targetY-actorY)
 	}
 
@@ -317,13 +304,17 @@ func (h *harborState) Actions(failed pabt.Condition) (actions []pabt.IAction, er
 	// This changes planner behavior: cheaper actions tried first,
 	// demonstrating that action ordering is a policy choice, not accidental.
 	if rankByCost.Load() && len(actions) > 1 {
+		var ax, ay float64
+		if sp := st.Sprites[h.actorID]; sp != nil {
+			ax, ay = sp.X, sp.Y
+		}
 		sort.SliceStable(actions, func(i, j int) bool {
 			ai, oki := actions[i].(*simpleAction)
 			aj, okj := actions[j].(*simpleAction)
 			if !oki || !okj {
 				return false
 			}
-			return actionCost(ai) < actionCost(aj)
+			return actionCost(ai, ax, ay) < actionCost(aj, ax, ay)
 		})
 	}
 
