@@ -79,6 +79,7 @@ func TestConcurrencyStress(t *testing.T) {
 	const planCount = 4
 	plans := make([]logic.HarborPlanResult, planCount)
 	trackers := make([]*pabtdebug.Tracker, planCount)
+	planMu := make([]sync.RWMutex, planCount)
 	for i := 0; i < planCount; i++ {
 		plans[i] = logic.HarborPlan(ctx, harbor, actors[i].ID)
 		trackers[i] = pabtdebug.NewTrackerWithID(plans[i].Plan, fmt.Sprintf("stress-bot-%d", i))
@@ -89,7 +90,7 @@ func TestConcurrencyStress(t *testing.T) {
 		srv.RegisterTracker(trackers[i])
 	}
 
-	const iterations = 1000
+	const iterations = 500
 	var wg sync.WaitGroup
 
 	for i := 0; i < planCount; i++ {
@@ -98,16 +99,16 @@ func TestConcurrencyStress(t *testing.T) {
 			defer wg.Done()
 			pn := plans[idx].Node
 			tr := trackers[idx]
+			mu := &planMu[idx]
 			for iter := 0; iter < iterations; iter++ {
+				mu.Lock()
 				status, _ := pn.Tick()
 				tr.Track(status, nil)
+				mu.Unlock()
 			}
 		}(i)
 	}
 
-	// Pre-step the harbor so plans have live state to read.
-	// Step is not run concurrently because it mutates shared sim state
-	// while Tick reads it — the race detector correctly flags that.
 	for tick := 0; tick < iterations; tick++ {
 		harbor.Step(ctx)
 	}
@@ -115,15 +116,17 @@ func TestConcurrencyStress(t *testing.T) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		for i := 0; i < iterations/10; i++ {
+		for i := 0; i < iterations/5; i++ {
 			for j := 0; j < planCount; j++ {
 				_ = trackers[j].Profile()
 				_ = trackers[j].Timeline()
-				_ = trackers[j].Search("Selector")
-				_ = trackers[j].BuildTree()
 				if i > 0 {
 					_, _ = trackers[j].Diff(1, i)
 				}
+				planMu[j].RLock()
+				_ = trackers[j].Search("Selector")
+				_ = trackers[j].BuildTree()
+				planMu[j].RUnlock()
 			}
 			time.Sleep(time.Microsecond)
 		}

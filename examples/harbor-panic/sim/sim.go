@@ -402,24 +402,24 @@ func (h *Harbor) Step(ctx context.Context) error {
 									break
 								}
 							}
-						// avoid overlapping current berths
-						for _, other := range h.state.Sprites {
-							if other.Kind == KindGoal && other.ID != sp.ID {
-								if nx < other.X+float64(other.W) && nx+float64(sp.W) > other.X && ny < other.Y+float64(other.H) && ny+float64(sp.H) > other.Y {
-									free = false
-									break
+							// avoid overlapping current berths
+							for _, other := range h.state.Sprites {
+								if other.Kind == KindGoal && other.ID != sp.ID {
+									if nx < other.X+float64(other.W) && nx+float64(sp.W) > other.X && ny < other.Y+float64(other.H) && ny+float64(sp.H) > other.Y {
+										free = false
+										break
+									}
 								}
 							}
-						}
-						// avoid overlapping already-placed ghost berths
-						if free {
-							for _, g := range h.ghostBerths {
-								if nx < g.X+float64(g.W) && nx+float64(sp.W) > g.X && ny < g.Y+float64(g.H) && ny+float64(sp.H) > g.Y {
-									free = false
-									break
+							// avoid overlapping already-placed ghost berths
+							if free {
+								for _, g := range h.ghostBerths {
+									if nx < g.X+float64(g.W) && nx+float64(sp.W) > g.X && ny < g.Y+float64(g.H) && ny+float64(sp.H) > g.Y {
+										free = false
+										break
+									}
 								}
 							}
-						}
 							if free {
 								gx, gy = nx, ny
 								found = true
