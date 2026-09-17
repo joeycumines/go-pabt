@@ -204,3 +204,8 @@ entry here.
   secondary Save/Load/Export/Diff actions rather than wrapping them into the fixed grid
   row. This prevents chrome from covering the timeline and canvas; the full actions remain
   available at desktop width.
+
+- **v13 — 2026-09-18:** Rationale lookup follows the raw tree. Selecting or deep-linking
+  to an `ActionNode` now collects its sibling `PreconditionLeaf` values from the retained
+  raw snapshot, even when the canvas is compressed. The strip remains bounded to the
+  selected action and does not alter card geometry.

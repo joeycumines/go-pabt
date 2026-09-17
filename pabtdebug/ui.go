@@ -2661,9 +2661,18 @@ body {
     document.getElementById('dtl-status').innerHTML = statusBadge;
     const why = document.getElementById('selection-why');
     if (why) {
+      const rawContext = lastRawTree ? findNodeContext(lastRawTree, node.id, null) : null;
+      const rationaleNode = rawContext ? rawContext.node : node;
+      const parent = rawContext ? rawContext.parent : null;
       const parts = [];
-      if (node.condition) parts.push('<span class="why-label">PRE</span><span class="why-pre">' + escapeHtml(node.condition) + '</span>');
-      if (node.postCondition) parts.push('<span class="why-label">POST</span><span class="why-post">' + escapeHtml(node.postCondition) + '</span>');
+      if (rationaleNode.condition) parts.push('<span class="why-label">PRE</span><span class="why-pre">' + escapeHtml(rationaleNode.condition) + '</span>');
+      if (parent && (rationaleNode.nodeType === 'ActionNode' || rationaleNode.nodeType === 'ActionRoot' || rationaleNode.nodeType === 'ActionSelector')) {
+        (parent.children || []).forEach(function(sibling) {
+          if (sibling.nodeType === 'PreconditionLeaf' && sibling.condition) parts.push('<span class="why-label">PRE</span><span class="why-pre">' + escapeHtml(sibling.condition) + '</span>');
+        });
+      }
+      const post = rationaleNode.postCondition || (parent && parent.postCondition) || null;
+      if (post) parts.push('<span class="why-label">POST</span><span class="why-post">' + escapeHtml(post) + '</span>');
       why.innerHTML = parts.length ? parts.join('<span aria-hidden="true">·</span>') : '';
       why.style.display = parts.length ? 'flex' : 'none';
     }
@@ -2845,7 +2854,7 @@ body {
     const finish = function() {
       if (node) {
         const tree = currentTree || lastRawTree;
-        const n = tree ? findNode(tree, node) : null;
+        const n = (tree && findNode(tree, node)) || (lastRawTree && findNode(lastRawTree, node));
         if (n) { selectNode(n); panToNodeId(node); }
         else pendingRestoreNodeId = node;
       }
@@ -3073,6 +3082,16 @@ body {
       for (const c of node.children) {
         const f = findNode(c, id);
         if (f) return f;
+      }
+    }
+    return null;
+  }
+  function findNodeContext(node, id, parent) {
+    if (node.id === id) return { node: node, parent: parent || null };
+    if (node.children) {
+      for (const c of node.children) {
+        const found = findNodeContext(c, id, node);
+        if (found) return found;
       }
     }
     return null;
