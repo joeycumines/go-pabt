@@ -101,20 +101,14 @@ body {
      "detail"
      "bottom";
     grid-template-columns: 1fr;
-    grid-template-rows: 48px 150px 1fr 180px 60px;
+    grid-template-rows: 40px 150px 1fr 180px 60px;
   }
   #timeline { border-right: none; border-bottom: 1px solid var(--border); }
   #resize-tl, #resize-dt { display: none; }
   #minimap { display: none; }
-  #header { flex-wrap: nowrap; height: 48px; min-height: 48px; padding: 4px 8px; gap: 6px; overflow: hidden; }
+  #header { flex-wrap: wrap; height: auto; min-height: 40px; padding: 4px 8px; gap: 6px; }
   #header-left, #search-wrap, #header-right { min-width: 0; flex-shrink: 1; }
-  #header h1 { font-size: 12px; }
-  #plan-select { max-width: 108px; }
-  #plan-activity { gap: 3px; }
-  #search-wrap { flex: 1; }
-  #search-input { width: 100%; max-width: none; min-width: 72px; }
-  #header-right { gap: 4px; }
-  #header-right .btn:nth-child(-n+4) { display: none; }
+  #search-input { width: 100%; max-width: 160px; }
   #app { width: 100%; }
   body { overflow-x: hidden; }
 }
@@ -395,13 +389,12 @@ body {
  overflow: hidden;
 }
 #detail-header {
- padding: 10px 12px;
+ padding: 8px 10px;
  font-size: 10px;
  color: var(--accent);
  text-transform: uppercase;
  letter-spacing: 1px;
  border-bottom: 1px solid var(--border);
- background: linear-gradient(90deg, rgba(83,216,251,0.08), transparent 70%);
 }
 #detail-content {
  flex: 1;
@@ -410,20 +403,7 @@ body {
  font-size: 11px;
 }
 .dtl-section {
- margin-bottom: 12px;
- padding-bottom: 10px;
- border-bottom: 1px solid var(--divider);
-}
-.dtl-section:last-child { border-bottom: 0; }
-.dtl-value { line-height: 1.5; }
-#detail-body::before {
- content: 'LIVE NODE INSPECTOR';
- display: block;
- color: var(--text-secondary);
- font-family: var(--font-ui);
- font-size: 9px;
- letter-spacing: 0.14em;
- margin-bottom: 14px;
+ margin-bottom: 10px;
 }
 .dtl-label {
  color: var(--text-secondary);
@@ -513,9 +493,7 @@ body {
   font-family: var(--font-mono);
   pointer-events: none;
   z-index: 1000;
-  max-width: 260px;
-  max-height: 120px;
-  overflow: hidden;
+  max-width: 320px;
   line-height: 1.45;
   box-shadow: 0 8px 24px rgba(0,0,0,0.55);
   display: none;
@@ -566,13 +544,6 @@ body {
  fill: var(--text-secondary);
 }
 .node-dot { cursor: pointer; }
-.governance-marker { pointer-events: none; }
-.governance-marker rect { rx: 3; ry: 3; stroke-width: 1; }
-.governance-marker text { font-family: var(--font-ui); font-size: 7px; letter-spacing: 0.08em; dominant-baseline: central; }
-.governance-pre rect { fill: rgba(45,212,191,0.14); stroke: var(--type-pre); }
-.governance-pre text { fill: var(--type-pre); }
-.governance-post rect { fill: rgba(199,146,234,0.14); stroke: var(--type-ppa); }
-.governance-post text { fill: var(--type-ppa); }
 .node-detail {
  pointer-events: none;
  font-family: var(--font-mono);
@@ -1645,7 +1616,7 @@ body {
       let run = [n], cur = n;
       while (cur.children && cur.children.length === 1) { cur = cur.children[0]; run.push(cur); }
       const tailDepth = depth + run.length - 1;
-      const v = { id: n.id, name: n.name, nodeType: n.nodeType, status: n.status, effects: n.effects, condition: n.condition, postCondition: n.postCondition, frame: n.frame, children: [], _view: { kind: 'node', chainCount: 0, hiddenCount: 0, members: null, tailId: n.id, rep: n, onActive: active.has(n.id), governance: { pre: [], post: null } } };
+      const v = { id: n.id, name: n.name, nodeType: n.nodeType, status: n.status, effects: n.effects, condition: n.condition, postCondition: n.postCondition, frame: n.frame, children: [], _view: { kind: 'node', chainCount: 0, hiddenCount: 0, members: null, tailId: n.id, rep: n, onActive: active.has(n.id) } };
       byId.set(v.id, v);
       let tail = n;
       if (run.length > 2 && zoomTier() < 2 && !unwoundHeads.has(n.id) && !searchReveal.has(n.id)) {
@@ -1673,26 +1644,6 @@ body {
       return v;
     }
     const root = vm(tree, 0);
-    // Preconditions are sibling gates in PA-BT's planning tree: collect them
-    // beside the action they govern rather than forcing a distant inspector lookup.
-    (function annotateGovernance(n, parent, inheritedPost) {
-      if (!n) return;
-      if (n._view && (n.nodeType === 'ActionNode' || n.nodeType === 'ActionRoot' || n.nodeType === 'ActionSelector')) {
-        const pre = [];
-        if (parent && parent.children) {
-          for (let i = 0; i < parent.children.length; i++) {
-            const sibling = parent.children[i];
-            if (sibling.nodeType === 'PreconditionLeaf' && sibling.condition) pre.push({ id: sibling.id, value: sibling.condition });
-          }
-        }
-        let post = n.postCondition || (parent && parent.postCondition) || inheritedPost || null;
-        n._view.governance = { pre: pre, post: post };
-      }
-      if (n.children) {
-        const nextPost = n.postCondition || inheritedPost || null;
-        for (let i = 0; i < n.children.length; i++) annotateGovernance(n.children[i], n, nextPost);
-      }
-    })(root, null, null);
     root._byId = byId;
     root.structureHash = (tree.structureHash || '') + ':' + viewVersion;
     root._stats = { rendered: rendered, rawCount: rawCount, maxDepth: maxDepth };
@@ -2142,7 +2093,7 @@ body {
   // large trees it runs off-main-thread; renderTree continues in the reply.
   const layoutWorker = (function() {
     if (typeof Worker !== 'function' || typeof URL === 'undefined' || !URL.createObjectURL) return null;
-    const src = 'self.onmessage=function(ev){var d=ev.data;var n=d.n;var childStart=d.childStart;var childCount=d.childCount;var childIndex=d.childIndex;var level=d.level;var width=new Int32Array(n);var xoff=new Float64Array(n);function compute(i,lvl){level[i]=lvl;var c=childCount[i];if(c===0){width[i]=1;xoff[i]=0;return 1;}var total=0;var s=childStart[i];for(var k=0;k<c;k++){total+=compute(childIndex[s+k],lvl+1);}width[i]=total;var off=-total/2;for(var k2=0;k2<c;k2++){var ci=childIndex[s+k2];xoff[ci]=off+width[ci]/2;off+=width[ci];}return total;}compute(0,0);var absX=new Float64Array(n);var absY=new Float64Array(n);function assign(i,parentY){absX[i]=level[i]*d.colW+40;absY[i]=(parentY+xoff[i])*d.unit;if(childCount[i]){var s=childStart[i];for(var k=0;k<childCount[i];k++){assign(childIndex[s+k],parentY+xoff[i]);}}}assign(0,0);self.postMessage({seq:d.seq,absX:absX,absY:absY},[absX.buffer,absY.buffer]);};';
+    const src = 'self.onmessage=function(ev){var d=ev.data;var n=d.n;var childStart=d.childStart;var childCount=d.childCount;var level=d.level;var width=new Int32Array(n);var xoff=new Float64Array(n);function compute(i,lvl){level[i]=lvl;var c=childCount[i];if(c===0){width[i]=1;xoff[i]=0;return 1;}var total=0;var s=childStart[i];for(var k=0;k<c;k++){total+=compute(s+k,lvl+1);}width[i]=total;var off=-total/2;for(var k2=0;k2<c;k2++){var ci=s+k2;xoff[ci]=off+width[ci]/2;off+=width[ci];}return total;}compute(0,0);var absX=new Float64Array(n);var absY=new Float64Array(n);function assign(i,parentY){absX[i]=level[i]*d.colW+40;absY[i]=(parentY+xoff[i])*d.unit;if(childCount[i]){var s=childStart[i];for(var k=0;k<childCount[i];k++){assign(s+k,parentY+xoff[i]);}}}assign(0,0);self.postMessage({seq:d.seq,absX:absX,absY:absY},[absX.buffer,absY.buffer]);};';
     try {
       const w = new Worker(URL.createObjectURL(new Blob([src], { type: 'application/javascript' })));
       return w;
@@ -2150,13 +2101,13 @@ body {
   })();
   let layoutSeq = 0;
   function serializeViewForWorker(view) {
-    const ids = [], childStart = [], childCount = [], childIndices = [];
+    const ids = [], childStart = [], childCount = [];
     const index = new Map();
     (function walk(n) { index.set(n, ids.length); ids.push(n.id); if (n.children) for (let i = 0; i < n.children.length; i++) walk(n.children[i]); else void 0; })(view);
     const n = ids.length;
     const start = new Int32Array(n), count = new Int32Array(n), level = new Int32Array(n);
-    (function walk2(n, lvl) { const me = index.get(n); level[me] = lvl; const cs = n.children ? n.children.length : 0; count[me] = cs; start[me] = childIndices.length; if (n.children) for (let i = 0; i < cs; i++) { childIndices.push(index.get(n.children[i])); walk2(n.children[i], lvl + 1); } })(view, 0);
-    return { ids: ids, childStart: start, childCount: count, childIndex: new Int32Array(childIndices), level: level };
+    (function walk2(n, lvl) { const me = index.get(n); level[me] = lvl; const cs = n.children ? n.children.length : 0; count[me] = cs; start[me] = me + 1; if (n.children) for (let i = 0; i < cs; i++) walk2(n.children[i], lvl + 1); })(view, 0);
+    return { ids: ids, childStart: start, childCount: count, level: level };
   }
   function buildLayoutMapFromWorker(view, seq, cb) {
     const s = serializeViewForWorker(view);
@@ -2170,7 +2121,7 @@ body {
       }
       cb(map);
     };
-    layoutWorker.postMessage({ seq: seq, n: n, childStart: s.childStart, childCount: s.childCount, childIndex: s.childIndex, level: s.level, colW: COL_W, unit: UNIT }, [s.childStart.buffer, s.childCount.buffer, s.childIndex.buffer, s.level.buffer]);
+    layoutWorker.postMessage({ seq: seq, n: n, childStart: s.childStart, childCount: s.childCount, level: s.level, colW: COL_W, unit: UNIT }, [s.childStart.buffer, s.childCount.buffer, s.level.buffer]);
   }
   function renderTree(tree) {
     if (!tree) return;
@@ -2187,16 +2138,6 @@ body {
       return;
     }
     renderTreePhase2(view, buildLayoutMap(view), t0, zoomTier());
-  }
-  function findActiveNode(node) {
-    if (!node) return null;
-    if (node.children) {
-      for (var i = 0; i < node.children.length; i++) {
-        var active = findActiveNode(node.children[i]);
-        if (active) return active;
-      }
-    }
-    return node.status && node.status.LastStatus === 1 ? node : null;
   }
   function renderTreePhase2(view, layoutMap, t0, tier) {
     currentViewById = view._byId || null;
@@ -2232,12 +2173,6 @@ body {
     updateSvgView();
     updateMinimap();
     if (!initialFitDone && !userAdjustedView && currentTree) { initialFitDone = true; fitToTree(); }
-    // Start with the live execution path in the inspector so the first screen answers
-    // what is happening without requiring a discovery click. Preserve explicit choice.
-    if (!selectedNodeId || !findNode(currentTree, selectedNodeId)) {
-      var activeNode = findActiveNode(currentTree);
-      if (activeNode) selectNode(activeNode);
-    }
     scheduleIdleWork(function() { drawProfileBar(); });
     drawCausalOverlay();
     scheduleIdleWork(function() { drawScrubStrip(); });
@@ -2346,8 +2281,6 @@ body {
     }
 
     appendDetailText(group, newNode, x, y, zoomTier());
-    group.querySelectorAll('.governance-marker').forEach(function(m) { m.remove(); });
-    drawGovernanceMarkers(group, newNode, x, y, zoomTier());
     syncPill(group, newNode, x, y);
 
     return group;
@@ -2540,34 +2473,6 @@ body {
     if (existing) existing.remove();
     if (vw) { const pg = makePill(node, vw, x, y); if (pg) group.appendChild(pg); }
   }
-  function drawGovernanceMarkers(group, node, x, y, tier) {
-    const gov = node && node._view && node._view.governance;
-    if (!gov || (!gov.pre.length && !gov.post)) return;
-    const onActive = !!(node._view && node._view.onActive);
-    if (tier < 2 && !onActive && selectedNodeId !== node.id) return;
-    const marker = function(kind, label, value, offset) {
-      const mg = document.createElementNS(SVG_NS, 'g');
-      mg.setAttribute('class', 'governance-marker governance-' + kind);
-      const width = Math.max(30, Math.min(82, label.length * 5.4 + 12));
-      const rect = document.createElementNS(SVG_NS, 'rect');
-      rect.setAttribute('x', x + offset); rect.setAttribute('y', y + NODE_H - 15);
-      rect.setAttribute('width', width); rect.setAttribute('height', 10);
-      const text = document.createElementNS(SVG_NS, 'text');
-      text.setAttribute('x', x + offset + 5); text.setAttribute('y', y + NODE_H - 10);
-      text.textContent = label;
-      const title = document.createElementNS(SVG_NS, 'title');
-      title.textContent = (kind === 'pre' ? 'Requires: ' : 'Post-condition: ') + value;
-      mg.appendChild(title); mg.appendChild(rect); mg.appendChild(text); group.appendChild(mg);
-      return offset + width + 4;
-    };
-    let offset = 40;
-    if (gov.pre.length) {
-      const values = gov.pre.map(function(p) { return p.value; });
-      const summary = values.length > 1 ? 'PRE ' + values.length : 'PRE ' + truncate(values[0], 12);
-      offset = marker('pre', summary, values.join(', '), offset);
-    }
-    if (gov.post) marker('post', 'POST', gov.post, offset);
-  }
   function drawNodes(node, g, layoutMap) {
     const lm = layoutMap ? layoutMap[node.id] : null;
     const absX = lm ? lm.absX : node._absX;
@@ -2603,9 +2508,7 @@ body {
       group.setAttribute('class', isRunning ? 'node-running' : '');
       group.setAttribute('data-id', node.id);
       group.setAttribute('role', 'treeitem');
-      const gov = node._view && node._view.governance;
-    const govLabel = gov && (gov.pre.length || gov.post) ? ', ' + (gov.pre.length ? 'requires ' + gov.pre.map(function(p) { return p.value; }).join(', ') : '') + (gov.post ? ', post-condition ' + gov.post : '') : '';
-    group.setAttribute('aria-label', (node.nodeType || 'node') + ' ' + (node.name || node.id) + ', ' + statusToString(status) + (node.status ? ', ' + node.status.TickCount + ' ticks' : '') + govLabel);
+      group.setAttribute('aria-label', (node.nodeType || 'node') + ' ' + (node.name || node.id) + ', ' + statusToString(status) + (node.status ? ', ' + node.status.TickCount + ' ticks' : ''));
       group.style.cursor = 'pointer';
       const dot = document.createElementNS(SVG_NS, 'circle');
       dot.setAttribute('cx', absX + NODE_W / 2);
@@ -2627,9 +2530,7 @@ body {
     group.setAttribute('class', isRunning ? 'node-running' : '');
     group.setAttribute('data-id', node.id);
     group.setAttribute('role', 'treeitem');
-    const gov = node._view && node._view.governance;
-    const govLabel = gov && (gov.pre.length || gov.post) ? ', ' + (gov.pre.length ? 'requires ' + gov.pre.map(function(p) { return p.value; }).join(', ') : '') + (gov.post ? ', post-condition ' + gov.post : '') : '';
-    group.setAttribute('aria-label', (node.nodeType || 'node') + ' ' + (node.name || node.id) + ', ' + statusToString(status) + (node.status ? ', ' + node.status.TickCount + ' ticks' : '') + govLabel);
+    group.setAttribute('aria-label', (node.nodeType || 'node') + ' ' + (node.name || node.id) + ', ' + statusToString(status) + (node.status ? ', ' + node.status.TickCount + ' ticks' : ''));
     group.style.cursor = 'pointer';
 
     const ring = document.createElementNS(SVG_NS, 'rect');
@@ -2711,7 +2612,6 @@ body {
     }
 
     appendDetailText(group, node, x, y, zoomTier());
-    drawGovernanceMarkers(group, node, x, y, zoomTier());
 
     g.appendChild(group);
     if (node.children) {
