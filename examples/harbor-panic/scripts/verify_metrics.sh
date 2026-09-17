@@ -181,5 +181,53 @@ if [[ "$MARATHON" -eq 1 ]]; then
   echo "marathon 20k OK"
 fi
 
+# --- 5. Overflow JSONL Schema Validation ---
+# Each line must be valid JSON with required fields: iteration (int), status (int).
+# Sample first 100 and last 100 lines of each overflow file.
+SCHEMA_FAIL=0
+for pat in "/tmp/harbor-metrics.jsonl*" "/tmp/harbor-marathon.jsonl*" "/tmp/harbor*.jsonl" "/tmp/harbor.jsonl.*" "$REPO_ROOT/scratch/marathon.jsonl*" "$REPO_ROOT/scratch/harbor*.jsonl*"; do
+  for f in $pat; do
+    if [[ -f "$f" && "$f" != *"*" ]]; then
+      python3 - "$f" << 'PYEOF'
+import json, sys
+path = sys.argv[1]
+try:
+    with open(path, 'r') as fh:
+        lines = fh.readlines()
+except Exception as e:
+    print(f"FAIL: cannot read {path}: {e}", file=sys.stderr)
+    sys.exit(1)
+if not lines:
+    sys.exit(0)
+sample = lines[:100] + lines[-100:] if len(lines) > 200 else lines
+for i, line in enumerate(sample):
+    line = line.strip()
+    if not line:
+        continue
+    try:
+        obj = json.loads(line)
+    except json.JSONDecodeError as e:
+        print(f"FAIL: {path} line invalid JSON: {e}", file=sys.stderr)
+        sys.exit(1)
+    if not isinstance(obj.get('iteration'), int):
+        print(f"FAIL: {path} line missing integer 'iteration' field", file=sys.stderr)
+        sys.exit(1)
+    if 'status' not in obj:
+        print(f"FAIL: {path} line missing 'status' field", file=sys.stderr)
+        sys.exit(1)
+PYEOF
+      if [[ $? -ne 0 ]]; then
+        SCHEMA_FAIL=1
+      fi
+    fi
+  done
+done
+if [[ "$SCHEMA_FAIL" -eq 0 ]]; then
+  echo "overflow schema valid OK"
+else
+  echo "FAIL: overflow JSONL schema validation failed"
+  exit 1
+fi
+
 echo "=== All Metrics checks PASSED ==="
 exit 0
