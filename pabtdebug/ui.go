@@ -361,10 +361,11 @@ body {
 .dtl-badge {
  display: inline-block;
  padding: 2px 6px;
- border-radius: 3px;
+ border-radius: var(--radius-sm);
  font-size: 9px;
- margin-right: 4px;
- margin-bottom: 3px;
+ font-weight: 500;
+ margin: 1px 2px;
+ letter-spacing: 0.02em;
 }
 .dtl-badge-effects { background: rgba(70,214,140,0.16); color: var(--success); border: 1px solid var(--success); }
 .dtl-badge-cond { background: rgba(45,212,191,0.16); color: var(--type-pre); border: 1px solid var(--type-pre); }
