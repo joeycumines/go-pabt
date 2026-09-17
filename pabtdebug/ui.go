@@ -693,7 +693,7 @@ body {
         </select>
       </div>
     </div>
-    <div id="timeline-list" aria-label="Tick history" tabindex="0"></div>
+    <div id="timeline-list" role="log" aria-live="off" aria-label="Tick history" tabindex="0"></div>
   </aside>
 
   <main id="main">
@@ -715,7 +715,7 @@ body {
     <div id="breadcrumb-bar"></div>
     <div id="narration-bar"></div>
     <div id="scrub-strip" title="Drag to scrub the timeline"></div>
-    <div id="svg-container" tabindex="-1" aria-label="Planning tree canvas">
+    <div id="svg-container" tabindex="-1">
       <svg id="tree-svg" xmlns="http://www.w3.org/2000/svg" role="tree" aria-label="PA-BT planning tree"></svg>
       <div id="conn-banner" role="status"></div>
       <div id="minimap" title="Overview — click to navigate">
@@ -2388,8 +2388,6 @@ body {
       group.appendChild(dt);
     }
   }
-  function vw0HasChildren(node) { return !!(node.children && node.children.length); }
-  function vw0Expanded(node) { return !(node._view && node._view.hiddenCount > 0); }
   function makePill(node, vw, x, y) {
     let pillLabel = null;
     if (vw.kind === 'chain') pillLabel = '\u00d7' + vw.chainCount;
@@ -2606,7 +2604,7 @@ body {
     document.getElementById('detail-body').style.display = 'block';
 
     document.getElementById('dtl-name').textContent = node.name || node.nodeType || 'Unknown';
-    const typeBadge = '<span class="dtl-badge" style="background:' + escapeAttr(TYPE_COLORS[node.nodeType] || '#666') + ';color:#fff;">' + escapeHtml(node.nodeType || 'Unknown') + '</span>';
+    const typeBadge = '<span class="dtl-badge" style="background:#0a111d;color:' + escapeAttr(TYPE_COLORS[node.nodeType] || '#9fb4cc') + ';border:1px solid ' + escapeAttr(TYPE_COLORS[node.nodeType] || '#666') + ';">' + escapeHtml(node.nodeType || 'Unknown') + '</span>';
     const st = node.status ? node.status.LastStatus : 0;
     const stStr = statusToString(st);
     const stColor = STATUS_COLORS[st] || '#888';
