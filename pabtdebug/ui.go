@@ -717,7 +717,7 @@ body {
   let currentTree = null, selectedNodeId = null, highlightedIds = new Set();
   const MAX_TIMELINE_EVENTS = 200;
   let timelineEvents = [], currentIteration = null;
-  let pendingTree = null, rafId = null;
+  let pendingTree = null, rafId = null, pendingDelta = null, pendingOldTree = null, pendingOldLayout = null;
   let keyframeTree = null, lastReconstructedTree = null, lastReconstructedIteration = null;
   let liveMode = true, playback = false, playbackIdx = 0, playbackRaf = null, playbackLastTime = 0, playbackSpeed = 1;
   let pan = { x: 0, y: 0 }, zoom = 1, isDragging = false, dragStart = null, panStart = { x: 0, y: 0 };
@@ -1057,11 +1057,25 @@ body {
         }
         if (treeToRender) {
           pendingTree = treeToRender;
+          pendingDelta = event.delta || null;
+          pendingOldTree = currentTree;
+          pendingOldLayout = currentLayoutMap;
+          updateNarration(event);
+          if (pendingDelta && pendingDelta.removed && pendingDelta.removed.length) {
+            flashReplanRemoved(pendingDelta);
+          }
           if (!rafId) {
             rafId = requestAnimationFrame(function() {
               if (pendingTree) renderTree(pendingTree);
+              if (pendingDelta) {
+                flashReplanAdded(pendingDelta);
+                annotateConflictReorder(pendingDelta, pendingOldTree, pendingOldLayout);
+              }
               rafId = null;
               pendingTree = null;
+              pendingDelta = null;
+              pendingOldTree = null;
+              pendingOldLayout = null;
             });
           }
         }
@@ -1483,53 +1497,52 @@ body {
   function clearSvgChildren(el) { while (el.firstChild) el.removeChild(el.firstChild); }
 
   // Explorability 4: replan flash + conflict resolution annotation on SSE delta.
-  function flashReplan(delta) {
-    if (!delta) return;
+  // Tombstone removed nodes — must run BEFORE render (nodes still in DOM).
+  function flashReplanRemoved(delta) {
+    if (!delta || !delta.removed || !delta.removed.length) return;
     const nodesG = document.getElementById('nodes-layer');
     if (!nodesG) return;
-    // Flash added nodes green
-    if (delta.added) {
-      for (const added of delta.added) {
-        const el = document.getElementById(safeId(added.id));
-        if (el) {
-          const card = el.querySelector('.node-card');
-          if (card) {
-            card.classList.add('added-flash');
-            setTimeout(function() { card.classList.remove('added-flash'); }, 600);
-          }
-        }
+    let tombstoneG = document.getElementById('tombstone-layer');
+    if (!tombstoneG) {
+      tombstoneG = document.createElementNS(SVG_NS, 'g');
+      tombstoneG.setAttribute('id', 'tombstone-layer');
+      svg.insertBefore(tombstoneG, nodesG);
+    }
+    for (const rid of delta.removed) {
+      const el = document.getElementById(safeId(rid));
+      if (el) {
+        const clone = el.cloneNode(true);
+        clone.querySelectorAll('.node-card').forEach(function(c) {
+          c.classList.add('tombstone');
+        });
+        tombstoneG.appendChild(clone);
+        setTimeout(function() { if (clone.parentNode) clone.parentNode.removeChild(clone); }, 800);
       }
     }
-    // Tombstone removed nodes: clone into overlay, fade out
-    if (delta.removed && delta.removed.length > 0) {
-      let tombstoneG = document.getElementById('tombstone-layer');
-      if (!tombstoneG) {
-        tombstoneG = document.createElementNS(SVG_NS, 'g');
-        tombstoneG.setAttribute('id', 'tombstone-layer');
-        svg.insertBefore(tombstoneG, nodesG);
-      }
-      for (const rid of delta.removed) {
-        const el = document.getElementById(safeId(rid));
-        if (el) {
-          const clone = el.cloneNode(true);
-          clone.querySelectorAll('.node-card').forEach(function(c) {
-            c.classList.add('tombstone');
-          });
-          tombstoneG.appendChild(clone);
-          setTimeout(function() { if (clone.parentNode) clone.parentNode.removeChild(clone); }, 800);
+  }
+  // Flash added nodes green — must run AFTER render (nodes only exist post-render).
+  function flashReplanAdded(delta) {
+    if (!delta || !delta.added) return;
+    for (const added of delta.added) {
+      const el = document.getElementById(safeId(added.id));
+      if (el) {
+        const card = el.querySelector('.node-card');
+        if (card) {
+          card.classList.add('added-flash');
+          setTimeout(function() { card.classList.remove('added-flash'); }, 600);
         }
       }
     }
   }
 
-  // Conflict reorder annotation: detect removed+added with matching structureHash
-  function annotateConflictReorder(delta) {
-    if (!delta || !delta.added || !delta.removed || !currentLayoutMap) return;
+  // Conflict reorder annotation: detect removed+added with matching structureHash.
+  // oldTree/oldLayoutMap captured pre-render; currentLayoutMap is post-render.
+  function annotateConflictReorder(delta, oldTree, oldLayoutMap) {
+    if (!delta || !delta.added || !delta.removed || !oldLayoutMap || !currentLayoutMap) return;
     const removedHashes = {};
     for (const rid of delta.removed) {
-      // Look up in previous tree if available
-      if (currentTree) {
-        const node = findNode(currentTree, rid);
+      if (oldTree) {
+        const node = findNode(oldTree, rid);
         if (node && node.structureHash) removedHashes[node.structureHash] = rid;
       }
     }
@@ -1542,8 +1555,7 @@ body {
     for (const added of delta.added) {
       if (added.structureHash && removedHashes[added.structureHash]) {
         const oldId = removedHashes[added.structureHash];
-        // Find old position from currentLayoutMap (before re-render)
-        const oldLm = currentLayoutMap[oldId];
+        const oldLm = oldLayoutMap[oldId];
         const newLm = currentLayoutMap[added.id];
         if (oldLm && newLm) {
           const line = document.createElementNS(SVG_NS, 'line');
