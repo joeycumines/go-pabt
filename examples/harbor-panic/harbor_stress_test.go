@@ -21,33 +21,31 @@ func TestDeterminismLock(t *testing.T) {
 
 	harbor := hsim.NewHarbor(0, 3.1, 42)
 
+	// Establish the baseline ordering synchronously, before any reader
+	// goroutine starts, so every comparison reads immutable data. The prior
+	// version compared orderings[idx] against orderings[0] while reader 0's
+	// tick-0 write might not have landed yet, which raced against the
+	// harness's own bookkeeping rather than the harbor's ordering.
+	baseline := actorOrdering(harbor)
+	if baseline == "" {
+		t.Fatal("baseline ordering is empty — harbor has no actors")
+	}
+
 	var wg sync.WaitGroup
 	const readers = 100
 	const ticks = 50
 
-	orderings := make([]string, readers)
-
 	for i := 0; i < readers; i++ {
 		wg.Add(1)
-		go func(idx int) {
+		go func() {
 			defer wg.Done()
 			for tick := 0; tick < ticks; tick++ {
-				st := harbor.State()
-				actors := st.Actors()
-				var ids string
-				for _, a := range actors {
-					ids += a.ID + ","
-				}
-				if idx == 0 && tick == 0 {
-					orderings[idx] = ids
-				} else if tick == 0 {
-					orderings[idx] = ids
-				}
-				if idx > 0 && tick == 0 && orderings[idx] != orderings[0] {
-					t.Errorf("ordering mismatch at reader %d: %q vs %q", idx, orderings[idx], orderings[0])
+				if ids := actorOrdering(harbor); ids != baseline {
+					t.Errorf("ordering mismatch: %q vs baseline %q", ids, baseline)
+					return
 				}
 			}
-		}(i)
+		}()
 	}
 
 	wg.Add(1)
@@ -63,6 +61,14 @@ func TestDeterminismLock(t *testing.T) {
 		t.Fatal("non-deterministic Actor ordering detected")
 	}
 	t.Logf("DeterminismLock: %d readers x %d ticks, all orderings identical", readers, ticks)
+}
+
+func actorOrdering(harbor *hsim.Harbor) string {
+	var ids string
+	for _, a := range harbor.State().Actors() {
+		ids += a.ID + ","
+	}
+	return ids
 }
 
 func TestConcurrencyStress(t *testing.T) {
