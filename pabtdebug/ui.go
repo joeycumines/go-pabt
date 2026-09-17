@@ -1097,8 +1097,26 @@ body {
       svg.classList.remove('stale');
       scheduleConnProbe();
     };
+    let ssePending = null, sseTimer = null, lastSseAt = 0;
+    const SSE_MIN_INTERVAL = 33;
+    function drainSse() {
+      sseTimer = null;
+      const ev = ssePending;
+      ssePending = null;
+      if (ev) handleSseEvent(ev);
+    }
     eventSource.onmessage = function(e) {
       const event = JSON.parse(e.data);
+      const now = Date.now();
+      if (now - lastSseAt < SSE_MIN_INTERVAL) {
+        ssePending = event;
+        if (!sseTimer) sseTimer = setTimeout(drainSse, SSE_MIN_INTERVAL - (now - lastSseAt));
+        return;
+      }
+      lastSseAt = now;
+      handleSseEvent(event);
+    };
+    function handleSseEvent(event) {
       if (event.seq && lastSeq > 0 && event.seq > lastSeq + 1) {
         connDot.classList.remove('connected');
         connDot.style.background = cssVar('--running', '#f5a524');
@@ -1960,13 +1978,57 @@ body {
     }
   }
   let lastRenderMs = 0;
+  // Layout worker: buildLayoutMap is pure O(n) math over the view tree, so on
+  // large trees it runs off-main-thread; renderTree continues in the reply.
+  const layoutWorker = (function() {
+    if (typeof Worker !== 'function' || typeof URL === 'undefined' || !URL.createObjectURL) return null;
+    const src = 'self.onmessage=function(ev){var d=ev.data;var n=d.n;var childStart=d.childStart;var childCount=d.childCount;var level=d.level;var width=new Int32Array(n);var xoff=new Float64Array(n);function compute(i,lvl){level[i]=lvl;var c=childCount[i];if(c===0){width[i]=1;xoff[i]=0;return 1;}var total=0;var s=childStart[i];for(var k=0;k<c;k++){total+=compute(s+k,lvl+1);}width[i]=total;var off=-total/2;for(var k2=0;k2<c;k2++){var ci=s+k2;xoff[ci]=off+width[ci]/2;off+=width[ci];}return total;}compute(0,0);var absX=new Float64Array(n);var absY=new Float64Array(n);function assign(i,parentY){absX[i]=level[i]*d.colW+40;absY[i]=(parentY+xoff[i])*d.unit;if(childCount[i]){var s=childStart[i];for(var k=0;k<childCount[i];k++){assign(s+k,parentY+xoff[i]);}}}assign(0,0);self.postMessage({seq:d.seq,absX:absX,absY:absY},[absX.buffer,absY.buffer]);};';
+    try {
+      const w = new Worker(URL.createObjectURL(new Blob([src], { type: 'application/javascript' })));
+      return w;
+    } catch (e) { return null; }
+  })();
+  let layoutSeq = 0;
+  function serializeViewForWorker(view) {
+    const ids = [], childStart = [], childCount = [];
+    const index = new Map();
+    (function walk(n) { index.set(n, ids.length); ids.push(n.id); if (n.children) for (let i = 0; i < n.children.length; i++) walk(n.children[i]); else void 0; })(view);
+    const n = ids.length;
+    const start = new Int32Array(n), count = new Int32Array(n), level = new Int32Array(n);
+    (function walk2(n, lvl) { const me = index.get(n); level[me] = lvl; const cs = n.children ? n.children.length : 0; count[me] = cs; start[me] = me + 1; if (n.children) for (let i = 0; i < cs; i++) walk2(n.children[i], lvl + 1); })(view, 0);
+    return { ids: ids, childStart: start, childCount: count, level: level };
+  }
+  function buildLayoutMapFromWorker(view, seq, cb) {
+    const s = serializeViewForWorker(view);
+    const n = s.ids.length;
+    layoutWorker.onmessage = function(ev) {
+      const d = ev.data;
+      if (d.seq !== seq) return;
+      const map = {};
+      for (let i = 0; i < n; i++) {
+        map[s.ids[i]] = { level: s.level[i], width: 0, x: 0, absX: d.absX[i], absY: d.absY[i], bbox: { x: d.absX[i], y: d.absY[i] - NODE_H / 2, w: NODE_W, h: NODE_H } };
+      }
+      cb(map);
+    };
+    layoutWorker.postMessage({ seq: seq, n: n, childStart: s.childStart, childCount: s.childCount, level: s.level, colW: COL_W, unit: UNIT }, [s.childStart.buffer, s.childCount.buffer, s.level.buffer]);
+  }
   function renderTree(tree) {
     if (!tree) return;
     const t0 = performance.now();
     lastRawTree = tree;
     const view = buildViewModel(tree);
-    const layoutMap = buildLayoutMap(view);
-    const tier = zoomTier();
+    if (layoutWorker && view._stats && view._stats.rawCount > 1500) {
+      const seq = ++layoutSeq;
+      const capturedTierCheck = zoomTier();
+      buildLayoutMapFromWorker(view, seq, function(layoutMap) {
+        if (seq !== layoutSeq) return;
+        renderTreePhase2(view, layoutMap, t0, capturedTierCheck);
+      });
+      return;
+    }
+    renderTreePhase2(view, buildLayoutMap(view), t0, zoomTier());
+  }
+  function renderTreePhase2(view, layoutMap, t0, tier) {
     const needsFullRebuild = currentTree === null ||
       !document.getElementById('nodes-layer') ||
       currentTree.structureHash !== view.structureHash ||
