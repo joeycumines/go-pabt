@@ -252,6 +252,41 @@ body {
   0% { filter: drop-shadow(0 0 6px var(--accent)); }
   100% { filter: none; }
 }
+@keyframes addedFlash {
+  0% { filter: drop-shadow(0 0 8px var(--success)); stroke: var(--success); stroke-width: 3; }
+  100% { filter: none; }
+}
+@keyframes removedFade {
+  0% { opacity: 0.8; stroke: var(--failure); stroke-width: 2; stroke-dasharray: 4 2; }
+  100% { opacity: 0; }
+}
+.node-card.added-flash { animation: addedFlash 0.6s ease-out; }
+.tombstone { animation: removedFade 0.8s ease-out forwards; pointer-events: none; }
+.conflict-line {
+  stroke: var(--running);
+  stroke-width: 2;
+  stroke-dasharray: 6 3;
+  fill: none;
+  opacity: 0.7;
+  animation: conflictFade 2s ease-out forwards;
+}
+@keyframes conflictFade {
+  0% { opacity: 0.8; }
+  70% { opacity: 0.6; }
+  100% { opacity: 0; }
+}
+#narration-bar {
+  padding: 3px 8px;
+  font-size: 10px;
+  color: var(--text-secondary);
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--divider);
+  min-height: 16px;
+  font-family: var(--font-mono);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
 .causal-path {
   fill: none;
   stroke: var(--accent);
@@ -572,6 +607,7 @@ body {
       <span id="zoom-level" style="font-size:10px;color:var(--text-secondary);">100%</span>
     </div>
     <div id="breadcrumb-bar"></div>
+    <div id="narration-bar"></div>
     <div id="svg-container">
       <svg id="tree-svg" xmlns="http://www.w3.org/2000/svg"></svg>
       <div id="conn-banner" role="status"></div>
@@ -1445,6 +1481,110 @@ body {
     return added;
   }
   function clearSvgChildren(el) { while (el.firstChild) el.removeChild(el.firstChild); }
+
+  // Explorability 4: replan flash + conflict resolution annotation on SSE delta.
+  function flashReplan(delta) {
+    if (!delta) return;
+    const nodesG = document.getElementById('nodes-layer');
+    if (!nodesG) return;
+    // Flash added nodes green
+    if (delta.added) {
+      for (const added of delta.added) {
+        const el = document.getElementById(safeId(added.id));
+        if (el) {
+          const card = el.querySelector('.node-card');
+          if (card) {
+            card.classList.add('added-flash');
+            setTimeout(function() { card.classList.remove('added-flash'); }, 600);
+          }
+        }
+      }
+    }
+    // Tombstone removed nodes: clone into overlay, fade out
+    if (delta.removed && delta.removed.length > 0) {
+      let tombstoneG = document.getElementById('tombstone-layer');
+      if (!tombstoneG) {
+        tombstoneG = document.createElementNS(SVG_NS, 'g');
+        tombstoneG.setAttribute('id', 'tombstone-layer');
+        svg.insertBefore(tombstoneG, nodesG);
+      }
+      for (const rid of delta.removed) {
+        const el = document.getElementById(safeId(rid));
+        if (el) {
+          const clone = el.cloneNode(true);
+          clone.querySelectorAll('.node-card').forEach(function(c) {
+            c.classList.add('tombstone');
+          });
+          tombstoneG.appendChild(clone);
+          setTimeout(function() { if (clone.parentNode) clone.parentNode.removeChild(clone); }, 800);
+        }
+      }
+    }
+  }
+
+  // Conflict reorder annotation: detect removed+added with matching structureHash
+  function annotateConflictReorder(delta) {
+    if (!delta || !delta.added || !delta.removed || !currentLayoutMap) return;
+    const removedHashes = {};
+    for (const rid of delta.removed) {
+      // Look up in previous tree if available
+      if (currentTree) {
+        const node = findNode(currentTree, rid);
+        if (node && node.structureHash) removedHashes[node.structureHash] = rid;
+      }
+    }
+    let overlayG = document.getElementById('conflict-overlay');
+    if (!overlayG) {
+      overlayG = document.createElementNS(SVG_NS, 'g');
+      overlayG.setAttribute('id', 'conflict-overlay');
+      svg.appendChild(overlayG);
+    }
+    for (const added of delta.added) {
+      if (added.structureHash && removedHashes[added.structureHash]) {
+        const oldId = removedHashes[added.structureHash];
+        // Find old position from currentLayoutMap (before re-render)
+        const oldLm = currentLayoutMap[oldId];
+        const newLm = currentLayoutMap[added.id];
+        if (oldLm && newLm) {
+          const line = document.createElementNS(SVG_NS, 'line');
+          line.setAttribute('x1', oldLm.absX + NODE_W / 2);
+          line.setAttribute('y1', oldLm.absY);
+          line.setAttribute('x2', newLm.absX + NODE_W / 2);
+          line.setAttribute('y2', newLm.absY);
+          line.setAttribute('class', 'conflict-line');
+          overlayG.appendChild(line);
+          setTimeout(function() { if (line.parentNode) line.parentNode.removeChild(line); }, 2000);
+        }
+      }
+    }
+  }
+
+  function updateNarration(data) {
+    const bar = document.getElementById('narration-bar');
+    if (!bar) return;
+    const iter = data.iteration;
+    if (data.delta) {
+      const d = data.delta;
+      const nA = d.added ? d.added.length : 0;
+      const nR = d.removed ? d.removed.length : 0;
+      const nC = d.changed ? d.changed.length : 0;
+      let desc = 'Iter ' + iter + ': ';
+      if (nA > 0 || nR > 0) {
+        desc += '+' + nA + '/-' + nR + ' nodes';
+        if (nA > 0 && d.added[0]) desc += ' (' + d.added.map(function(a) { return a.nodeType || '?'; }).slice(0, 3).join(', ') + ')';
+        desc += ' \u2014 replanning';
+      } else if (nC > 0) {
+        desc += nC + ' status change' + (nC > 1 ? 's' : '');
+        if (d.changed[0]) desc += ' (' + d.changed[0].nodeType + ')';
+      } else {
+        desc += 'no structural change';
+      }
+      bar.textContent = desc;
+    } else {
+      const st = data.status != null ? statusToString(data.status) : '?';
+      bar.textContent = 'Iter ' + iter + ': keyframe \u2014 ' + st;
+    }
+  }
 
   // Explorability 3: heat/failure/recency glow modes.
   var heatMode = 'off';
