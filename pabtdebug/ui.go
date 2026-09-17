@@ -481,6 +481,14 @@ body {
  font-size: 8.5px;
  fill: var(--text-secondary);
 }
+.node-dot { cursor: pointer; }
+.node-detail {
+ pointer-events: none;
+ font-family: var(--font-mono);
+ font-size: 6.5px;
+ fill: var(--text-secondary);
+ opacity: 0.85;
+}
 .pill { cursor: pointer; }
 .pill circle { fill: var(--bg-card); stroke: var(--border); stroke-width: 1; transition: stroke 0.15s; }
 .pill:hover circle { stroke: var(--accent); }
@@ -721,6 +729,8 @@ body {
   let keyframeTree = null, lastReconstructedTree = null, lastReconstructedIteration = null;
   let liveMode = true, playback = false, playbackIdx = 0, playbackRaf = null, playbackLastTime = 0, playbackSpeed = 1;
   let pan = { x: 0, y: 0 }, zoom = 1, isDragging = false, dragStart = null, panStart = { x: 0, y: 0 };
+  let renderedTier = null;
+  function zoomTier() { return zoom < 0.5 ? 0 : (zoom > 1.5 ? 2 : 1); }
   let userAdjustedView = false, initialFitDone = false;
   let profileCache = null, profileCacheIter = null;
   let lastSeq = 0;
@@ -1447,12 +1457,12 @@ body {
       let run = [n], cur = n;
       while (cur.children && cur.children.length === 1) { cur = cur.children[0]; run.push(cur); }
       const tailDepth = depth + run.length - 1;
-      const v = { id: n.id, name: n.name, nodeType: n.nodeType, status: n.status, effects: n.effects, condition: n.condition, postCondition: n.postCondition, frame: n.frame, children: [], _view: { kind: 'node', chainCount: 0, hiddenCount: 0, members: null, tailId: n.id, rep: n } };
+      const v = { id: n.id, name: n.name, nodeType: n.nodeType, status: n.status, effects: n.effects, condition: n.condition, postCondition: n.postCondition, frame: n.frame, children: [], _view: { kind: 'node', chainCount: 0, hiddenCount: 0, members: null, tailId: n.id, rep: n, onActive: active.has(n.id) } };
       let tail = n;
-      if (run.length > 2 && !unwoundHeads.has(n.id) && !searchReveal.has(n.id)) {
+      if (run.length > 2 && zoomTier() < 2 && !unwoundHeads.has(n.id) && !searchReveal.has(n.id)) {
         let rep = run[run.length - 1];
         for (let i = 0; i < run.length; i++) if (run[i].status && run[i].status.LastStatus === 1) { rep = run[i]; break; }
-        v._view = { kind: 'chain', chainCount: run.length, hiddenCount: 0, members: run.map(function(m) { return m.id; }), tailId: run[run.length - 1].id, rep: rep };
+        v._view = { kind: 'chain', chainCount: run.length, hiddenCount: 0, members: run.map(function(m) { return m.id; }), tailId: run[run.length - 1].id, rep: rep, onActive: active.has(n.id) };
         v.name = rep.name || n.name;
         v.nodeType = rep.nodeType || n.nodeType;
         v.status = rep.status || n.status;
@@ -1869,9 +1879,11 @@ body {
     lastRawTree = tree;
     const view = buildViewModel(tree);
     const layoutMap = buildLayoutMap(view);
+    const tier = zoomTier();
     const needsFullRebuild = currentTree === null ||
       !document.getElementById('nodes-layer') ||
-      currentTree.structureHash !== view.structureHash;
+      currentTree.structureHash !== view.structureHash ||
+      renderedTier !== tier;
 
     if (needsFullRebuild) {
       clearSvgChildren(svg);
@@ -1894,6 +1906,7 @@ body {
       currentTree = view;
       currentLayoutMap = layoutMap;
     }
+    renderedTier = tier;
     updateSvgView();
     if (!initialFitDone && !userAdjustedView && currentTree) { initialFitDone = true; fitToTree(); }
     drawProfileBar();
@@ -1925,6 +1938,22 @@ body {
     const hasCondition = !!newNode.condition || !!newNode.postCondition;
 
     group.setAttribute('class', isRunning ? 'node-running' : '');
+
+    if (zoomTier() === 0) {
+      const dot = group.querySelector('.node-dot');
+      if (dot) {
+        dot.setAttribute('cx', absX + NODE_W / 2);
+        dot.setAttribute('cy', absY);
+        dot.setAttribute('r', isRunning ? '5' : '3.5');
+        dot.setAttribute('fill', isRunning ? statusColor : typeColor);
+      }
+      const newGroup = group.cloneNode(true);
+      group.parentNode.replaceChild(newGroup, group);
+      newGroup.addEventListener('click', function(e) { e.stopPropagation(); selectNode(newNode); });
+      newGroup.addEventListener('mouseenter', function(e) { showTooltip(e, newNode); });
+      newGroup.addEventListener('mouseleave', hideTooltip);
+      return newGroup;
+    }
 
     const ring = group.querySelector('.node-ring');
     if (ring) {
@@ -1968,6 +1997,7 @@ body {
     }
 
     group.querySelectorAll('.node-badge:not([data-glyph])').forEach(function(b){ b.remove(); });
+    group.querySelectorAll('.node-detail').forEach(function(d){ d.remove(); });
 
     if (hasEffects) {
       const eb = document.createElementNS(SVG_NS, 'circle');
@@ -1988,6 +2018,8 @@ body {
       cb.setAttribute('class', 'node-badge');
       group.appendChild(cb);
     }
+
+    appendDetailText(group, newNode, x, y, zoomTier());
 
     const newGroup = group.cloneNode(true);
     group.parentNode.replaceChild(newGroup, group);
@@ -2101,6 +2133,26 @@ body {
     }
   }
 
+  function appendDetailText(group, node, x, y, tier) {
+    const onActive = !!(node._view && node._view.onActive);
+    if (tier < 2 && !onActive) return;
+    const lines = [];
+    const cond = node.condition || node.postCondition;
+    if (cond) lines.push(truncate(cond, 30));
+    if (node.effects && node.effects.length) {
+      const eff = node.effects.map(function(e) { return e.key + '=' + e.value; }).join(', ');
+      lines.push(truncate(eff, 30));
+    }
+    for (let i = 0; i < Math.min(lines.length, 2); i++) {
+      const dt = document.createElementNS(SVG_NS, 'text');
+      dt.setAttribute('x', x + 4);
+      dt.setAttribute('y', y + NODE_H + 8 + i * 7);
+      dt.setAttribute('class', 'node-detail');
+      dt.setAttribute('font-size', '6.5');
+      dt.textContent = lines[i];
+      group.appendChild(dt);
+    }
+  }
   function drawNodes(node, g, layoutMap) {
     const lm = layoutMap ? layoutMap[node.id] : null;
     const absX = lm ? lm.absX : node._absX;
@@ -2127,6 +2179,32 @@ body {
     const hasEffects = node.effects && node.effects.length > 0;
     const hasCondition = !!node.condition || !!node.postCondition;
     const isRunning = status === 1;
+    const tier = zoomTier();
+    const onActive = !!(node._view && node._view.onActive);
+
+    if (tier === 0) {
+      const group = document.createElementNS(SVG_NS, 'g');
+      group.setAttribute('id', sid);
+      group.setAttribute('class', isRunning ? 'node-running' : '');
+      group.setAttribute('data-id', node.id);
+      group.style.cursor = 'pointer';
+      const dot = document.createElementNS(SVG_NS, 'circle');
+      dot.setAttribute('cx', absX + NODE_W / 2);
+      dot.setAttribute('cy', absY);
+      dot.setAttribute('r', isRunning ? '5' : '3.5');
+      dot.setAttribute('fill', isRunning ? statusColor : typeColor);
+      dot.setAttribute('class', 'node-dot');
+      if (!isRunning && status === 0) dot.setAttribute('opacity', '0.5');
+      group.appendChild(dot);
+      group.addEventListener('click', function(e) { e.stopPropagation(); selectNode(node); });
+      group.addEventListener('mouseenter', function(e) { showTooltip(e, node); });
+      group.addEventListener('mouseleave', hideTooltip);
+      g.appendChild(group);
+      if (node.children) {
+        for (const c of node.children) drawNodes(c, g, layoutMap);
+      }
+      return;
+    }
 
     const group = document.createElementNS(SVG_NS, 'g');
     group.setAttribute('id', sid);
@@ -2247,6 +2325,8 @@ body {
         group.appendChild(pg);
       }
     }
+
+    appendDetailText(group, node, x, y, zoomTier());
 
     group.addEventListener('click', function(e) { e.stopPropagation(); selectNode(node); });
     group.addEventListener('mouseenter', function(e) { showTooltip(e, node); });
@@ -2374,7 +2454,8 @@ body {
     const sid = safeId(id);
     const el = document.getElementById(sid);
     if (el) {
-      el.querySelector('.node-ring').classList.add('selected');
+      const ring = el.querySelector('.node-ring');
+      if (ring) ring.classList.add('selected');
     }
   }
 
@@ -2383,7 +2464,10 @@ body {
     for (const id of highlightedIds) {
       const sid = safeId(id);
       const el = document.getElementById(sid);
-      if (el) el.querySelector('.node-ring').classList.add('highlight');
+      if (el) {
+        const ring = el.querySelector('.node-ring');
+        if (ring) ring.classList.add('highlight');
+      }
     }
   }
 
@@ -2404,6 +2488,7 @@ body {
     svg.setAttribute('viewBox', pan.x + ' ' + pan.y + ' ' + (w / zoom) + ' ' + (h / zoom));
     zoomLevel.textContent = Math.round(zoom * 100) + '%';
     if (currentTree && countNodesJS(currentTree) > 200) { scheduleCullingRerender(); }
+    if (renderedTier !== null && zoomTier() !== renderedTier && lastRawTree) renderTree(lastRawTree);
   }
   function countNodesJS(tree){
     if(!tree) return 0;
