@@ -8,7 +8,7 @@ import "math/rand"
 func chaosFreePos(h *Harbor, w, hh int32, minY, maxY int32, rng *rand.Rand) (float64, float64, bool) {
 	for attempt := 0; attempt < 30; attempt++ {
 		nx := float64(rng.Intn(int(SpaceWidth - w)))
-		ny := float64(minY + rng.Intn(int(maxY-minY-hh+1)))
+		ny := float64(minY + int32(rng.Intn(int(maxY-minY-hh+1))))
 		free := true
 		for _, wall := range h.state.Walls {
 			if nx < wall.X+float64(wall.W) && nx+float64(w) > wall.X && ny < wall.Y+float64(wall.H) && ny+float64(hh) > wall.Y {
