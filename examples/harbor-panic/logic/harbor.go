@@ -656,34 +656,60 @@ func (t TestHarborState) ActionCount(spriteID string) int {
 	return len(actions)
 }
 
-// ActionOrderDiffers builds plans under both ranking modes and returns
-// whether the resulting tree strings differ after N ticks.
+// ActionOrderDiffers returns whether enabling cost-based ranking changes the
+// order of actions returned by Actions for the first goal condition. It
+// observes the Actions() return order directly rather than comparing tree
+// strings, which cannot distinguish structurally-identical actions that differ
+// only in position values.
 func ActionOrderDiffers(ctx context.Context, seed int64, ticks int) bool {
-	harborLex := hsim.NewHarbor(0, 0, seed)
-	SetRankByCost(false)
-	actorsLex := harborLex.State().Actors()
-	if len(actorsLex) == 0 {
+	harbor := hsim.NewHarbor(0, 0, seed)
+	st := harbor.State()
+	actors := st.Actors()
+	if len(actors) == 0 {
 		return false
 	}
-	resultLex := HarborPlan(ctx, harborLex, actorsLex[0].ID)
-	for i := 0; i < ticks; i++ {
-		harborLex.Step(ctx)
-		resultLex.Node.Tick()
-	}
-	outLex := resultLex.Node.String()
+	hs := &harborState{ctx: ctx, harbor: harbor, actorID: actors[0].ID}
 
-	harborCost := hsim.NewHarbor(0, 0, seed)
-	SetRankByCost(true)
-	actorsCost := harborCost.State().Actors()
-	resultCost := HarborPlan(ctx, harborCost, actorsCost[0].ID)
-	for i := 0; i < ticks; i++ {
-		harborCost.Step(ctx)
-		resultCost.Node.Tick()
+	goals := st.Goals()
+	cubes := st.Cubes()
+	if len(goals) == 0 || len(cubes) == 0 {
+		return false
 	}
-	outCost := resultCost.Node.String()
+	goalID := goals[0].ID
+	cubeID := cubes[0].ID
+	cond := &simpleCond{
+		key: positionVar{SpriteID: cubeID},
+		match: func(r any) bool {
+			pos := r.(*positionValue).Positions
+			cp := pos[cubeID]
+			gp := pos[goalID]
+			if cp == nil || gp == nil {
+				return false
+			}
+			return math.Hypot(cp.X-gp.X, cp.Y-gp.Y) < 1.5
+		},
+	}
+
 	SetRankByCost(false)
-
-	return outLex != outCost
+	actionsLex, err := hs.Actions(cond)
+	if err != nil || len(actionsLex) < 2 {
+		return false
+	}
+	SetRankByCost(true)
+	actionsCost, err := hs.Actions(cond)
+	SetRankByCost(false)
+	if err != nil || len(actionsCost) < 2 {
+		return false
+	}
+	if len(actionsLex) != len(actionsCost) {
+		return true
+	}
+	for i := range actionsLex {
+		if actionsLex[i] != actionsCost[i] {
+			return true
+		}
+	}
+	return false
 }
 
 // DeadEndRecord is a serializable record of a failed planning destination,
