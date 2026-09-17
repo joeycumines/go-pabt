@@ -1674,11 +1674,14 @@ body {
       svg.insertBefore(tombstoneG, nodesG);
     }
     let tombstoned = 0;
-    for (const rid of delta.removed) {
-      if (tombstoned >= 20) break;
+    const scanMax = Math.min(delta.removed.length, 200);
+    for (let ri = 0; ri < scanMax && tombstoned < 20; ri++) {
+      const rid = delta.removed[ri];
       const el = document.getElementById(safeId(rid));
       if (el) {
         const clone = el.cloneNode(true);
+        clone.removeAttribute('id');
+        clone.querySelectorAll('[id]').forEach(function(d) { d.removeAttribute('id'); });
         clone.querySelectorAll('.node-card').forEach(function(c) {
           c.classList.add('tombstone');
         });
@@ -1692,8 +1695,9 @@ body {
   function flashReplanAdded(delta) {
     if (!delta || !delta.added) return;
     let flashed = 0;
-    for (const added of delta.added) {
-      if (flashed >= 20) break;
+    const scanMax = Math.min(delta.added.length, 200);
+    for (let ai = 0; ai < scanMax && flashed < 20; ai++) {
+      const added = delta.added[ai];
       const el = document.getElementById(safeId(added.id));
       if (el) {
         const card = el.querySelector('.node-card');
@@ -1724,8 +1728,9 @@ body {
       svg.appendChild(overlayG);
     }
     let conflicts = 0;
-    for (const added of delta.added) {
-      if (conflicts >= 20) break;
+    const scanMax = Math.min(delta.added.length, 200);
+    for (let ai = 0; ai < scanMax && conflicts < 20; ai++) {
+      const added = delta.added[ai];
       if (added.structureHash && removedHashes[added.structureHash]) {
         const oldId = removedHashes[added.structureHash];
         const oldLm = oldLayoutMap[oldId];
@@ -1932,39 +1937,48 @@ body {
     jumpToIteration(timelineEvents[newIdx].iteration);
   }
 
-  function togglePlayback() {
-    playback = !playback;
-    btnPlay.textContent = playback ? '\u23F8' : '\u25B6';
-    if (playback) {
-      if (!timelineEvents.length) { playback = false; btnPlay.textContent = '\u25B6'; return; }
-      if (currentIteration == null) playbackIdx = 0;
-      else {
-        playbackIdx = -1;
-        for (let i = 0; i < timelineEvents.length; i++) {
-          if (timelineEvents[i].iteration === currentIteration) { playbackIdx = i; break; }
-        }
-        if (playbackIdx < 0) playbackIdx = 0;
-      }
-      playbackLastTime = performance.now() - 1000 / Math.max(0.1, playbackSpeed);
-      playbackRaf = requestAnimationFrame(playbackRafStep);
-    } else {
-      cancelPlaybackRaf();
-    }
+  function stopPlayback() {
+    playback = false;
+    cancelPlaybackRaf();
+    btnPlay.textContent = '\u25B6';
   }
-  function playbackRafStep(now) {
+  function startPlayback(fromCurrent) {
+    if (!timelineEvents.length) return;
+    liveMode = false;
+    btnLive.classList.remove('active');
+    playback = true;
+    playbackSpeed = parseFloat(document.getElementById('speed-select').value) || 1;
+    if (fromCurrent && currentIteration != null) {
+      playbackIdx = -1;
+      for (let i = 0; i < timelineEvents.length; i++) {
+        if (timelineEvents[i].iteration === currentIteration) { playbackIdx = i; break; }
+      }
+      if (playbackIdx < 0) playbackIdx = 0;
+    } else {
+      playbackIdx = 0;
+    }
+    playbackLastTime = performance.now() - 1000 / Math.max(0.1, playbackSpeed);
+    btnPlay.textContent = '\u25A0';
+    playbackRaf = requestAnimationFrame(playbackStep);
+  }
+  function playbackStep(now) {
     if (!playback) return;
     const interval = 1000 / Math.max(0.1, playbackSpeed);
     if (now - playbackLastTime >= interval) {
       playbackLastTime = now - ((now - playbackLastTime) % interval);
-      if (playbackIdx >= timelineEvents.length - 1) {
-        playback = false;
-        cancelPlaybackRaf();
-        btnPlay.textContent = '\u25B6';
-        return;
-      }
-      stepIteration(1);
+      if (playbackIdx >= timelineEvents.length) { stopPlayback(); return; }
+      const ev = timelineEvents[playbackIdx];
+      currentIteration = ev.iteration;
+      renderTimeline();
+      fetchTimelineIter(ev.iteration);
+      playbackIdx++;
+      playbackSpeed = parseFloat(document.getElementById('speed-select').value) || playbackSpeed;
     }
-    playbackRaf = requestAnimationFrame(playbackRafStep);
+    playbackRaf = requestAnimationFrame(playbackStep);
+  }
+  function togglePlayback() {
+    if (playback) { stopPlayback(); return; }
+    startPlayback(true);
   }
 
   function jumpToNextFailure() {
@@ -3090,8 +3104,9 @@ body {
     }
     const dx = (e.clientX - dragStart.x) / zoom;
     const dy = (e.clientY - dragStart.y) / zoom;
-    pan.x = panStart.x - dx;
-    pan.y = panStart.y - dy;
+    const nx = panStart.x - dx;
+    const ny = panStart.y - dy;
+    if (isFinite(nx) && isFinite(ny)) { pan.x = nx; pan.y = ny; }
     userAdjustedView = true;
     updateSvgView();
   });
@@ -3124,8 +3139,9 @@ body {
     if (e.ctrlKey || e.metaKey) {
       zoomAtPoint(e.clientX, e.clientY, Math.pow(0.99, e.deltaY));
     } else {
-      pan.x += e.deltaX / zoom;
-      pan.y += e.deltaY / zoom;
+      const nx = pan.x + e.deltaX / zoom;
+      const ny = pan.y + e.deltaY / zoom;
+      if (isFinite(nx) && isFinite(ny)) { pan.x = nx; pan.y = ny; }
       userAdjustedView = true;
       updateSvgView();
     }
@@ -3157,8 +3173,9 @@ body {
     e.preventDefault();
     if (touchState.mode === 'pan' && e.touches.length === 1) {
       const t = e.touches[0];
-      pan.x -= (t.clientX - touchState.x) / zoom;
-      pan.y -= (t.clientY - touchState.y) / zoom;
+      const nx = pan.x - (t.clientX - touchState.x) / zoom;
+      const ny = pan.y - (t.clientY - touchState.y) / zoom;
+      if (isFinite(nx) && isFinite(ny)) { pan.x = nx; pan.y = ny; }
       touchState.x = t.clientX;
       touchState.y = t.clientY;
       userAdjustedView = true;
@@ -3168,8 +3185,9 @@ body {
       const dist = Math.hypot(b.clientX - a.clientX, b.clientY - a.clientY);
       const cx = (a.clientX + b.clientX) / 2, cy = (a.clientY + b.clientY) / 2;
       if (touchState.dist > 0 && dist > 0) zoomAtPoint(cx, cy, dist / touchState.dist);
-      pan.x -= (cx - touchState.cx) / zoom;
-      pan.y -= (cy - touchState.cy) / zoom;
+      const nx = pan.x - (cx - touchState.cx) / zoom;
+      const ny = pan.y - (cy - touchState.cy) / zoom;
+      if (isFinite(nx) && isFinite(ny)) { pan.x = nx; pan.y = ny; }
       touchState.dist = dist;
       touchState.cx = cx;
       touchState.cy = cy;
@@ -3293,43 +3311,8 @@ body {
 
   function cancelPlaybackRaf() { if (playbackRaf != null) { cancelAnimationFrame(playbackRaf); playbackRaf = null; } }
   btnPlay.addEventListener('click', function() {
-    if (playback) {
-      playback = false;
-      cancelPlaybackRaf();
-      btnPlay.textContent = '\u25B6';
-      return;
-    }
-    if (!timelineEvents.length) return;
-    liveMode = false;
-    btnLive.classList.remove('active');
-    playback = true;
-    playbackIdx = 0;
-    playbackSpeed = parseFloat(document.getElementById('speed-select').value) || 1;
-    playbackLastTime = performance.now();
-    btnPlay.textContent = '\u25A0';
-    function step(now) {
-      if (!playback) return;
-      const intervalMs = 1000 / playbackSpeed;
-      if (now - playbackLastTime >= intervalMs) {
-        if (playbackIdx >= timelineEvents.length) {
-          playback = false;
-          cancelPlaybackRaf();
-          btnPlay.textContent = '\u25B6';
-          return;
-        }
-        const ev = timelineEvents[playbackIdx];
-        currentIteration = ev.iteration;
-        // Use virtual render (no innerHTML wipe)
-        renderTimeline();
-        fetchTimelineIter(ev.iteration);
-        playbackIdx++;
-        playbackLastTime = now;
-        // Allow speed changes to take effect immediately without teardown
-        playbackSpeed = parseFloat(document.getElementById('speed-select').value) || playbackSpeed;
-      }
-      playbackRaf = requestAnimationFrame(step);
-    }
-    playbackRaf = requestAnimationFrame(step);
+    if (playback) { stopPlayback(); return; }
+    startPlayback(false);
   });
   // Speed changes apply on next frame without timer recreation
   document.getElementById('speed-select').addEventListener('change', function(){
