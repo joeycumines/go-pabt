@@ -106,9 +106,14 @@ body {
   #timeline { border-right: none; border-bottom: 1px solid var(--border); }
   #resize-tl, #resize-dt { display: none; }
   #minimap { display: none; }
-  #header { flex-wrap: wrap; height: auto; min-height: 40px; padding: 4px 8px; gap: 6px; }
+  #header { flex-wrap: nowrap; height: 40px; min-height: 40px; padding: 4px 8px; gap: 6px; overflow: hidden; }
   #header-left, #search-wrap, #header-right { min-width: 0; flex-shrink: 1; }
-  #search-input { width: 100%; max-width: 160px; }
+  #header h1 { font-size: 12px; }
+  #plan-select { max-width: 108px; }
+  #search-wrap { flex: 1; }
+  #search-input { width: 100%; max-width: none; min-width: 72px; }
+  #header-right { gap: 4px; }
+  #header-right .btn:nth-child(-n+4) { display: none; }
   #app { width: 100%; }
   body { overflow-x: hidden; }
 }

@@ -198,3 +198,9 @@ entry here.
   below the event narration and above the canvas. It is empty for structural nodes, keeps
   the tree geometry unchanged, and makes action eligibility visible without painting labels
   onto every card. The inspector remains the full-detail surface.
+
+- **v12 — 2026-09-18:** Narrow-window header containment. At widths below 768px the
+  header stays on one 40px row, preserves the plan/search controls, and hides only the
+  secondary Save/Load/Export/Diff actions rather than wrapping them into the fixed grid
+  row. This prevents chrome from covering the timeline and canvas; the full actions remain
+  available at desktop width.
