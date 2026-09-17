@@ -576,6 +576,7 @@ body {
       <button class="btn" id="btn-load" title="Load Session (File System Access API or upload)">Load</button>
       <button class="btn" id="btn-export" title="Export DOT">Export DOT</button>
       <button class="btn" id="btn-diff" title="Diff">Diff</button>
+      <button class="btn" id="btn-shortcuts" title="Keyboard shortcuts (?)">?</button>
       <button class="btn" id="btn-fullscreen" title="Fullscreen">&#9974;</button>
     </div>
   </header>
@@ -2432,6 +2433,22 @@ body {
         displayCachedProfile(nodeId, data);
       });
   }
+
+  function toggleShortcutsOverlay() {
+    const overlay = document.getElementById('shortcuts-overlay');
+    if (!overlay) return;
+    overlay.style.display = overlay.style.display === 'none' ? 'flex' : 'none';
+  }
+  (function() {
+    const btn = document.getElementById('btn-shortcuts');
+    if (btn) btn.addEventListener('click', toggleShortcutsOverlay);
+    const closeBtn = document.getElementById('btn-close-shortcuts');
+    if (closeBtn) closeBtn.addEventListener('click', toggleShortcutsOverlay);
+    const overlay = document.getElementById('shortcuts-overlay');
+    if (overlay) overlay.addEventListener('click', function(e) {
+      if (e.target === overlay) overlay.style.display = 'none';
+    });
+  })();
 
   function showTooltip(e, node) {
     const st = node.status ? statusToString(node.status.LastStatus) : 'Unknown';
