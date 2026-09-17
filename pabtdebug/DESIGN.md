@@ -192,3 +192,9 @@ entry here.
   absolutely positioned diagnostic panel over neighboring cards; click selects the node
   and the inspector remains the authoritative full-detail surface. Profile/timeline hover
   disclosures remain available where they do not cover the tree canvas.
+
+- **v11 — 2026-09-18:** Selected-node rationale strip. When a selected node carries a
+  condition or post-condition, a single compact `PRE`/`POST` strip appears immediately
+  below the event narration and above the canvas. It is empty for structural nodes, keeps
+  the tree geometry unchanged, and makes action eligibility visible without painting labels
+  onto every card. The inspector remains the full-detail surface.

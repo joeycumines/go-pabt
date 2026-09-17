@@ -328,6 +328,24 @@ body {
   70% { opacity: 0.6; }
   100% { opacity: 0; }
 }
+#selection-why {
+  display: none;
+  align-items: center;
+  gap: 8px;
+  min-height: 0;
+  padding: 0 8px;
+  border-bottom: 1px solid var(--divider);
+  background: rgba(45,212,191,0.04);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+#selection-why .why-label { color: var(--accent); font-family: var(--font-ui); font-size: 8px; letter-spacing: 0.1em; }
+#selection-why .why-pre { color: var(--type-pre); }
+#selection-why .why-post { color: var(--type-ppa); }
 #narration-bar {
   padding: 3px 8px;
   font-size: 10px;
@@ -723,6 +741,7 @@ body {
     </div>
     <div id="breadcrumb-bar"></div>
     <div id="narration-bar"></div>
+    <div id="selection-why" aria-live="polite"></div>
     <div id="scrub-strip" title="Drag to scrub the timeline"></div>
     <div id="svg-container" tabindex="-1">
       <svg id="tree-svg" xmlns="http://www.w3.org/2000/svg" role="tree" aria-label="PA-BT planning tree"></svg>
@@ -2635,6 +2654,14 @@ body {
     const statusBadge = '<span class="dtl-badge" style="background:' + escapeAttr(stColor) + '22;border:1px solid ' + escapeAttr(stColor) + ';color:' + escapeAttr(stColor) + ';">' + escapeHtml(stStr) + (node.status ? ' x' + node.status.TickCount : '') + '</span>';
     document.getElementById('dtl-type').innerHTML = typeBadge;
     document.getElementById('dtl-status').innerHTML = statusBadge;
+    const why = document.getElementById('selection-why');
+    if (why) {
+      const parts = [];
+      if (node.condition) parts.push('<span class="why-label">PRE</span><span class="why-pre">' + escapeHtml(node.condition) + '</span>');
+      if (node.postCondition) parts.push('<span class="why-label">POST</span><span class="why-post">' + escapeHtml(node.postCondition) + '</span>');
+      why.innerHTML = parts.length ? parts.join('<span aria-hidden="true">·</span>') : '';
+      why.style.display = parts.length ? 'flex' : 'none';
+    }
 
     const frameWrap = document.getElementById('dtl-frame-wrap');
     if (node.frame) {
