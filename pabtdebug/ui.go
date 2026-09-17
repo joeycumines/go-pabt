@@ -596,22 +596,23 @@ body {
 </style>
 </head>
 <body>
+<a id="skip-link" href="#svg-container" style="position:absolute;left:-9999px;top:0;z-index:3000;background:var(--bg-panel);color:var(--accent);padding:6px 12px;border:1px solid var(--accent);">Skip to tree canvas</a>
 <div id="app">
-  <header id="header">
+  <header id="header" role="banner">
     <div id="header-left">
       <h1>PA-BT // DEBUG</h1>
       <select id="plan-select" class="btn" title="Switch plan" style="padding:2px 6px;font-size:10px;"><option value="">—</option></select>
       <div id="plan-activity" title="Per-plan activity"></div>
-      <div id="conn-dot"></div>
-      <span id="conn-status">Connecting...</span>
+      <div id="conn-dot" aria-hidden="true"></div>
+      <span id="conn-status" role="status" aria-live="polite">Connecting...</span>
     </div>
     <div id="search-wrap">
       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color:#888;vertical-align:middle;"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
       <input id="search-input" type="text" placeholder="Search nodes..." autocomplete="off">
       <span id="search-count" title="Matches in the current tree"></span>
-      <button class="btn" id="search-prev" title="Previous match (Shift+Enter)" style="padding:2px 6px;">&#8593;</button>
-      <button class="btn" id="search-next" title="Next match (Enter)" style="padding:2px 6px;">&#8595;</button>
-      <button class="btn" id="search-clear" title="Clear search (Escape)" style="padding:2px 6px;">&#10005;</button>
+      <button class="btn" id="search-prev" title="Previous match (Shift+Enter)" aria-label="Previous search match" style="padding:2px 6px;">&#8593;</button>
+      <button class="btn" id="search-next" title="Next match (Enter)" aria-label="Next search match" style="padding:2px 6px;">&#8595;</button>
+      <button class="btn" id="search-clear" title="Clear search (Escape)" aria-label="Clear search" style="padding:2px 6px;">&#10005;</button>
     </div>
     <div id="header-right">
       <button class="btn" id="btn-save" title="Save Session (File System Access API or download)">Save</button>
@@ -623,7 +624,7 @@ body {
     </div>
   </header>
 
-  <aside id="timeline">
+  <aside id="timeline" role="navigation" aria-label="Tick timeline">
     <div id="timeline-header">
       <span>Timeline</span>
       <div>
@@ -660,8 +661,8 @@ body {
     </div>
     <div id="breadcrumb-bar"></div>
     <div id="narration-bar"></div>
-    <div id="svg-container">
-      <svg id="tree-svg" xmlns="http://www.w3.org/2000/svg"></svg>
+    <div id="svg-container" tabindex="-1" aria-label="Planning tree canvas">
+      <svg id="tree-svg" xmlns="http://www.w3.org/2000/svg" role="tree" aria-label="PA-BT planning tree"></svg>
       <div id="conn-banner" role="status"></div>
       <div id="minimap" title="Overview — click to navigate">
         <svg id="minimap-svg" width="140" height="100"></svg>
@@ -671,7 +672,7 @@ body {
     <div id="tooltip" class="tooltip"></div>
   </main>
 
-  <aside id="detail">
+  <aside id="detail" role="complementary" aria-label="Node detail panel">
     <div id="detail-header">Detail Panel</div>
     <div id="detail-content">
       <div id="detail-empty">Select a node to view details</div>
@@ -2090,6 +2091,8 @@ body {
     const hasCondition = !!newNode.condition || !!newNode.postCondition;
 
     group.setAttribute('class', isRunning ? 'node-running' : '');
+    group.setAttribute('aria-label', (newNode.nodeType || 'node') + ' ' + (newNode.name || newNode.id) + ', ' + statusToString(status) + (newNode.status ? ', ' + newNode.status.TickCount + ' ticks' : ''));
+    if (vw0HasChildren(newNode)) group.setAttribute('aria-expanded', vw0Expanded(newNode) ? 'true' : 'false');
 
     if (zoomTier() === 0) {
       const dot = group.querySelector('.node-dot');
@@ -2311,6 +2314,8 @@ body {
       group.appendChild(dt);
     }
   }
+  function vw0HasChildren(node) { return !!(node.children && node.children.length); }
+  function vw0Expanded(node) { return !(node._view && node._view.hiddenCount > 0); }
   function makePill(node, vw, x, y) {
     let pillLabel = null;
     if (vw.kind === 'chain') pillLabel = '\u00d7' + vw.chainCount;
@@ -2411,6 +2416,10 @@ body {
     group.setAttribute('id', sid);
     group.setAttribute('class', isRunning ? 'node-running' : '');
     group.setAttribute('data-id', node.id);
+    group.setAttribute('role', 'treeitem');
+    group.setAttribute('tabindex', '0');
+    group.setAttribute('aria-label', (node.nodeType || 'node') + ' ' + (node.name || node.id) + ', ' + statusToString(status) + (node.status ? ', ' + node.status.TickCount + ' ticks' : ''));
+    if (vw0HasChildren(node)) group.setAttribute('aria-expanded', vw0Expanded(node) ? 'true' : 'false');
     group.style.cursor = 'pointer';
 
     const ring = document.createElementNS(SVG_NS, 'rect');
