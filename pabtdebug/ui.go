@@ -2155,7 +2155,7 @@ body {
     (function walk(n) { index.set(n, ids.length); ids.push(n.id); if (n.children) for (let i = 0; i < n.children.length; i++) walk(n.children[i]); else void 0; })(view);
     const n = ids.length;
     const start = new Int32Array(n), count = new Int32Array(n), level = new Int32Array(n);
-    (function walk2(n, lvl) { const me = index.get(n); level[me] = lvl; const cs = n.children ? n.children.length : 0; count[me] = cs; start[me] = childIndices.length; if (n.children) for (let i = 0; i < cs; i++) { childIndices.push(index.get(n.children[i])); walk2(n.children[i], lvl + 1); } })(view, 0);
+    (function walk2(n, lvl) { const me = index.get(n); level[me] = lvl; const cs = n.children ? n.children.length : 0; count[me] = cs; start[me] = childIndices.length; if (n.children) { for (let i = 0; i < cs; i++) childIndices.push(index.get(n.children[i])); for (let i = 0; i < cs; i++) walk2(n.children[i], lvl + 1); } })(view, 0);
     return { ids: ids, childStart: start, childCount: count, childIndex: new Int32Array(childIndices), level: level };
   }
   function buildLayoutMapFromWorker(view, seq, cb) {
