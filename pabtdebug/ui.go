@@ -1910,6 +1910,7 @@ body {
     }
     renderedTier = tier;
     updateSvgView();
+    updateMinimap();
     if (!initialFitDone && !userAdjustedView && currentTree) { initialFitDone = true; fitToTree(); }
     drawProfileBar();
     drawCausalOverlay();
@@ -2432,6 +2433,67 @@ body {
         profileCacheIter = currentIteration;
         displayCachedProfile(nodeId, data);
       });
+  }
+
+  function updateMinimap() {
+    const mmSvg = document.getElementById('minimap-svg');
+    const mmVp = document.getElementById('minimap-viewport');
+    if (!mmSvg || !mmVp || !currentTree || !currentLayoutMap) return;
+    const mmW = 140, mmH = 100;
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const id in currentLayoutMap) {
+      const e = currentLayoutMap[id];
+      if (e.absX < minX) minX = e.absX;
+      if (e.absY < minY) minY = e.absY;
+      if (e.absX + NODE_W > maxX) maxX = e.absX + NODE_W;
+      if (e.absY + NODE_H > maxY) maxY = e.absY + NODE_H;
+    }
+    if (!isFinite(minX)) return;
+    const pad = 20;
+    minX -= pad; minY -= pad; maxX += pad; maxY += pad;
+    const treeW = maxX - minX, treeH = maxY - minY;
+    const scale = Math.min(mmW / treeW, mmH / treeH);
+    mmSvg.innerHTML = '';
+    const offsetX = (mmW - treeW * scale) / 2;
+    const offsetY = (mmH - treeH * scale) / 2;
+    for (const id in currentLayoutMap) {
+      const e = currentLayoutMap[id];
+      const r = document.createElementNS(SVG_NS, 'rect');
+      r.setAttribute('x', offsetX + (e.absX - minX) * scale);
+      r.setAttribute('y', offsetY + (e.absY - minY) * scale);
+      r.setAttribute('width', Math.max(1.5, NODE_W * scale));
+      r.setAttribute('height', Math.max(1, NODE_H * scale));
+      r.setAttribute('fill', 'rgba(83,216,251,0.25)');
+      mmSvg.appendChild(r);
+    }
+    const vb = svg.getAttribute('viewBox');
+    if (vb) {
+      const parts = vb.split(/[\s,]+/).map(Number);
+      if (parts.length === 4) {
+        const vx = parts[0], vy = parts[1], vw = parts[2], vh = parts[3];
+        const rx = offsetX + (vx - minX) * scale;
+        const ry = offsetY + (vy - minY) * scale;
+        const rw = vw * scale;
+        const rh = vh * scale;
+        mmVp.style.left = Math.max(0, rx) + 'px';
+        mmVp.style.top = Math.max(0, ry) + 'px';
+        mmVp.style.width = Math.min(mmW, rw) + 'px';
+        mmVp.style.height = Math.min(mmH, rh) + 'px';
+      }
+    }
+    mmSvg.onclick = function(e) {
+      const rect = mmSvg.getBoundingClientRect();
+      const mx = e.clientX - rect.left;
+      const my = e.clientY - rect.top;
+      const worldX = (mx - offsetX) / scale + minX;
+      const worldY = (my - offsetY) / scale + minY;
+      const cw = svgContainer.clientWidth || 800;
+      const ch = svgContainer.clientHeight || 600;
+      pan.x = worldX - cw / (zoom * 2);
+      pan.y = worldY - ch / (zoom * 2);
+      userAdjustedView = true;
+      updateSvgView();
+    };
   }
 
   function toggleShortcutsOverlay() {
