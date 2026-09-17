@@ -54,15 +54,58 @@ body {
  text-transform: uppercase;
 }
 #app {
- display: grid;
- grid-template-areas:
-  "header header header"
-  "timeline main detail"
-  "bottom bottom bottom";
- grid-template-columns: 220px 1fr 280px;
- grid-template-rows: 40px 1fr 60px;
- height: 100vh;
- width: 100vw;
+  position: relative;
+  display: grid;
+  grid-template-areas:
+   "header header header"
+   "timeline main detail"
+   "bottom bottom bottom";
+  grid-template-columns: var(--col-timeline, 220px) 1fr var(--col-detail, 280px);
+  grid-template-rows: 40px 1fr 60px;
+  height: 100vh;
+  width: 100vw;
+}
+#resize-tl, #resize-dt {
+  position: absolute;
+  top: 40px;
+  bottom: 60px;
+  width: 5px;
+  cursor: col-resize;
+  background: transparent;
+  z-index: 60;
+}
+#resize-tl { left: var(--col-timeline, 220px); margin-left: -2px; }
+#resize-dt { left: calc(100vw - var(--col-detail, 280px)); margin-left: -3px; }
+#resize-tl:hover, #resize-dt:hover { background: var(--accent); }
+@media (max-width: 1024px) {
+  #app {
+    grid-template-areas:
+     "header header"
+     "timeline main"
+     "detail detail"
+     "bottom bottom";
+    grid-template-columns: var(--col-timeline, 220px) 1fr;
+    grid-template-rows: 40px 1fr 200px 60px;
+  }
+  #detail { border-left: none; border-top: 1px solid var(--border); max-height: 200px; overflow-y: auto; }
+  #resize-dt { display: none; }
+  #resize-tl { bottom: 260px; }
+}
+@media (max-width: 768px) {
+  #app {
+    grid-template-areas:
+     "header"
+     "timeline"
+     "main"
+     "detail"
+     "bottom";
+    grid-template-columns: 1fr;
+    grid-template-rows: 40px 150px 1fr 180px 60px;
+  }
+  #timeline { border-right: none; border-bottom: 1px solid var(--border); }
+  #resize-tl, #resize-dt { display: none; }
+  #minimap { display: none; }
+  #header { flex-wrap: wrap; height: auto; min-height: 40px; padding: 4px 8px; }
 }
 #header {
  grid-area: header;
@@ -135,7 +178,11 @@ body {
  cursor: pointer;
  transition: background 0.2s, border-color 0.2s;
 }
-.btn:hover { background: var(--bg-main); border-color: var(--accent); }
+.btn:hover {
+ background: var(--bg-main);
+ border-color: var(--accent);
+}
+.btn-icon { color: var(--text-primary); }
 .btn.active { background: #004f66; border-color: var(--accent); }
 #timeline {
  grid-area: timeline;
@@ -601,14 +648,14 @@ body {
   <header id="header" role="banner">
     <div id="header-left">
       <h1>PA-BT // DEBUG</h1>
-      <select id="plan-select" class="btn" title="Switch plan" style="padding:2px 6px;font-size:10px;"><option value="">—</option></select>
+      <select id="plan-select" class="btn" title="Switch plan" aria-label="Switch plan" style="padding:2px 6px;font-size:10px;"><option value="">—</option></select>
       <div id="plan-activity" title="Per-plan activity"></div>
       <div id="conn-dot" aria-hidden="true"></div>
       <span id="conn-status" role="status" aria-live="polite">Connecting...</span>
     </div>
     <div id="search-wrap">
       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color:#888;vertical-align:middle;"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
-      <input id="search-input" type="text" placeholder="Search nodes..." autocomplete="off">
+      <input id="search-input" type="text" placeholder="Search nodes..." aria-label="Search nodes" autocomplete="off">
       <span id="search-count" title="Matches in the current tree"></span>
       <button class="btn" id="search-prev" title="Previous match (Shift+Enter)" aria-label="Previous search match" style="padding:2px 6px;">&#8593;</button>
       <button class="btn" id="search-next" title="Next match (Enter)" aria-label="Next search match" style="padding:2px 6px;">&#8595;</button>
@@ -619,11 +666,12 @@ body {
       <button class="btn" id="btn-load" title="Load Session (File System Access API or upload)">Load</button>
       <button class="btn" id="btn-export" title="Export DOT">Export DOT</button>
       <button class="btn" id="btn-diff" title="Diff">Diff</button>
-      <button class="btn" id="btn-shortcuts" title="Keyboard shortcuts (?)">?</button>
-      <button class="btn" id="btn-fullscreen" title="Fullscreen">&#9974;</button>
+      <button class="btn btn-icon" id="btn-shortcuts" title="Keyboard shortcuts (?)" aria-label="Keyboard shortcuts">?</button>
+      <button class="btn btn-icon" id="btn-fullscreen" title="Fullscreen" aria-label="Toggle fullscreen">&#9974;</button>
     </div>
   </header>
 
+  <div id="resize-tl" role="separator" aria-orientation="vertical" aria-label="Resize timeline panel"></div>
   <aside id="timeline" role="navigation" aria-label="Tick timeline">
     <div id="timeline-header">
       <span>Timeline</span>
@@ -632,7 +680,7 @@ body {
         <button class="btn" id="btn-next-change" title="Jump to next structural change (C)">&#8595;C</button>
         <button class="btn" id="btn-live">Live</button>
         <button class="btn" id="btn-play">&#9654;</button>
-        <select class="btn" id="speed-select" style="padding:2px 4px;">
+        <select class="btn" id="speed-select" title="Playback speed" aria-label="Playback speed" style="padding:2px 4px;">
           <option value="0.5">0.5x</option>
           <option value="1" selected>1x</option>
           <option value="2">2x</option>
@@ -672,6 +720,7 @@ body {
     <div id="tooltip" class="tooltip"></div>
   </main>
 
+  <div id="resize-dt" role="separator" aria-orientation="vertical" aria-label="Resize detail panel"></div>
   <aside id="detail" role="complementary" aria-label="Node detail panel">
     <div id="detail-header">Detail Panel</div>
     <div id="detail-content">
@@ -1512,6 +1561,7 @@ body {
   }
 
   let currentLayoutMap = null;
+  let currentViewById = null;
   let lastRawTree = null;
   let viewVersion = 0;
   let expandAllMode = false;
@@ -1543,6 +1593,7 @@ body {
       return a;
     })(tree);
     const memo = new Map();
+    const byId = new Map();
     let rendered = 0, rawCount = 0, maxDepth = 0;
     (function rawStats(n, d) { rawCount++; if (d > maxDepth) maxDepth = d; if (n.children) for (let i = 0; i < n.children.length; i++) rawStats(n.children[i], d + 1); })(tree, 0);
     function vm(n, depth) {
@@ -1551,6 +1602,7 @@ body {
       while (cur.children && cur.children.length === 1) { cur = cur.children[0]; run.push(cur); }
       const tailDepth = depth + run.length - 1;
       const v = { id: n.id, name: n.name, nodeType: n.nodeType, status: n.status, effects: n.effects, condition: n.condition, postCondition: n.postCondition, frame: n.frame, children: [], _view: { kind: 'node', chainCount: 0, hiddenCount: 0, members: null, tailId: n.id, rep: n, onActive: active.has(n.id) } };
+      byId.set(v.id, v);
       let tail = n;
       if (run.length > 2 && zoomTier() < 2 && !unwoundHeads.has(n.id) && !searchReveal.has(n.id)) {
         let rep = run[run.length - 1];
@@ -1577,6 +1629,7 @@ body {
       return v;
     }
     const root = vm(tree, 0);
+    root._byId = byId;
     root.structureHash = (tree.structureHash || '') + ':' + viewVersion;
     root._stats = { rendered: rendered, rawCount: rawCount, maxDepth: maxDepth };
     return root;
@@ -2031,6 +2084,7 @@ body {
     renderTreePhase2(view, buildLayoutMap(view), t0, zoomTier());
   }
   function renderTreePhase2(view, layoutMap, t0, tier) {
+    currentViewById = view._byId || null;
     const needsFullRebuild = currentTree === null ||
       !document.getElementById('nodes-layer') ||
       currentTree.structureHash !== view.structureHash ||
@@ -2102,12 +2156,7 @@ body {
         dot.setAttribute('r', isRunning ? '5' : '3.5');
         dot.setAttribute('fill', isRunning ? statusColor : typeColor);
       }
-      const newGroup = group.cloneNode(true);
-      group.parentNode.replaceChild(newGroup, group);
-      newGroup.addEventListener('click', function(e) { e.stopPropagation(); selectNode(newNode); });
-      newGroup.addEventListener('mouseenter', function(e) { showTooltip(e, newNode); });
-      newGroup.addEventListener('mouseleave', hideTooltip);
-      return newGroup;
+      return group;
     }
 
     const ring = group.querySelector('.node-ring');
@@ -2153,7 +2202,6 @@ body {
 
     group.querySelectorAll('.node-badge:not([data-glyph])').forEach(function(b){ b.remove(); });
     group.querySelectorAll('.node-detail').forEach(function(d){ d.remove(); });
-    group.querySelectorAll('.pill').forEach(function(p){ p.remove(); });
 
     if (hasEffects) {
       const eb = document.createElementNS(SVG_NS, 'circle');
@@ -2176,20 +2224,9 @@ body {
     }
 
     appendDetailText(group, newNode, x, y, zoomTier());
-    const vwU = newNode._view;
-    if (vwU) {
-      const pgU = makePill(newNode, vwU, x, y);
-      if (pgU) group.appendChild(pgU);
-    }
+    syncPill(group, newNode, x, y);
 
-    const newGroup = group.cloneNode(true);
-    group.parentNode.replaceChild(newGroup, group);
-
-    newGroup.addEventListener('click', function(e) { e.stopPropagation(); selectNode(newNode); });
-    newGroup.addEventListener('mouseenter', function(e) { showTooltip(e, newNode); });
-    newGroup.addEventListener('mouseleave', hideTooltip);
-
-    return newGroup;
+    return group;
   }
 
   function diffAndUpdateNodes(newNode, oldNode, container, layoutMap, oldLayoutMap) {
@@ -2349,15 +2386,37 @@ body {
     pt.textContent = pillLabel;
     pg.appendChild(pr);
     pg.appendChild(pt);
-    pg.addEventListener('click', function(e) {
-      e.stopPropagation();
-      if (vw.kind === 'chain') unwoundHeads.add(node.id);
-      else if (vw.hiddenCount > 0) { userExpanded.add(vw.tailId); userCollapsed.delete(vw.tailId); }
-      else { userCollapsed.add(vw.tailId); userExpanded.delete(vw.tailId); }
-      bumpView();
-      renderTree(lastRawTree);
-    });
+    pg.setAttribute('data-label', pillLabel);
     return pg;
+  }
+  function syncPill(group, node, x, y) {
+    const vw = node._view;
+    let label = null;
+    if (vw) {
+      if (vw.kind === 'chain') label = '\u00d7' + vw.chainCount;
+      else if (vw.hiddenCount > 0) label = '+' + vw.hiddenCount;
+      else if (vw.kind === 'branch') label = '\u2212';
+    }
+    const existing = group.querySelector('.pill');
+    if (!label) { if (existing) existing.remove(); return; }
+    if (existing && existing.getAttribute('data-label') === label) {
+      const pw = Math.max(30, label.length * 6.2 + 16);
+      const ph = 20;
+      const px = x + NODE_W - pw - 6;
+      const py = y + NODE_H - ph - 6;
+      const rects = existing.querySelectorAll('rect');
+      if (rects.length === 2) {
+        rects[0].setAttribute('x', px - 5); rects[0].setAttribute('y', py - 5);
+        rects[0].setAttribute('width', pw + 10); rects[0].setAttribute('height', ph + 10);
+        rects[1].setAttribute('x', px); rects[1].setAttribute('y', py);
+        rects[1].setAttribute('width', pw); rects[1].setAttribute('height', ph);
+      }
+      const t = existing.querySelector('text');
+      if (t) { t.setAttribute('x', px + pw / 2); t.setAttribute('y', py + ph / 2); }
+      return;
+    }
+    if (existing) existing.remove();
+    if (vw) { const pg = makePill(node, vw, x, y); if (pg) group.appendChild(pg); }
   }
   function drawNodes(node, g, layoutMap) {
     const lm = layoutMap ? layoutMap[node.id] : null;
@@ -2402,9 +2461,6 @@ body {
       dot.setAttribute('class', 'node-dot');
       if (!isRunning && status === 0) dot.setAttribute('opacity', '0.5');
       group.appendChild(dot);
-      group.addEventListener('click', function(e) { e.stopPropagation(); selectNode(node); });
-      group.addEventListener('mouseenter', function(e) { showTooltip(e, node); });
-      group.addEventListener('mouseleave', hideTooltip);
       g.appendChild(group);
       if (node.children) {
         for (const c of node.children) drawNodes(c, g, layoutMap);
@@ -2501,10 +2557,6 @@ body {
     }
 
     appendDetailText(group, node, x, y, zoomTier());
-
-    group.addEventListener('click', function(e) { e.stopPropagation(); selectNode(node); });
-    group.addEventListener('mouseenter', function(e) { showTooltip(e, node); });
-    group.addEventListener('mouseleave', hideTooltip);
 
     g.appendChild(group);
     if (node.children) {
@@ -3091,6 +3143,64 @@ body {
     if (e.touches.length === 0) touchState = null;
     else if (e.touches.length === 1) { const t = e.touches[0]; touchState = { mode: 'pan', x: t.clientX, y: t.clientY }; }
   }, { passive: true });
+  (function bindPanelResize() {
+    const app = document.getElementById('app');
+    function bind(handleId, varName, min, max, invert, fallback) {
+      const h = document.getElementById(handleId);
+      if (!h) return;
+      h.addEventListener('mousedown', function(e) {
+        e.preventDefault();
+        const startX = e.clientX;
+        const cur = parseFloat(getComputedStyle(app).getPropertyValue(varName));
+        const startW = isNaN(cur) ? fallback : cur;
+        function move(ev) {
+          let w = startW + (invert ? startX - ev.clientX : ev.clientX - startX);
+          w = Math.max(min, Math.min(max, w));
+          app.style.setProperty(varName, w + 'px');
+        }
+        function up() { window.removeEventListener('mousemove', move); window.removeEventListener('mouseup', up); }
+        window.addEventListener('mousemove', move);
+        window.addEventListener('mouseup', up);
+      });
+    }
+    bind('resize-tl', '--col-timeline', 140, 420, false, 220);
+    bind('resize-dt', '--col-detail', 180, 480, true, 280);
+  })();
+  // Interaction is delegated once on the SVG: per-node listeners died whenever a
+  // group was rebuilt during live ticks, which made pill expand/collapse work
+  // only intermittently and hover states blink. Handlers resolve the node through
+  // currentViewById so they always act on the freshest view state.
+  svg.addEventListener('click', function(e) {
+    const pill = e.target.closest ? e.target.closest('.pill') : null;
+    if (pill) {
+      const g = pill.closest('[data-id]');
+      const node = g && currentViewById ? currentViewById.get(g.getAttribute('data-id')) : null;
+      if (!node || !node._view) return;
+      const vw = node._view;
+      if (vw.kind === 'chain') unwoundHeads.add(node.id);
+      else if (vw.hiddenCount > 0) { userExpanded.add(vw.tailId); userCollapsed.delete(vw.tailId); }
+      else { userCollapsed.add(vw.tailId); userExpanded.delete(vw.tailId); }
+      bumpView();
+      renderTree(lastRawTree);
+      return;
+    }
+    const g = e.target.closest ? e.target.closest('[data-id]') : null;
+    if (g && currentViewById) {
+      const node = currentViewById.get(g.getAttribute('data-id'));
+      if (node) selectNode(node);
+    }
+  });
+  svg.addEventListener('mouseover', function(e) {
+    const g = e.target.closest ? e.target.closest('[data-id]') : null;
+    if (!g || (e.relatedTarget && g.contains(e.relatedTarget))) return;
+    const node = currentViewById ? currentViewById.get(g.getAttribute('data-id')) : null;
+    if (node) showTooltip(e, node);
+  });
+  svg.addEventListener('mouseout', function(e) {
+    const g = e.target.closest ? e.target.closest('[data-id]') : null;
+    if (!g || (e.relatedTarget && g.contains(e.relatedTarget))) return;
+    hideTooltip();
+  });
   svgContainer.addEventListener('dblclick', function(e) {
     const target = e.target.closest('[data-id]');
     if (target) {
