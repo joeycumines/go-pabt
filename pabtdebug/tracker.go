@@ -129,6 +129,9 @@ func (t *Tracker) WithID(id string) *Tracker {
 }
 
 func (t *Tracker) Track(status bt.Status, err error) {
+	if t == nil {
+		return
+	}
 	iter := int(t.iteration.Add(1))
 
 	var durationMs float64
@@ -346,6 +349,9 @@ func (t *Tracker) Track(status bt.Status, err error) {
 }
 
 func (t *Tracker) Events() []TickEvent {
+	if t == nil {
+		return nil
+	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	result := make([]TickEvent, len(t.entries))
@@ -366,6 +372,9 @@ func (t *Tracker) Events() []TickEvent {
 }
 
 func (t *Tracker) Hub() *Hub {
+	if t == nil {
+		return nil
+	}
 	return t.hub
 }
 
@@ -378,6 +387,9 @@ func (t *Tracker) BuildTree() *TreeNode {
 }
 
 func (t *Tracker) Timeline() []TimelineEntry {
+	if t == nil {
+		return nil
+	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	entries := make([]TimelineEntry, len(t.entries))
@@ -394,6 +406,9 @@ func (t *Tracker) Timeline() []TimelineEntry {
 }
 
 func (t *Tracker) EventAt(iteration int) (*TickEvent, bool) {
+	if t == nil {
+		return nil, false
+	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	idx, ok := t.eventIndex[iteration]
@@ -416,6 +431,9 @@ func (t *Tracker) EventAt(iteration int) (*TickEvent, bool) {
 }
 
 func (t *Tracker) Profile() []NodeProfile {
+	if t == nil {
+		return nil
+	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if len(t.profiles) == 0 {
@@ -436,6 +454,9 @@ func (t *Tracker) Profile() []NodeProfile {
 }
 
 func (t *Tracker) Search(query string) []SearchResult {
+	if t == nil {
+		return nil
+	}
 	tree := t.BuildTree()
 	if tree == nil {
 		return nil
@@ -447,6 +468,9 @@ func (t *Tracker) Search(query string) []SearchResult {
 }
 
 func (t *Tracker) Diff(fromIter, toIter int) (*DiffResult, error) {
+	if t == nil {
+		return nil, fmt.Errorf("nil tracker")
+	}
 	fromEvent, ok := t.EventAt(fromIter)
 	if !ok {
 		return nil, fmt.Errorf("iteration %d not found", fromIter)
@@ -509,18 +533,27 @@ func (t *Tracker) Diff(fromIter, toIter int) (*DiffResult, error) {
 }
 
 func (t *Tracker) SetBreakpoint(bp Breakpoint) {
+	if t == nil {
+		return
+	}
 	t.breakpointMu.Lock()
 	defer t.breakpointMu.Unlock()
 	t.breakpoints[bp.NodePath] = &bp
 }
 
 func (t *Tracker) RemoveBreakpoint(nodePath string) {
+	if t == nil {
+		return
+	}
 	t.breakpointMu.Lock()
 	defer t.breakpointMu.Unlock()
 	delete(t.breakpoints, nodePath)
 }
 
 func (t *Tracker) Breakpoints() []Breakpoint {
+	if t == nil {
+		return nil
+	}
 	t.breakpointMu.RLock()
 	defer t.breakpointMu.RUnlock()
 	result := make([]Breakpoint, 0, len(t.breakpoints))
@@ -531,6 +564,9 @@ func (t *Tracker) Breakpoints() []Breakpoint {
 }
 
 func (t *Tracker) WithMaxEvents(n int) *Tracker {
+	if t == nil {
+		return nil
+	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.maxEvents = n
@@ -538,6 +574,9 @@ func (t *Tracker) WithMaxEvents(n int) *Tracker {
 }
 
 func (t *Tracker) WithMaxTrees(n int) *Tracker {
+	if t == nil {
+		return nil
+	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.maxTrees = n
@@ -545,6 +584,9 @@ func (t *Tracker) WithMaxTrees(n int) *Tracker {
 }
 
 func (t *Tracker) WithMaxTreeNodes(n int) *Tracker {
+	if t == nil {
+		return nil
+	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.maxTreeNodes = n
@@ -552,6 +594,9 @@ func (t *Tracker) WithMaxTreeNodes(n int) *Tracker {
 }
 
 func (t *Tracker) WithMaxDeltaNodes(n int) *Tracker {
+	if t == nil {
+		return nil
+	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.maxDeltaNodes = n
@@ -880,6 +925,9 @@ func CloneTree(tree *TreeNode) *TreeNode {
 // WithKeyframeInterval sets the keyframe interval for delta encoding.
 // Every Nth tick (1-indexed) will be a keyframe (full tree). 0 disables interval-based keyframes.
 func (t *Tracker) WithKeyframeInterval(n int) *Tracker {
+	if t == nil {
+		return nil
+	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.keyframeInterval = n
@@ -888,6 +936,9 @@ func (t *Tracker) WithKeyframeInterval(n int) *Tracker {
 
 // KeyframeInterval returns the current keyframe interval.
 func (t *Tracker) KeyframeInterval() int {
+	if t == nil {
+		return 0
+	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	return t.keyframeInterval
@@ -896,6 +947,9 @@ func (t *Tracker) KeyframeInterval() int {
 // SetOverflowFile configures a file to which evicted events are appended as JSONL.
 // When set, sliding-window eviction appends evicted entries instead of discarding them.
 func (t *Tracker) SetOverflowFile(path string) error {
+	if t == nil {
+		return fmt.Errorf("nil tracker")
+	}
 	t.overflowMu.Lock()
 	defer t.overflowMu.Unlock()
 	if t.overflowFile != nil {
@@ -916,6 +970,9 @@ func (t *Tracker) SetOverflowFile(path string) error {
 
 // CloseOverflow closes the overflow file if any.
 func (t *Tracker) CloseOverflow() error {
+	if t == nil {
+		return nil
+	}
 	t.overflowMu.Lock()
 	defer t.overflowMu.Unlock()
 	if t.overflowFile != nil {
@@ -928,6 +985,9 @@ func (t *Tracker) CloseOverflow() error {
 
 // OverflowPath returns the configured overflow file path.
 func (t *Tracker) OverflowPath() string {
+	if t == nil {
+		return ""
+	}
 	t.overflowMu.Lock()
 	defer t.overflowMu.Unlock()
 	return t.overflowPath
@@ -937,6 +997,9 @@ func (t *Tracker) OverflowPath() string {
 // If an overflow file is configured, its contents (evicted events) are written first, followed by the in-memory window,
 // providing a lossless export that includes evicted history.
 func (t *Tracker) WriteJSONL(w io.Writer) error {
+	if t == nil {
+		return fmt.Errorf("nil tracker")
+	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.overflowMu.Lock()
@@ -973,6 +1036,9 @@ func (t *Tracker) WriteJSONL(w io.Writer) error {
 // ReadJSONL replaces tracker state from JSONL produced by WriteJSONL. Returns number of events imported.
 // Existing state is cleared. Imported events are fully navigable (timeline, diff, search, profile).
 func (t *Tracker) ReadJSONL(r io.Reader) (int, error) {
+	if t == nil {
+		return 0, fmt.Errorf("nil tracker")
+	}
 	scanner := bufio.NewScanner(r)
 	// Increase buffer for large tree lines (500 nodes)
 	const maxLine = 20 << 20 // 20MB per line
@@ -1086,6 +1152,9 @@ func (t *Tracker) ReadJSONL(r io.Reader) (int, error) {
 
 // DeltaForIteration returns the delta stored for the given iteration, if any.
 func (t *Tracker) DeltaForIteration(iter int) (*TreeDelta, bool) {
+	if t == nil {
+		return nil, false
+	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	d, ok := t.deltaStore[iter]
