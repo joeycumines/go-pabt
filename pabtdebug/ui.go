@@ -206,9 +206,65 @@ body {
  align-items: center;
  gap: 6px;
  padding: 4px 8px;
- border-bottom: 1px solid var(--border);
- background: var(--bg-panel);
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-panel);
 }
+#breadcrumb-bar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  font-size: 10px;
+  color: var(--text-secondary);
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--divider);
+  min-height: 20px;
+  overflow-x: auto;
+  white-space: nowrap;
+}
+.bc-crumb {
+  padding: 2px 6px;
+  border-radius: 3px;
+  cursor: pointer;
+  color: var(--text-secondary);
+  transition: background 0.15s, color 0.15s;
+}
+.bc-crumb:hover {
+  background: var(--border);
+  color: var(--text-primary);
+}
+.bc-crumb.current {
+  background: var(--accent);
+  color: var(--bg-main);
+}
+.bc-sep { color: var(--divider); font-size: 9px; }
+.btn-why.active {
+  background: var(--accent) !important;
+  color: var(--bg-main) !important;
+}
+.causal-path {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 1.2;
+  stroke-dasharray: 4 3;
+  opacity: 0.55;
+  pointer-events: none;
+}
+.diff-badge {
+  pointer-events: none;
+  font-size: 9px;
+  font-weight: 700;
+  font-family: var(--font-mono);
+  paint-order: stroke;
+  stroke: var(--bg-card);
+  stroke-width: 3;
+}
+.diff-badge-added { fill: var(--success); }
+.diff-badge-removed { fill: var(--failure); }
+.diff-badge-changed { fill: var(--running); }
+.node-card.diff-added { stroke: var(--success); stroke-width: 2.5; }
+.node-card.diff-removed { stroke: var(--failure); stroke-width: 2.5; stroke-dasharray: 4 2; }
+.node-card.diff-changed { stroke: var(--running); stroke-width: 2.5; }
 #svg-container {
  flex: 1;
  position: relative;
@@ -493,9 +549,11 @@ body {
       <button class="btn" id="btn-reset">Reset</button>
       <button class="btn" id="btn-expand-all" title="Expand every branch">Expand all</button>
       <button class="btn" id="btn-collapse-all" title="Collapse to the active spine">Collapse all</button>
+      <button class="btn" id="btn-why" title="Toggle causal-link overlay (precondition → action)">Why?</button>
       <span id="stats-readout"></span>
       <span id="zoom-level" style="font-size:10px;color:var(--text-secondary);">100%</span>
     </div>
+    <div id="breadcrumb-bar"></div>
     <div id="svg-container">
       <svg id="tree-svg" xmlns="http://www.w3.org/2000/svg"></svg>
       <div id="conn-banner" role="status"></div>
@@ -1369,6 +1427,85 @@ body {
     return added;
   }
   function clearSvgChildren(el) { while (el.firstChild) el.removeChild(el.firstChild); }
+
+  // Explorability 1: breadcrumb path bar. Walks up parentID chain from selectedNodeId.
+  function updateBreadcrumb(nodeId) {
+    const bar = document.getElementById('breadcrumb-bar');
+    if (!bar) return;
+    if (!nodeId || !lastRawTree) { bar.innerHTML = ''; return; }
+    const chain = [];
+    let cur = nodeId;
+    while (cur) {
+      const n = findNode(lastRawTree, cur);
+      if (!n) break;
+      chain.unshift({ id: cur, name: n.name || n.nodeType || cur });
+      const dot = cur.lastIndexOf('.');
+      cur = dot > 0 ? cur.substring(0, dot) : null;
+    }
+    if (!chain.length) { bar.innerHTML = ''; return; }
+    bar.innerHTML = chain.map((c, i) => {
+      const isLast = i === chain.length - 1;
+      return (i > 0 ? '<span class="bc-sep">\u203A</span>' : '') +
+        '<span class="bc-crumb' + (isLast ? ' current' : '') + '" data-bcid="' + escapeAttr(c.id) + '">' + escapeHtml(c.name) + '</span>';
+    }).join('');
+    bar.querySelectorAll('.bc-crumb').forEach(el => {
+      el.addEventListener('click', function() {
+        const id = el.getAttribute('data-bcid');
+        const n = findNode(lastRawTree, id);
+        if (n) { selectNode(n); panToNodeId(id); }
+      });
+    });
+  }
+
+  // Explorability 1: Why? causal-link overlay.
+  // Builds index of effects per node, draws dashed curves from each PreconditionLeaf
+  // to ActionNodes whose effects satisfy its condition key.
+  let whyMode = false;
+  function drawCausalOverlay() {
+    let overlay = document.getElementById('causal-overlay');
+    if (!overlay) {
+      overlay = document.createElementNS(SVG_NS, 'g');
+      overlay.setAttribute('id', 'causal-overlay');
+      svg.appendChild(overlay);
+    }
+    clearSvgChildren(overlay);
+    if (!whyMode || !lastRawTree) return;
+    // Build effect index: key -> list of {nodeId, value}
+    const effectsByKey = {};
+    const preconditions = [];
+    (function walk(n) {
+      if (!n) return;
+      if (n.nodeType === 'PreconditionLeaf' && n.condition) preconditions.push(n);
+      if (n.effects) {
+        for (const e of n.effects) {
+          if (!effectsByKey[e.key]) effectsByKey[e.key] = [];
+          effectsByKey[e.key].push({ nodeId: n.id, value: e.value });
+        }
+      }
+      if (n.children) for (const c of n.children) walk(c);
+    })(lastRawTree);
+    const lm = currentLayoutMap;
+    for (const pre of preconditions) {
+      const key = pre.condition;
+      const targets = effectsByKey[key];
+      if (!targets || !targets.length) continue;
+      const preLm = lm ? lm[pre.id] : null;
+      if (!preLm) continue;
+      const px = preLm.absX + NODE_W;
+      const py = preLm.absY;
+      for (const t of targets) {
+        const tLm = lm ? lm[t.nodeId] : null;
+        if (!tLm) continue;
+        const tx = tLm.absX;
+        const ty = tLm.absY;
+        const midX = (px + tx) / 2;
+        const path = document.createElementNS(SVG_NS, 'path');
+        path.setAttribute('d', 'M ' + px + ' ' + py + ' C ' + midX + ' ' + py + ', ' + midX + ' ' + ty + ', ' + tx + ' ' + ty);
+        path.setAttribute('class', 'causal-path');
+        overlay.appendChild(path);
+      }
+    }
+  }
   function renderTree(tree) {
     if (!tree) return;
     lastRawTree = tree;
@@ -1402,6 +1539,7 @@ body {
     updateSvgView();
     if (!initialFitDone && !userAdjustedView && currentTree) { initialFitDone = true; fitToTree(); }
     drawProfileBar();
+    drawCausalOverlay();
     updateStatsReadout(view);
     if (selectedNodeId) highlightNode(selectedNodeId);
     if (highlightedIds.size) highlightSearch();
@@ -1809,6 +1947,7 @@ body {
     }
 
     fetchProfile(node.id);
+    updateBreadcrumb(node.id);
 
     svg.querySelectorAll('.node-ring').forEach(r => r.classList.remove('selected'));
     const sid = safeId(node.id);
@@ -2128,6 +2267,12 @@ body {
   document.getElementById('btn-reset').addEventListener('click', resetView);
   document.getElementById('btn-expand-all').addEventListener('click', function() { expandAllMode = true; bumpView(); renderTree(lastRawTree); });
   document.getElementById('btn-collapse-all').addEventListener('click', function() { expandAllMode = false; userExpanded.clear(); unwoundHeads.clear(); bumpView(); renderTree(lastRawTree); });
+  var btnWhy = document.getElementById('btn-why');
+  btnWhy.addEventListener('click', function() {
+    whyMode = !whyMode;
+    btnWhy.classList.toggle('active', whyMode);
+    drawCausalOverlay();
+  });
 
   btnLive.addEventListener('click', function() {
     liveMode = !liveMode;
@@ -2337,34 +2482,50 @@ body {
       .then(r => r.ok ? r.json() : null)
       .then(data => {
         if (!data || !currentTree) return;
-        svg.querySelectorAll('.node-card').forEach(r => r.setAttribute('opacity', '0.3'));
+        // Badge-not-fill diff: keep fill=--bg-card + typebar intact.
+        // Mark cards with stroke class; add corner badges +A/-R/~C.
+        // Clear prior diff classes first.
+        svg.querySelectorAll('.node-card').forEach(function(c) {
+          c.classList.remove('diff-added', 'diff-removed', 'diff-changed');
+          c.removeAttribute('opacity');
+        });
+        svg.querySelectorAll('.diff-badge').forEach(function(b) { b.remove(); });
+        function badgeAt(el, cls, label) {
+          const card = el.querySelector('.node-card');
+          if (!card) return;
+          const x = parseFloat(card.getAttribute('x')) + NODE_W - 18;
+          const y = parseFloat(card.getAttribute('y')) + 14;
+          const t = document.createElementNS(SVG_NS, 'text');
+          t.setAttribute('x', x);
+          t.setAttribute('y', y);
+          t.setAttribute('class', 'diff-badge ' + cls);
+          t.textContent = label;
+          el.appendChild(t);
+        }
         if (data.added) {
           for (const dn of data.added) {
-            const sid = safeId(dn.id);
-            const el = document.getElementById(sid);
+            const el = document.getElementById(safeId(dn.id));
             if (el) {
-              el.querySelector('.node-card').setAttribute('opacity', '1');
-              el.querySelector('.node-card').setAttribute('fill', cssVar('--success', '#46d68c'));
+              el.querySelector('.node-card').classList.add('diff-added');
+              badgeAt(el, 'diff-badge-added', '+' + (dn.nodeType ? dn.nodeType[0] : 'A'));
             }
           }
         }
         if (data.removed) {
           for (const dn of data.removed) {
-            const sid = safeId(dn.id);
-            const el = document.getElementById(sid);
+            const el = document.getElementById(safeId(dn.id));
             if (el) {
-              el.querySelector('.node-card').setAttribute('opacity', '1');
-              el.querySelector('.node-card').setAttribute('fill', cssVar('--failure', '#f0566a'));
+              el.querySelector('.node-card').classList.add('diff-removed');
+              badgeAt(el, 'diff-badge-removed', '-' + (dn.nodeType ? dn.nodeType[0] : 'R'));
             }
           }
         }
         if (data.changed) {
           for (const dn of data.changed) {
-            const sid = safeId(dn.id);
-            const el = document.getElementById(sid);
+            const el = document.getElementById(safeId(dn.id));
             if (el) {
-              el.querySelector('.node-card').setAttribute('opacity', '1');
-              el.querySelector('.node-card').setAttribute('fill', cssVar('--running', '#f5a524'));
+              el.querySelector('.node-card').classList.add('diff-changed');
+              badgeAt(el, 'diff-badge-changed', '~');
             }
           }
         }
