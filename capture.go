@@ -382,6 +382,14 @@ func (c *tickCapture[T]) recordActionCalls(
 // calls that produced a condition's current value.
 func (c *tickCapture[T]) variable(key any, nodeID, conditionID OccurrenceID) (any, error) {
 	started := time.Now()
+	if c.view == nil {
+		// Construction publishes a capture before any view exists, because
+		// building a plan reads no state. Falling back to the plan's own state
+		// keeps a future construction-time read correct instead of a crash.
+		value, err := c.plan.state.Variable(key)
+		c.recordVariable(nodeID, conditionID, key, value, err, time.Since(started))
+		return value, err
+	}
 	value, err := c.view.Variable(key)
 	c.recordVariable(nodeID, conditionID, key, value, err, time.Since(started))
 	return value, err
@@ -404,7 +412,15 @@ func (c *tickCapture[T]) match(
 // discovery is read from the same world as condition evaluation.
 func (c *tickCapture[T]) actions(failed T, conditionID OccurrenceID) ([]Action[T], error) {
 	started := time.Now()
-	acts, err := c.view.Actions(failed)
+	var (
+		acts []Action[T]
+		err  error
+	)
+	if c.view == nil {
+		acts, err = c.plan.state.Actions(failed)
+	} else {
+		acts, err = c.view.Actions(failed)
+	}
 	c.recordStateActions(conditionID, len(acts), time.Since(started))
 	return acts, err
 }
@@ -431,12 +447,7 @@ func (c *tickCapture[T]) afterAction(
 	// The before-revision is the one view opened for the whole tick, so it can
 	// only bound this action alone when no other action has run yet.
 	isolated := len(c.executions) == 0
-	ev := ActionEvidence{
-		Execution: exec,
-		Before:    before,
-		After:     before,
-		Isolated:  isolated,
-	}
+	ev := ActionEvidence{Execution: exec, Before: before, Isolated: isolated}
 	defer func() { c.executions = append(c.executions, ev) }()
 
 	cfg := c.plan.config

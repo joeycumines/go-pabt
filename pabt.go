@@ -147,9 +147,9 @@ type (
 		state State[T]
 		goal  []Conditions[T]
 
-		// views, observer, and verifier configure the capture boundary. They
-		// are nil on a plan built with [New] and set by [NewCaptured] or by an
-		// option.
+		// views, observer, and verifier configure the capture boundary. views
+		// always holds a provider, defaulting to the explicit live one; observer
+		// and verifier are nil unless an option supplies them.
 		views    TypedStateViewProvider[T]
 		observer ExecutionObserver
 		verifier TransitionVerifier

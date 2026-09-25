@@ -88,7 +88,12 @@ func (c *sealedCondition) Match(value any) bool {
 
 // Expected declares the value the condition requires, which is the only way an
 // expected value can reach the debugger.
-func (c *sealedCondition) Expected() any { return c.expected }
+func (c *sealedCondition) Expected() any {
+	if c.sealed {
+		panic(`pabt test: Condition.Expected called after sealing`)
+	}
+	return c.expected
+}
 
 func (e *sealedEffect) Key() any {
 	if e.sealed {
@@ -551,62 +556,147 @@ func TestCapturedInspectionMakesNoApplicationCall(t *testing.T) {
 // TestOccurrenceIdentitySurvivesConflictResolution proves an occurrence keeps
 // its identity when conflict resolution moves its node, and that the
 // post-condition copy records where it came from.
+//
+// Conflict resolution only ever compares sibling ppa roots, and a goal slice
+// holds one preconditions root, so two goal slices never meet. The fixture
+// therefore puts both conditions in one slice, which makes their leaves siblings
+// and both eligible to become ppa roots. The later expansion then finds that the
+// earlier subtree's effects break its own guard, and the subtree moves leftward.
+//
+// The test fails if no conflict test was ever recorded or if no node changed
+// parent, because a fixture that does not conflict would prove nothing about
+// surviving a move.
 func TestOccurrenceIdentitySurvivesConflictResolution(t *testing.T) {
-	// Two goals over disjoint variables, each with an action that breaks the
-	// other's condition, forces a conflict and therefore a move.
-	variables := map[string]any{"a": "start", "b": "start"}
+	variables := map[string]any{"a": "start", "b": "start", "g1": "ok", "g2": "ok"}
+	state := &conflictState{variables: variables}
 	condA := &sealedCondition{key: "a", expected: "done"}
 	condB := &sealedCondition{key: "b", expected: "done"}
-	state := &sealedState{variables: variables}
-	state.apply = func() { variables["a"] = "done" }
 	plan, err := NewCaptured(
 		state,
-		[]Conditions[*sealedCondition]{{condA}, {condB}},
-		WithStateViews[*sealedCondition]((&sealedProvider{coherence: CoherenceSnapshot}).forState(state)),
+		[]Conditions[*sealedCondition]{{condA, condB}},
+		WithStateViews[*sealedCondition](&sealedProvider{
+			coherence: CoherenceSnapshot, variable: state.Variable, actions: state.Actions,
+		}),
 	)
 	if err != nil {
 		t.Fatalf("NewCaptured: %v", err)
 	}
-	// Record the identities before any conflict resolution can move a node.
-	before := map[OccurrenceID]bool{}
-	var record func(n *node[*sealedCondition])
-	record = func(n *node[*sealedCondition]) {
-		before[n.id] = true
-		for c := n.first; c != nil; c = c.next {
-			record(c)
+
+	survey := func() (ids map[OccurrenceID]bool, parents map[OccurrenceID]OccurrenceID) {
+		ids, parents = map[OccurrenceID]bool{}, map[OccurrenceID]OccurrenceID{}
+		var walk func(n *node[*sealedCondition], parent OccurrenceID)
+		walk = func(n *node[*sealedCondition], parent OccurrenceID) {
+			ids[n.id] = true
+			parents[n.id] = parent
+			for c := n.first; c != nil; c = c.next {
+				walk(c, n.id)
+			}
+		}
+		walk(plan.root, "")
+		return
+	}
+	before, parentsBefore := survey()
+	// One goal slice makes the plan root its own preconditions root, so it holds
+	// the root plus one leaf per condition.
+	if len(before) < 3 {
+		t.Fatalf("the plan has only %d identified nodes, too few for this to mean anything", len(before))
+	}
+
+	var conflictTests int
+	for range 6 {
+		result := plan.TickCaptured(TickEnvironment{})
+		for _, cb := range result.Snapshot.Callbacks {
+			if cb.Use == UseConflictTest {
+				conflictTests++
+			}
 		}
 	}
-	record(plan.root)
-	if len(before) < 2 {
-		t.Fatal("expected the initial tree to have several identified nodes")
+	if conflictTests == 0 {
+		t.Fatal("no conflict test was ever recorded, so the fixture never conflicted")
 	}
 
-	for range 6 {
-		plan.TickCaptured(TickEnvironment{})
+	after, parentsAfter := survey()
+	var moved int
+	for id := range after {
+		if parentsBefore[id] != parentsAfter[id] {
+			moved++
+		}
 	}
-
-	after := map[OccurrenceID]bool{}
+	if moved == 0 {
+		t.Error("no node changed parent, so no subtree was actually moved")
+	}
+	for id := range before {
+		if !after[id] {
+			t.Errorf("occurrence identity %q did not survive conflict resolution", id)
+		}
+		if !ValidOccurrenceID(id) {
+			t.Errorf("node id %q is not a valid occurrence id", id)
+		}
+	}
+	// The one derivation the planner performs must name its source.
+	var lineage int
 	var check func(n *node[*sealedCondition])
 	check = func(n *node[*sealedCondition]) {
-		if !ValidOccurrenceID(n.id) {
-			t.Errorf("node id %q is not a valid occurrence id", n.id)
+		if ValidLineageID(n.lineage) {
+			lineage++
 		}
-		after[n.id] = true
 		for c := n.first; c != nil; c = c.next {
 			check(c)
 		}
 	}
 	check(plan.root)
+	if lineage == 0 {
+		t.Error("no node recorded a lineage, so the post-condition derivation is unproven")
+	}
+}
 
-	var survived int
-	for id := range before {
-		if after[id] {
-			survived++
-		}
+type conflictState struct{ variables map[string]any }
+
+func (s *conflictState) Variable(key any) (any, error) {
+	if v, ok := s.variables[fmt.Sprint(key)]; ok {
+		return v, nil
 	}
-	if survived == 0 {
-		t.Fatal("no occurrence identity survived the conflict resolution that reordered the tree")
+	return nil, fmt.Errorf(`pabt test: no variable %v`, key)
+}
+
+// Actions offers one action per failed condition. Each action guards a variable
+// that is already satisfied, so a guard never has to expand and the two sibling
+// conditions can both expand. Each action also declares an effect on the other
+// action's guard that violates it, so when the second subtree is resolved the
+// first one's effects break the second one's guard and the second is moved ahead
+// of the first.
+func (s *conflictState) Actions(failed *sealedCondition) ([]Action[*sealedCondition], error) {
+	if failed.key == "a" {
+		return []Action[*sealedCondition]{&conflictingAction{
+			effects: Effects{
+				&sealedEffect{key: "a", value: "done"},
+				&sealedEffect{key: "g2", value: "broken"},
+			},
+			guard: &sealedCondition{key: "g1", expected: "ok"},
+		}}, nil
 	}
+	return []Action[*sealedCondition]{&conflictingAction{
+		effects: Effects{
+			&sealedEffect{key: "b", value: "done"},
+			&sealedEffect{key: "g1", value: "broken"},
+		},
+		guard: &sealedCondition{key: "g2", expected: "ok"},
+	}}, nil
+}
+
+type conflictingAction struct {
+	effects Effects
+	guard   *sealedCondition
+}
+
+func (a *conflictingAction) Conditions() []Conditions[*sealedCondition] {
+	return []Conditions[*sealedCondition]{{a.guard}}
+}
+
+func (a *conflictingAction) Effects() Effects { return a.effects }
+
+func (a *conflictingAction) Node() bt.Node {
+	return bt.New(func([]bt.Node) (bt.Status, error) { return bt.Success, nil })
 }
 
 // TestVerdictAuthorityRequiresCoherentRevisions proves the planner, not the
@@ -1363,9 +1453,11 @@ func TestPostExpansionNodesReportTheConditionTicks(t *testing.T) {
 		}
 	}
 	if !post {
-		t.Skip("the plan was not expanded, so there is no post-condition node")
+		t.Fatal("the plan was not expanded, so there is no post-condition node to inspect")
 	}
-	_ = postCondition
+	if !postCondition {
+		t.Error("the expanded tree has no ppa root")
+	}
 }
 
 func TestCapturedEvidenceIsStableForCollidingKeyRendering(t *testing.T) {

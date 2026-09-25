@@ -97,10 +97,12 @@ type ExecutionObserver interface {
 // RelationVerdict is a verifier's conclusion about one effect's contribution to
 // one post-condition.
 //
-// Authoritative is set by the planner, not by the verifier. It is true only
-// when the revisions bracketing the action were both read from coherent views
-// and the verifier returned no error, so a verdict spanning two live reads is
-// always visible as non-authoritative.
+// Authoritative is set by the planner, not by the verifier, and a verifier
+// claiming it does not make it so. It requires all three of: the revisions
+// bracketing the action were both read from coherent views, the window bound
+// this action alone rather than also containing an earlier action from the same
+// tick, and the verifier returned no error. Anything else is visible as a
+// non-authoritative verdict rather than as a confident claim.
 type RelationVerdict struct {
 	EffectID        OccurrenceID
 	PostconditionID OccurrenceID
@@ -154,8 +156,18 @@ type ActionEvidence struct {
 	Execution   ActionExecution
 	Observation ActionObservation
 	Relations   []RelationVerdict
-	Before      StateRevision
-	After       StateRevision
-	Isolated    bool
-	Err         *RecordedError
+
+	// Before is the revision read at the action's entry, from the pre-tick view.
+	// After is the revision read from the post-action view, and is only read when
+	// a verifier is configured. A zero After therefore means no post-action
+	// revision was read, not that the action changed nothing.
+	Before StateRevision
+	After  StateRevision
+
+	// Isolated reports whether the window bound this action alone. It is false
+	// for every action after the first in a tick, because the before-revision
+	// comes from the one view opened for the whole tick.
+	Isolated bool
+
+	Err *RecordedError
 }

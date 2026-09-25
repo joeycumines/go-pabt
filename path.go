@@ -38,6 +38,14 @@ type PathEntry[T Condition] struct {
 	// matching the effect type. It holds the condition that the action
 	// was expanded to satisfy.
 	PostCondition T
+
+	// conditionSummary and effectsSummary are the condition's declaration and
+	// the action's effects, already rendered while the planner read them. The
+	// path renderer prefers them, because re-deriving either from Condition,
+	// Effect, or PostCondition calls back into the application. They are empty
+	// for a plan built without a capture.
+	conditionSummary string
+	effectsSummary   string
 }
 
 // Path represents the execution path from root to the current active node.
@@ -80,6 +88,9 @@ func GetPath[T Condition](plan *Plan[T]) Path[T] {
 		// Populate condition for precondition nodes
 		if next.precondition != nil && next.precondition.root == next {
 			entry.Condition = next.precondition.condition
+			if next.precondition.captured {
+				entry.conditionSummary = next.precondition.declaration()
+			}
 		}
 
 		// Populate effects and post-condition for action nodes
@@ -88,9 +99,15 @@ func GetPath[T Condition](plan *Plan[T]) Path[T] {
 			// The post-condition is the condition that triggered the expansion
 			// that created this action's PPA subtree. It's stored in the
 			// precondition that was expanded.
+			if next.action.cache != nil {
+				entry.effectsSummary = next.action.cache.name
+			}
 			if next.ppa != nil && next.ppa.post != nil &&
 				next.ppa.post.precondition != nil {
 				entry.PostCondition = next.ppa.post.precondition.condition
+				if next.ppa.post.precondition.captured {
+					entry.conditionSummary = next.ppa.post.precondition.declaration()
+				}
 			}
 		}
 
@@ -98,6 +115,16 @@ func GetPath[T Condition](plan *Plan[T]) Path[T] {
 		n = next
 	}
 	return path
+}
+
+// render returns the captured declaration of a condition, or falls back to
+// reading its key from the application when the plan was not built with a
+// capture.
+func (e PathEntry[T]) render(cond T) string {
+	if e.conditionSummary != "" {
+		return e.conditionSummary
+	}
+	return fmt.Sprintf("%v", any(cond).(Condition).Key())
 }
 
 // followActive returns the next active child of n, or nil if no active child.
@@ -215,15 +242,19 @@ func (p Path[T]) String() string {
 		s := entry.NodeType.String()
 		switch {
 		case any(entry.Condition) != nil:
-			s += fmt.Sprintf("(cond:%v)", any(entry.Condition).(Condition).Key())
+			s += "(cond:" + entry.render(entry.Condition) + ")"
 		case len(entry.Effects) > 0:
+			if entry.effectsSummary != "" {
+				s += "(" + entry.effectsSummary + ")"
+				break
+			}
 			var effectParts []string
 			for _, e := range entry.Effects {
 				effectParts = append(effectParts, fmt.Sprintf("%v=%v", e.Key(), e.Value()))
 			}
 			s += "(" + strings.Join(effectParts, ",") + ")"
 		case any(entry.PostCondition) != nil:
-			s += fmt.Sprintf("(post:%v)", any(entry.PostCondition).(Condition).Key())
+			s += "(post:" + entry.render(entry.PostCondition) + ")"
 		}
 		parts = append(parts, s)
 	}

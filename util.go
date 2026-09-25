@@ -26,14 +26,24 @@ import (
 	bt "github.com/joeycumines/go-behaviortree"
 )
 
-// keyOrder renders a variable key into a total order.
+// keyOrder renders a variable key into a sort key.
 //
 // The display form alone is not a total order: two distinct comparable keys can
-// render identically, for example the int 1 and the string "1". Ordering on the
-// type and the exact value as well means two identical runs produce identical
-// evidence even then, instead of inheriting Go's randomised map iteration.
+// render identically, for example the int 1 and the string "1". Including the
+// type separates those cases, so the recorded order does not fall back to Go's
+// randomised map iteration.
+//
+// The guarantee is exactly this: for a set of keys whose own rendering is stable
+// and mutually distinct once typed, the order is identical on every run. A key
+// whose rendering is not stable, such as a pointer, cannot produce a stable order
+// because its own displayed value is not stable either. That is a property of the
+// application's key, and reporting it would mean inventing an order the key does
+// not have.
+//
+// Formatting a key calls its String method, so callers compute this once per key
+// and sort the results rather than recomputing it per comparison.
 func keyOrder(key any) string {
-	return fmt.Sprintf("%T\x00%#v\x00%v", key, key, key)
+	return fmt.Sprintf("%T\x00%v", key, key)
 }
 
 func captureFrame(n bt.Node) *FrameInfo {
@@ -143,8 +153,12 @@ func (n *node[T]) generateAnd(conditions Conditions[T]) (and map[any]*preconditi
 	c := n.goal.capture()
 	for _, condition := range conditions {
 		key := condition.Key()
+		// The identity is allocated before the key call is recorded so the
+		// evidence names the condition the key belongs to, which is the only way
+		// a consumer can tie a key read to an occurrence.
+		id := n.goal.mint()
 		if c != nil {
-			c.recordKey(SubjectCondition, "", "", key)
+			c.recordKey(SubjectCondition, id, "", key)
 		}
 		if !func() bool {
 			defer func() { _ = recover() }()
@@ -155,7 +169,7 @@ func (n *node[T]) generateAnd(conditions Conditions[T]) (and map[any]*preconditi
 		}() {
 			return
 		}
-		pre := &precondition[T]{condition: condition, key: key, id: n.goal.mint(), captured: c != nil}
+		pre := &precondition[T]{condition: condition, key: key, id: id, captured: c != nil}
 		if c != nil {
 			// An absent declaration stays unknown. It is never inferred from
 			// the key, because the key names a variable, not a requirement.
@@ -251,12 +265,7 @@ func (n *node[T]) buildNodeInfo() *NodeInfo {
 		info.VariableKey = n.precondition.key
 		info.Condition = n.precondition.condition
 		if n.precondition.captured {
-			// A condition that declares no expectation renders as such. It is
-			// never replaced by a value derived from its key.
-			info.conditionSummary = "<undeclared>"
-			if n.precondition.expectedKnown {
-				info.conditionSummary = fmt.Sprintf("%v", n.precondition.expected)
-			}
+			info.conditionSummary = n.precondition.declaration()
 		}
 	}
 
@@ -274,6 +283,15 @@ func (n *node[T]) buildNodeInfo() *NodeInfo {
 	}
 
 	return info
+}
+
+// declaration renders a precondition's expected value, or states that it
+// declares none. A value derived from the key is never substituted for it.
+func (p *precondition[T]) declaration() string {
+	if !p.expectedKnown {
+		return "<undeclared>"
+	}
+	return fmt.Sprintf("%v", p.expected)
 }
 
 // nodeName is the node's display name, read from the current tree.
@@ -311,17 +329,21 @@ func (a *action[T]) effectName(values map[any]any) string {
 	if len(a.effects) == 0 {
 		return "Action"
 	}
-	keys := make([]any, 0, len(a.effects))
-	for key := range a.effects {
-		keys = append(keys, key)
+	type entry struct {
+		key   any
+		order string
 	}
-	sort.Slice(keys, func(i, j int) bool { return keyOrder(keys[i]) < keyOrder(keys[j]) })
+	entries := make([]entry, 0, len(a.effects))
+	for key := range a.effects {
+		entries = append(entries, entry{key: key, order: keyOrder(key)})
+	}
+	sort.Slice(entries, func(i, j int) bool { return entries[i].order < entries[j].order })
 	var b strings.Builder
-	for i, key := range keys {
+	for i, e := range entries {
 		if i > 0 {
 			b.WriteString(", ")
 		}
-		b.WriteString(fmt.Sprintf("%v→%v", key, values[key]))
+		b.WriteString(fmt.Sprintf("%v→%v", e.key, values[e.key]))
 	}
 	return b.String()
 }
@@ -374,14 +396,18 @@ func (n *node[T]) buildEffects() Effects {
 	if n.action == nil {
 		return nil
 	}
-	keys := make([]any, 0, len(n.action.effects))
-	for key := range n.action.effects {
-		keys = append(keys, key)
+	type entry struct {
+		key   any
+		order string
 	}
-	sort.Slice(keys, func(i, j int) bool { return keyOrder(keys[i]) < keyOrder(keys[j]) })
-	effects := make(Effects, 0, len(keys))
-	for _, key := range keys {
-		effects = append(effects, n.action.effects[key])
+	entries := make([]entry, 0, len(n.action.effects))
+	for key := range n.action.effects {
+		entries = append(entries, entry{key: key, order: keyOrder(key)})
+	}
+	sort.Slice(entries, func(i, j int) bool { return entries[i].order < entries[j].order })
+	effects := make(Effects, 0, len(entries))
+	for _, e := range entries {
+		effects = append(effects, n.action.effects[e.key])
 	}
 	return effects
 }
@@ -556,8 +582,10 @@ func (n *node[T]) generateAction(post Condition, postID OccurrenceID, act Action
 		r.effects = make(map[any]Effect, len(effects))
 		for _, effect := range effects {
 			key := effect.Key()
+			var keyID OccurrenceID
 			if c != nil {
-				c.recordKey(SubjectEffect, "", "", key)
+				keyID = n.goal.mint()
+				c.recordKey(SubjectEffect, keyID, "", key)
 			}
 			if !func() bool {
 				defer func() { _ = recover() }()
@@ -570,17 +598,16 @@ func (n *node[T]) generateAction(post Condition, postID OccurrenceID, act Action
 			}
 			r.effects[key] = effect
 			var (
-				id        OccurrenceID
 				value     any
 				valueRead bool
 			)
+			id := keyID
 			if c != nil {
 				// The declared value is read once, here, so that naming the
 				// action later needs no further application call.
 				started := time.Now()
 				value = effect.Value()
 				valueRead = true
-				id = n.goal.mint()
 				c.recordEffectValue("", id, key, value, "", time.Since(started))
 				r.cache.effects = append(r.cache.effects, EffectOccurrence{
 					ID:         id,
@@ -743,15 +770,16 @@ func (p *ppa[T]) conflict() *ppa[T] {
 func (p *ppa[T]) conflicts(o *ppa[T]) bool {
 	// prepare conditions for comparison
 	type Pair struct {
-		K  any
-		V  Condition
-		ID OccurrenceID
+		K     any
+		V     Condition
+		ID    OccurrenceID
+		order string
 	}
 	var pairs []Pair
 	for _, act := range p.actions {
 		for _, or := range act.or {
 			for key, and := range or.and {
-				pairs = append(pairs, Pair{key, and.condition, and.id})
+				pairs = append(pairs, Pair{K: key, V: and.condition, ID: and.id})
 			}
 		}
 	}
@@ -764,7 +792,10 @@ func (p *ppa[T]) conflicts(o *ppa[T]) bool {
 	// Map iteration order is unspecified, so the pairs are ordered before any
 	// are compared. The answer is unchanged by the order, but the recorded
 	// evidence for a run would otherwise differ between identical runs.
-	sort.Slice(pairs, func(i, j int) bool { return keyOrder(pairs[i].K) < keyOrder(pairs[j].K) })
+	for i := range pairs {
+		pairs[i].order = keyOrder(pairs[i].K)
+	}
+	sort.Slice(pairs, func(i, j int) bool { return pairs[i].order < pairs[j].order })
 
 	// ensure that p's conditions are compatible with any corresponding effects from o (also checks all sub-ppa)
 	c := p.root.goal.capture()
