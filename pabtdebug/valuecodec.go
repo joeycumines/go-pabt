@@ -867,3 +867,16 @@ func NewCodecRegistry(limits ValueLimits) *CodecRegistry {
 	}
 	return r
 }
+
+// sanitizeText scrubs free text through the same path a recorded value takes.
+//
+// A diagnostic, an error message, and a rendered display all end up in the
+// record and in a digest, so they are cleaned by the layer that knows what is
+// sensitive rather than by a second, weaker path of their own.
+func (r *CodecRegistry) sanitizeText(text string) string {
+	if r == nil {
+		return text
+	}
+	_, san := redactionFor(context.Background())
+	return san.Sanitize(text)
+}

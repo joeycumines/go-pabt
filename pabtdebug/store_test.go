@@ -388,15 +388,46 @@ func TestACommitIsRefusedWhenItDoesNotMatchItsTicket(t *testing.T) {
 	if _, err := store.Commit(context.Background(), ticket, wrongSequence); err == nil {
 		t.Error("a record with an unissued sequence committed")
 	}
-	// A record at a plan revision the attempt did not begin at is refused.
-	wrongRevision := makeRecord(nil)
-	wrongRevision.Revision.PlanRevision = testPlanRevision + 7
-	if _, err := store.Commit(context.Background(), ticket, wrongRevision); err == nil {
-		t.Error("a record at a different plan revision committed")
+	// The refusals above left the attempt's lease held, which is what lets recovery
+	// tell a half-written attempt from a finished one. Resolving it and taking a
+	// fresh one shows the run still accepts work.
+	if err := store.Abort(context.Background(), ticket); err != nil {
+		t.Fatalf("Abort: %v", err)
 	}
-	// The genuine ticket still works, so the refusals cost nothing.
-	if _, err := store.Commit(context.Background(), ticket, makeRecord(nil)); err != nil {
-		t.Errorf("the genuine ticket was refused: %v", err)
+	fresh, err := store.Begin(context.Background(),
+		BeginRequest{RunKey: key, ExpectedPlanRevision: testPlanRevision})
+	if err != nil {
+		t.Fatalf("Begin after resolving: %v", err)
+	}
+	if _, err := store.Commit(context.Background(), fresh, makeRecord(nil)); err != nil {
+		t.Errorf("a genuine ticket was refused: %v", err)
+	}
+
+	// A record below the revision the attempt began at describes a structure the
+	// attempt cannot have produced, so it is refused.
+	below, err := store.Begin(context.Background(),
+		BeginRequest{RunKey: key, ExpectedPlanRevision: testPlanRevision + 3})
+	if err != nil {
+		t.Fatalf("Begin: %v", err)
+	}
+	if _, err := store.Commit(context.Background(), below, makeRecord(nil)); err == nil {
+		t.Error("a record below the attempt's plan revision committed")
+	}
+	if err := store.Abort(context.Background(), below); err != nil {
+		t.Fatalf("Abort: %v", err)
+	}
+
+	// A record above it is ordinary. A tick that expands the plan ends at a higher
+	// revision than it began at, which is the common case rather than an anomaly.
+	expanded, err := store.Begin(context.Background(),
+		BeginRequest{RunKey: key, ExpectedPlanRevision: testPlanRevision})
+	if err != nil {
+		t.Fatalf("Begin: %v", err)
+	}
+	above := makeRecord(nil)
+	above.Revision.PlanRevision = testPlanRevision + 3
+	if _, err := store.Commit(context.Background(), expanded, above); err != nil {
+		t.Errorf("a record above the attempt's plan revision was refused: %v", err)
 	}
 }
 

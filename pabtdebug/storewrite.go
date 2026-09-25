@@ -392,7 +392,14 @@ func (s *SQLiteStore) commit(
 	// Everything the store owns is stamped first, and the digests are taken over
 	// the record as it will be stored. Hashing before the store-owned fields are
 	// set would produce a digest over a record that is not the one being written.
-	if record.Revision.PlanRevision != ticket.ExpectedPlanRevision {
+	// The record's plan revision must be at least the one the attempt began at.
+	//
+	// Equality would be wrong: a tick that expands the plan moves the revision
+	// while it runs, so the structure the record describes is the one the tick
+	// ended with, not the one it started from. A record below the attempt's
+	// revision is the real fault, because that would be a structure the attempt
+	// cannot have produced.
+	if record.Revision.PlanRevision < ticket.ExpectedPlanRevision {
 		return CommitReceipt{}, fmt.Errorf("%w: the record is at plan revision %d, the attempt began at %d",
 			ErrHeadMismatch, record.Revision.PlanRevision, ticket.ExpectedPlanRevision)
 	}
