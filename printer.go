@@ -78,11 +78,22 @@ func pabtInspector(node bt.Node, tick bt.Tick) (meta []any, value any) {
 	if info := GetNodeInfo(node); info != nil {
 		switch info.Type {
 		case NodeTypePreconditionLeaf, NodeTypePPAPost:
-			if info.Condition != nil {
+			// The captured declaration is preferred because re-deriving it would
+			// call into the application. A plan built without a capture has no
+			// cached declaration, so the condition is rendered as before.
+			if summary := info.ConditionSummary(); summary != "" {
+				meta = append(meta, fmt.Sprintf("post:%s=%s", formatVariableKey(info.VariableKey), summary))
+			} else if info.Condition != nil {
 				meta = append(meta, fmt.Sprintf("post:%s=%v", formatVariableKey(info.VariableKey), formatConditionMatch(info.Condition)))
 			}
 		case NodeTypeActionNode:
-			if len(info.Effects) > 0 {
+			// The captured summary is preferred because re-deriving it would
+			// call Effect.Key and Effect.Value, which are application calls.
+			// A plan built without a capture has no summary, so the effects are
+			// read from the application as before.
+			if summary := info.EffectsSummary(); summary != "" {
+				meta = append(meta, "effects:"+summary)
+			} else if len(info.Effects) > 0 {
 				meta = append(meta, "effects:"+formatEffects(info.Effects))
 			}
 		}

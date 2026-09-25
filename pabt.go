@@ -17,7 +17,9 @@
 package pabt
 
 import (
-	"fmt"
+	"sync"
+	"sync/atomic"
+
 	bt "github.com/joeycumines/go-behaviortree"
 )
 
@@ -107,6 +109,27 @@ type (
 		config[T]
 		root    *node[T]
 		running bool // running due to an Action.Node tick?
+
+		// ids allocates occurrence identities for this plan's objects.
+		ids *identity
+
+		// revision is the plan's structural version. It increases once per
+		// structural change so a consumer can tell that a fact recorded at one
+		// revision describes a different structure than a later read.
+		revision atomic.Uint64
+
+		// capture is the capture published for the tick in progress, or nil.
+		// The tick gate means at most one exists at a time.
+		capture atomic.Pointer[tickCapture[T]]
+
+		// gate serializes captured ticks so two ticks never observe each
+		// other's half-built state.
+		gate sync.Mutex
+
+		// construction holds the callbacks read while the plan was built. They
+		// are kept apart from tick callbacks because they describe a world that
+		// never ticked.
+		construction []CallbackEvidence
 	}
 
 	// IPlan is an alias for a [Plan] without a more-specific [Condition] type.
@@ -123,6 +146,13 @@ type (
 	config[T Condition] struct {
 		state State[T]
 		goal  []Conditions[T]
+
+		// views, observer, and verifier configure the capture boundary. They
+		// are nil on a plan built with [New] and set by [NewCaptured] or by an
+		// option.
+		views    TypedStateViewProvider[T]
+		observer ExecutionObserver
+		verifier TransitionVerifier
 	}
 
 	// node is 1-1 with a bt node, with additional embedded metadata and links to handle the traversal behavior
@@ -146,6 +176,15 @@ type (
 		// unlike the heuristic which relies on context pointers that become stale.
 		typ NodeType
 
+		// id identifies this node instance for the life of the plan. It is
+		// assigned once and is not affected by copy() or by a structural move,
+		// which is what lets a consumer follow one node across a reorder.
+		id OccurrenceID
+
+		// lineage names the occurrence this node was copied from, for the one
+		// derivation the planner performs.
+		lineage LineageID
+
 		status *NodeStatus
 
 		frame *FrameInfo
@@ -163,6 +202,10 @@ type (
 		state   State[T]
 		running *bool
 		or      []*preconditions[T]
+
+		// plan owns this goal's tree. It is the route from any node back to the
+		// plan's identity, revision, and active capture.
+		plan *Plan[T]
 	}
 	ppa[T Condition] struct {
 		root    *node[T]
@@ -174,6 +217,20 @@ type (
 		node    *node[T]
 		effects map[any]Effect
 		or      []*preconditions[T]
+
+		// id identifies this action instance for the life of the plan.
+		id OccurrenceID
+
+		// lineage names the occurrence this action was copied from.
+		lineage LineageID
+
+		// postconditionID is the condition whose failure caused this action to
+		// be generated, which is the post-condition this action must achieve.
+		postconditionID OccurrenceID
+
+		// cache holds application-derived facts read while a capture was
+		// active, so inspecting the plan makes no further application calls.
+		cache *actionCache
 	}
 	preconditions[T Condition] struct {
 		root *node[T]
@@ -183,6 +240,32 @@ type (
 		root      *node[T]
 		condition T
 		status    bt.Status
+
+		// id identifies this condition instance for the life of the plan.
+		id OccurrenceID
+
+		// key is the condition's key, read once when the condition was
+		// created, so inspection does not call back into the application.
+		key any
+
+		// expected and expectedKnown hold the value the application declared
+		// through [Expecting]. An absent declaration is reported as unknown
+		// rather than inferred from key.
+		expected      any
+		expectedKnown bool
+
+		// captured reports that this condition was created while a capture was
+		// active, so its cached facts are present and may be rendered without
+		// calling the application.
+		captured bool
+
+		// postNodeID is the node that re-evaluates this condition after the
+		// action tree runs.
+		postNodeID OccurrenceID
+
+		// ticked reports whether the condition has been evaluated at least once
+		// in the current tree.
+		ticked bool
 	}
 )
 
@@ -202,22 +285,7 @@ func New[T Condition](
 	goal []Conditions[T],
 	opts ...Option[T],
 ) (*Plan[T], error) {
-	if state == nil {
-		return nil, fmt.Errorf(`pabt: nil state`)
-	}
-	p := Plan[T]{config: config[T]{
-		state: state,
-		goal:  goal,
-	}}
-	for _, opt := range opts {
-		if err := opt.applyOption(&p.config); err != nil {
-			return nil, err
-		}
-	}
-	if err := p.init(); err != nil {
-		return nil, err
-	}
-	return &p, nil
+	return newPlan[T](state, goal, false, opts...)
 }
 
 // Node returns the [Plan] as a behavior tree node.
@@ -235,7 +303,11 @@ func (p *Plan[T]) Running() bool {
 }
 
 func (p *Plan[T]) init() (err error) {
-	p.root = &node[T]{goal: &goal[T]{state: p.state, running: &p.running}, status: &NodeStatus{}}
+	p.root = &node[T]{
+		goal:   &goal[T]{state: p.state, running: &p.running, plan: p},
+		status: &NodeStatus{},
+		id:     p.mint(),
+	}
 	p.root.goal.root = p.root
 	p.root.goal.or, err = p.root.generateOr(p.goal)
 	if err != nil {
@@ -247,6 +319,7 @@ func (p *Plan[T]) init() (err error) {
 	} else {
 		p.root.typ = NodeTypeGoalRoot
 	}
+	p.bump()
 	return
 }
 func (p *Plan[T]) bt() (bt.Tick, []bt.Node) {

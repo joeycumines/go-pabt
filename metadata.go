@@ -95,7 +95,25 @@ type NodeInfo struct {
 
 	// children yields bt.Metadata objects for Walk compatibility.
 	children iter.Seq[bt.Metadata]
+
+	// effectsSummary and conditionSummary are the action's effects and the
+	// precondition's declaration, already rendered while the planner read them.
+	// A consumer that would otherwise re-derive either by calling
+	// Condition.Match, Condition.Key, Effect.Key, or Effect.Value uses these
+	// instead, which keeps inspection from calling back into application code.
+	effectsSummary   string
+	conditionSummary string
 }
+
+// EffectsSummary returns the action's rendered effects, or an empty string when
+// the plan was not built with a capture and the caller must derive it from
+// Effects.
+func (i *NodeInfo) EffectsSummary() string { return i.effectsSummary }
+
+// ConditionSummary returns the precondition's rendered declaration, or an empty
+// string when the plan was not built with a capture and the caller must derive
+// it from Condition.
+func (i *NodeInfo) ConditionSummary() string { return i.conditionSummary }
 
 // Value implements bt.Valuer. Responds to nodeInfoKey and statusKey
 // so that NodeInfo works correctly when yielded via bt.UseStructure.

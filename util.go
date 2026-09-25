@@ -20,6 +20,8 @@ import (
 	"fmt"
 	"iter"
 	"sort"
+	"strings"
+	"time"
 
 	bt "github.com/joeycumines/go-behaviortree"
 )
@@ -106,6 +108,7 @@ func (n *node[T]) generateOr(goal []Conditions[T]) (or []*preconditions[T], err 
 				action:        n.action,
 				preconditions: &preconditions[T]{},
 				typ:           NodeTypePreconditionsRoot,
+				id:            n.goal.mint(),
 			}
 			node.preconditions.root = node
 			n.append(nil, node)
@@ -127,8 +130,12 @@ func (n *node[T]) generateAnd(conditions Conditions[T]) (and map[any]*preconditi
 	}
 	n.tick = bt.Sequence
 	and = make(map[any]*precondition[T], len(conditions))
+	c := n.goal.capture()
 	for _, condition := range conditions {
 		key := condition.Key()
+		if c != nil {
+			c.recordKey(SubjectCondition, "", "", key)
+		}
 		if !func() bool {
 			defer func() { _ = recover() }()
 			if _, ok := and[key]; ok {
@@ -138,17 +145,24 @@ func (n *node[T]) generateAnd(conditions Conditions[T]) (and map[any]*preconditi
 		}() {
 			return
 		}
+		pre := &precondition[T]{condition: condition, key: key, id: n.goal.mint(), captured: c != nil}
+		if c != nil {
+			// An absent declaration stays unknown. It is never inferred from
+			// the key, because the key names a variable, not a requirement.
+			pre.expected, pre.expectedKnown = ExpectedValue(condition)
+		}
 		node := &node[T]{
 			goal:          n.goal,
 			ppa:           n.ppa,
 			action:        n.action,
 			preconditions: n.preconditions,
-			precondition:  &precondition[T]{condition: condition},
+			precondition:  pre,
 			typ:           NodeTypePreconditionLeaf,
 			status:        &NodeStatus{},
+			id:            n.goal.mint(),
 		}
 		node.precondition.root = node
-		node.node = newConditionNode(n.goal.state, key, condition.Match, &node.precondition.status, node.status)
+		node.node = newConditionNode(n.goal, key, pre.id, node.id, condition.Match, pre, node.status)
 		node.frame = captureFrame(node.node)
 		n.append(nil, node)
 		and[key] = node.precondition
@@ -215,28 +229,31 @@ func (n *node[T]) buildNodeInfo() *NodeInfo {
 		Type:     n.nodeType(),
 		Status:   n.status,
 		children: n.childrenSeq(),
-	}
-
-	switch info.Type {
-	case NodeTypeActionNode:
-		info.Name = n.actionName()
-	case NodeTypePreconditionLeaf:
-		if n.precondition != nil {
-			info.Name = fmt.Sprintf("%v", n.precondition.condition.Key())
-		}
-	default:
-		info.Name = info.Type.String()
+		Name:     n.cachedName(),
 	}
 
 	// Add precondition info
 	if n.precondition != nil && n.precondition.root == n {
-		info.VariableKey = n.precondition.condition.Key()
+		// The key was read once when the condition was created; reading it
+		// again here would call back into the application on every inspection.
+		info.VariableKey = n.precondition.key
 		info.Condition = n.precondition.condition
+		if n.precondition.captured {
+			// A condition that declares no expectation renders as such. It is
+			// never replaced by a value derived from its key.
+			info.conditionSummary = "<undeclared>"
+			if n.precondition.expectedKnown {
+				info.conditionSummary = fmt.Sprintf("%v", n.precondition.expected)
+			}
+		}
 	}
 
 	// Add action effects info
 	if n.action != nil && n.action.node == n {
 		info.Effects = n.buildEffects()
+		if n.action.cache != nil {
+			info.effectsSummary = n.action.cache.name
+		}
 	}
 
 	// Capture frame info for leaf nodes
@@ -247,25 +264,69 @@ func (n *node[T]) buildNodeInfo() *NodeInfo {
 	return info
 }
 
+// nodeName is the node's display name, read from the current tree.
+func (n *node[T]) nodeName() string {
+	switch n.nodeType() {
+	case NodeTypeActionNode:
+		return n.actionName()
+	case NodeTypePreconditionLeaf:
+		if n.precondition != nil {
+			return fmt.Sprintf("%v", n.precondition.key)
+		}
+	}
+	return n.nodeType().String()
+}
+
+// cachedName prefers facts captured when the planner called into the
+// application, so inspecting a captured plan makes no application call.
+func (n *node[T]) cachedName() string {
+	if n.action != nil && n.action.node == n && n.action.cache != nil {
+		return n.action.cache.name
+	}
+	return n.nodeName()
+}
+
 func (n *node[T]) actionName() string {
-	if n.action == nil || len(n.action.effects) == 0 {
+	if n.action == nil {
 		return "Action"
 	}
-	keys := make([]any, 0, len(n.action.effects))
-	for key := range n.action.effects {
+	return n.action.actionName()
+}
+
+// effectName renders an action's effect keys and their declared values in a
+// stable order, so the same effects always produce the same name.
+func (a *action[T]) effectName(values map[any]any) string {
+	if len(a.effects) == 0 {
+		return "Action"
+	}
+	keys := make([]any, 0, len(a.effects))
+	for key := range a.effects {
 		keys = append(keys, key)
 	}
 	sort.Slice(keys, func(i, j int) bool {
 		return fmt.Sprintf("%v", keys[i]) < fmt.Sprintf("%v", keys[j])
 	})
-	name := ""
-	for _, key := range keys {
-		if name != "" {
-			name += ", "
+	var b strings.Builder
+	for i, key := range keys {
+		if i > 0 {
+			b.WriteString(", ")
 		}
-		name += fmt.Sprintf("%v→%v", key, n.action.effects[key].Value())
+		b.WriteString(fmt.Sprintf("%v→%v", key, values[key]))
 	}
-	return name
+	return b.String()
+}
+
+// actionName returns the cached name when a capture recorded the effect values,
+// and otherwise reads them from the application as before.
+func (a *action[T]) actionName() string {
+	if a.cache != nil {
+		return a.cache.name
+	}
+	values := make(map[any]any, len(a.effects))
+	for key, eff := range a.effects {
+		values[key] = eff.Value()
+	}
+	return a.effectName(values)
 }
 
 func (n *node[T]) nodeType() NodeType {
@@ -317,25 +378,46 @@ func (n *node[T]) buildEffects() Effects {
 	return effects
 }
 
+// newConditionNode builds the leaf that evaluates one condition.
+//
+// The variable read and the match are both routed through the tick's capture
+// when one is active, so every condition value a tick reports came from the same
+// world and each match is attributed to the reason it was made.
 func newConditionNode[T Condition](
-	state State[T],
+	g *goal[T],
 	key any,
+	conditionID, nodeID OccurrenceID,
 	match func(value any) bool,
-	outcome *bt.Status,
+	pre *precondition[T],
 	nodeStatus *NodeStatus,
 ) bt.Node {
 	return bt.New(func([]bt.Node) (status bt.Status, err error) {
-		var value any
-		value, err = state.Variable(key)
-		if err == nil && match(value) {
+		var (
+			value   any
+			matched bool
+		)
+		c := g.capture()
+		if c != nil {
+			value, err = c.variable(key, nodeID, conditionID)
+		} else {
+			value, err = g.state.Variable(key)
+		}
+		if err == nil {
+			if c != nil {
+				matched = c.match(conditionID, nodeID, UseRuntimeEvaluation, key, value, match)
+			} else {
+				matched = match(value)
+			}
+		}
+		if matched {
 			status = bt.Success
 		} else {
 			status = bt.Failure
 		}
-		*outcome = status
+		pre.status = status
+		pre.ticked = true
 		if nodeStatus != nil {
-			nodeStatus.IncrTickCount()
-			nodeStatus.SetLastStatus(status)
+			nodeStatus.record(status)
 		}
 		return
 	})
@@ -375,18 +457,27 @@ func (n *node[T]) search() (*precondition[T], bool) {
 }
 func (p *precondition[T]) expand() (err error) {
 	var acts []Action[T]
-	acts, err = p.root.goal.state.Actions(p.condition)
+	c := p.root.goal.capture()
+	if c != nil {
+		acts, err = c.actions(p.condition, p.id)
+	} else {
+		acts, err = p.root.goal.state.Actions(p.condition)
+	}
 	if err != nil {
 		return
 	}
 
 	// original root is copied and used as the post-condition, then has it's links preserved and is updated
 	// with a new ppa (linking to the new copy), note the original root has all fields overwritten except it's links
+	post := new(node[T]).copy(p.root)
+	post.id = p.root.goal.mint()
+	post.lineage = lineageOf(p.root.id)
+	p.postNodeID = post.id
 	p.root.copy(&node[T]{
 		goal: p.root.goal,
 		ppa: &ppa[T]{
 			root: p.root,
-			post: new(node[T]).copy(p.root),
+			post: post,
 		},
 		tick: bt.Selector,
 		typ:  NodeTypePPARoot,
@@ -400,7 +491,7 @@ func (p *precondition[T]) expand() (err error) {
 
 	// need to build all actions as their own trees first
 	for _, act := range acts {
-		_, err = p.root.generateAction(p.condition, act)
+		_, err = p.root.generateAction(p.condition, p.id, act)
 		if err != nil {
 			return
 		}
@@ -417,27 +508,45 @@ func (p *precondition[T]) expand() (err error) {
 			ppa:  p.root.ppa,
 			tick: bt.Memorize(bt.Selector),
 			typ:  NodeTypeActionSelector,
+			id:   p.root.goal.mint(),
 		}
 		for _, act := range p.root.ppa.actions {
 			node.append(nil, act.root)
 		}
 		p.root.append(nil, node)
 	}
+	p.root.goal.bump()
 	return
 }
-func (n *node[T]) generateAction(post Condition, act Action[T]) (ok bool, err error) {
+func (n *node[T]) generateAction(post Condition, postID OccurrenceID, act Action[T]) (ok bool, err error) {
 	r := new(action[T])
+	r.id = n.goal.mint()
+	r.postconditionID = postID
+	c := n.goal.capture()
+	if c != nil {
+		r.cache = &actionCache{values: map[any]any{}}
+	}
 
 	// map the effects
 	{
+		started := time.Now()
 		effects := act.Effects()
+		if c != nil {
+			c.recordActionCalls(CallbackActionEffects, "", r.id, len(effects), time.Since(started))
+		}
 		if len(effects) == 0 {
 			return
 		}
 		pk := post.Key()
+		if c != nil {
+			c.recordKey(SubjectCondition, postID, "", pk)
+		}
 		r.effects = make(map[any]Effect, len(effects))
 		for _, effect := range effects {
 			key := effect.Key()
+			if c != nil {
+				c.recordKey(SubjectEffect, "", "", key)
+			}
 			if !func() bool {
 				defer func() { _ = recover() }()
 				if _, ok := r.effects[key]; ok {
@@ -448,13 +557,42 @@ func (n *node[T]) generateAction(post Condition, act Action[T]) (ok bool, err er
 				return
 			}
 			r.effects[key] = effect
-			if !ok && key == pk && post.Match(effect.Value()) {
-				ok = true
+			var (
+				id        OccurrenceID
+				value     any
+				valueRead bool
+			)
+			if c != nil {
+				// The declared value is read once, here, so that naming the
+				// action later needs no further application call.
+				started := time.Now()
+				value = effect.Value()
+				valueRead = true
+				id = n.goal.mint()
+				c.recordEffectValue("", id, key, value, "", time.Since(started))
+				r.cache.effects = append(r.cache.effects, EffectOccurrence{
+					ID:         id,
+					ActionID:   r.id,
+					Key:        key,
+					Value:      value,
+					ValueKnown: valueRead,
+				})
+				r.cache.values[key] = value
+			}
+			if !ok && key == pk {
+				if c != nil {
+					ok = c.match(postID, "", UseEffectSupport, key, value, post.Match)
+				} else {
+					ok = post.Match(effect.Value())
+				}
 			}
 		}
 	}
 	if !ok {
 		return false, nil
+	}
+	if c != nil {
+		r.cache.name = r.effectName(r.cache.values)
 	}
 
 	// create action node
@@ -462,7 +600,8 @@ func (n *node[T]) generateAction(post Condition, act Action[T]) (ok bool, err er
 		return false, fmt.Errorf(`pabt: invalid action`)
 	} else {
 		actionStatus := &NodeStatus{}
-		actNode = wrapActionNodeHandleSetRunning(n.goal.running, actNode, actionStatus)
+		nodeID := n.goal.mint()
+		actNode = wrapActionNodeHandleSetRunning(n.goal, r, actNode, actionStatus, nodeID)
 		r.node = &node[T]{
 			goal:   n.goal,
 			ppa:    n.ppa,
@@ -471,6 +610,7 @@ func (n *node[T]) generateAction(post Condition, act Action[T]) (ok bool, err er
 			typ:    NodeTypeActionNode,
 			status: actionStatus,
 			frame:  captureFrame(actNode),
+			id:     nodeID,
 		}
 	}
 
@@ -480,8 +620,16 @@ func (n *node[T]) generateAction(post Condition, act Action[T]) (ok bool, err er
 		ppa:    n.ppa,
 		action: r,
 		typ:    NodeTypeActionRoot,
+		id:     n.goal.mint(),
 	}
-	r.or, err = r.root.generateOr(act.Conditions())
+	{
+		started := time.Now()
+		conds := act.Conditions()
+		if c != nil {
+			c.recordActionCalls(CallbackActionConditions, r.node.id, r.id, len(conds), time.Since(started))
+		}
+		r.or, err = r.root.generateOr(conds)
+	}
 	if err != nil {
 		return
 	}
@@ -499,6 +647,7 @@ func (n *node[T]) generateAction(post Condition, act Action[T]) (ok bool, err er
 			action: r,
 			tick:   bt.Sequence,
 			typ:    NodeTypeActionRoot,
+			id:     n.goal.mint(),
 		}
 		r.root.append(nil, condRoot)
 	}
@@ -514,6 +663,9 @@ func (p *ppa[T]) resolve() (conflicts int) {
 	for c := p.conflict(); c != nil; c = p.conflict() {
 		c.root.parent.append(c.root, p.root)
 		conflicts++
+	}
+	if conflicts > 0 {
+		p.root.goal.bump()
 	}
 	return
 }
@@ -574,14 +726,15 @@ func (p *ppa[T]) conflict() *ppa[T] {
 func (p *ppa[T]) conflicts(o *ppa[T]) bool {
 	// prepare conditions for comparison
 	type Pair struct {
-		K any
-		V Condition
+		K  any
+		V  Condition
+		ID OccurrenceID
 	}
 	var pairs []Pair
 	for _, act := range p.actions {
 		for _, or := range act.or {
 			for key, and := range or.and {
-				pairs = append(pairs, Pair{key, and.condition})
+				pairs = append(pairs, Pair{key, and.condition, and.id})
 			}
 		}
 	}
@@ -591,7 +744,15 @@ func (p *ppa[T]) conflicts(o *ppa[T]) bool {
 		return false
 	}
 
+	// Map iteration order is unspecified, so the pairs are ordered before any
+	// are compared. The answer is unchanged by the order, but the recorded
+	// evidence for a run would otherwise differ between identical runs.
+	sort.Slice(pairs, func(i, j int) bool {
+		return fmt.Sprintf("%v", pairs[i].K) < fmt.Sprintf("%v", pairs[j].K)
+	})
+
 	// ensure that p's conditions are compatible with any corresponding effects from o (also checks all sub-ppa)
+	c := p.root.goal.capture()
 	queue := []*ppa[T]{o}
 	for len(queue) != 0 {
 		o = queue[0]
@@ -599,7 +760,22 @@ func (p *ppa[T]) conflicts(o *ppa[T]) bool {
 		queue = queue[1:]
 		for _, act := range o.actions {
 			for _, pair := range pairs {
-				if eff, ok := act.effects[pair.K]; ok && !pair.V.Match(eff.Value()) {
+				eff, ok := act.effects[pair.K]
+				if !ok {
+					continue
+				}
+				started := time.Now()
+				value := eff.Value()
+				if c != nil {
+					c.recordEffectValue("", "", pair.K, value, UseConflictTest, time.Since(started))
+				}
+				var matched bool
+				if c != nil {
+					matched = c.match(pair.ID, "", UseConflictTest, pair.K, value, pair.V.Match)
+				} else {
+					matched = pair.V.Match(value)
+				}
+				if !matched {
 					return true
 				}
 			}
@@ -616,20 +792,50 @@ func (p *ppa[T]) conflicts(o *ppa[T]) bool {
 	return false
 }
 
-func wrapActionNodeHandleSetRunning(running *bool, actNode bt.Node, nodeStatus *NodeStatus) bt.Node {
+// wrapActionNodeHandleSetRunning wraps an action's node so the plan notices a
+// running action and so the action's completion is observed.
+//
+// The revision read before the action runs and the revision read after it are
+// the two ends of a transition claim, which is why they are taken here rather
+// than both being read from one post-action world.
+func wrapActionNodeHandleSetRunning[T Condition](
+	g *goal[T],
+	act *action[T],
+	actNode bt.Node,
+	nodeStatus *NodeStatus,
+	nodeID OccurrenceID,
+) bt.Node {
 	return func() (bt.Tick, []bt.Node) {
 		tick, children := actNode()
 		if tick == nil {
 			return nil, children
 		}
 		return func(children []bt.Node) (status bt.Status, err error) {
+			c := g.capture()
+			var (
+				before          StateRevision
+				beforeCoherence StateCoherence
+			)
+			if c != nil {
+				before, beforeCoherence = c.view.Revision(), c.view.Coherence()
+			}
+			started := time.Now()
 			status, err = tick(children)
-			if err == nil && status == bt.Running {
-				*running = true
+			if err == nil && status == bt.Running && g.running != nil {
+				*g.running = true
 			}
 			if nodeStatus != nil {
-				nodeStatus.IncrTickCount()
-				nodeStatus.SetLastStatus(status)
+				nodeStatus.record(status)
+			}
+			if c != nil {
+				c.afterAction(g, act, nodeID, ActionExecution{
+					ActionID:      act.id,
+					NodeID:        nodeID,
+					Status:        status,
+					StatusPresent: ValidateStatus(status) == nil,
+					Err:           recordedError(err),
+					StartedAt:     started,
+				}, before, beforeCoherence, started)
 			}
 			return
 		}, children
