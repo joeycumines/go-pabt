@@ -1508,13 +1508,18 @@ type notASecret struct {
 func TestADeclarationRedactsAValueItsNameNeverReveals(t *testing.T) {
 	reg := NewCodecRegistry(DefaultValueLimits())
 	// Every field name here is ordinary. Only the declaration can protect them.
+	//
+	// The literal is the one the shared helper searches for, so this test fails if
+	// the declaration stops being honoured. An earlier version of it planted a
+	// different string and could therefore never fail, which is how a leak in the
+	// projector shipped behind a test that appeared to cover it.
+	const literal = secretLiteralValue
 	type payload struct {
 		Field   declaredSecret
 		Detail  notASecret
 		Entries []declaredSecret
 		ByName  map[string]declaredSecret
 	}
-	const literal = "declared-secret-literal-value"
 	got := mustEncode(t, reg, payload{
 		Field:   declaredSecret{Value: literal},
 		Detail:  notASecret{Value: "keep me"},
@@ -1707,5 +1712,103 @@ func TestANameOutrankingADeclarationStillRedacts(t *testing.T) {
 	}
 	if !strings.Contains(string(got.Data), RedactedMarker) {
 		t.Errorf("no marker was left: %s", got.Data)
+	}
+}
+
+func TestADeclaredMapKeyIsProtectedIncludingItsOwnMaterial(t *testing.T) {
+	reg := NewCodecRegistry(DefaultValueLimits())
+	// A declared key says the key is a secret. Honouring that while leaving the
+	// key's own text readable in a later message would not have honoured it.
+	const keyLiteral = "declared-key-literal-9Qa"
+	err := WithRedaction(context.Background(), DefaultValueLimits(),
+		func(ctx context.Context) error {
+			if _, encErr := reg.Encode(ctx, "src",
+				map[secretKey]string{{Name: keyLiteral}: "v"}); encErr != nil {
+				return encErr
+			}
+			c, _ := redactionFor(ctx)
+			got := c.scrub("value=" + keyLiteral)
+			if strings.Contains(got, keyLiteral) {
+				t.Errorf("a declared key's own material survived later text: %q", got)
+			}
+			return nil
+		})
+	if err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+	// Two declared keys must not collapse onto one marker, or the map would appear
+	// to hold fewer entries than it does.
+	got := mustEncode(t, reg, map[secretKey]string{
+		{Name: "one"}: "v1",
+		{Name: "two"}: "v2",
+	})
+	if got.Visibility != ValueRedacted {
+		t.Fatalf("visibility = %q, want %q", got.Visibility, ValueRedacted)
+	}
+	if strings.Count(string(got.Data), RedactedMarker) < 4 {
+		t.Errorf("two declared keys collapsed onto one entry: %s", got.Data)
+	}
+	if strings.Contains(string(got.Data), "one") || strings.Contains(string(got.Data), "two") {
+		t.Errorf("a declared key's text is in the record: %s", got.Data)
+	}
+}
+
+// privateHolder keeps its declared secret in an unexported field, which the
+// pre-codec walk cannot inspect and therefore never registers.
+type privateHolder struct {
+	Handle declaredSecret
+	port   int
+}
+
+func TestTheDisplayNeverDisclosesMoreThanTheRecord(t *testing.T) {
+	reg := NewCodecRegistry(DefaultValueLimits())
+	// The display used to render the value with %v, which shows unexported fields
+	// and calls a String method. A declared secret in an unexported field therefore
+	// reached the display in the clear, and the display is part of the record and of
+	// every digest over it. The display is now derived from the projection, so it
+	// cannot hold anything the record's own data does not.
+	got := mustEncode(t, reg, privateHolder{Handle: declaredSecret{Value: "inner-value"}, port: 8080})
+	if strings.Contains(got.Display, "inner-value") {
+		t.Errorf("the display disclosed a declared secret: %q", got.Display)
+	}
+	// An unexported field is absent from the record rather than present, because
+	// reflect cannot read it. That is the point: it is neither shown nor leaked.
+	if strings.Contains(string(got.Data), "8080") || strings.Contains(got.Display, "8080") {
+		t.Errorf("an unexported field reached the record: %s / %q", got.Data, got.Display)
+	}
+	if !strings.Contains(string(got.Data), RedactedMarker) {
+		t.Errorf("the declared secret was not replaced: %s", got.Data)
+	}
+	encoded, err := CanonicalEncode(got)
+	if err != nil {
+		t.Fatalf("CanonicalEncode: %v", err)
+	}
+	digest, err := HashValue(got)
+	if err != nil {
+		t.Fatalf("HashValue: %v", err)
+	}
+	for _, artifact := range [][]byte{encoded, got.Data, []byte(got.Display), []byte(digest)} {
+		if strings.Contains(string(artifact), "inner-value") {
+			t.Error("a declared secret reached an artifact")
+		}
+	}
+}
+
+type leakyStringer struct{ Value string }
+
+func (l leakyStringer) String() string { return "leaky " + l.Value + " end" }
+
+func TestTheDisplayDoesNotCallAValueStringMethod(t *testing.T) {
+	reg := NewCodecRegistry(DefaultValueLimits())
+	// A String method is free to print anything, including a secret the walk never
+	// saw, so the display must not call it.
+	got := mustEncode(t, reg, leakyStringer{Value: "stringed-value-here"})
+	// The String method's own decorations are what identify it. Its text was not
+	// used as the display; the exported field was projected instead.
+	if strings.Contains(got.Display, "leaky") || strings.Contains(got.Display, " end") {
+		t.Errorf("the display called a String method: %q", got.Display)
+	}
+	if !strings.Contains(string(got.Data), "stringed-value-here") {
+		t.Errorf("the exported field was lost: %s", got.Data)
 	}
 }

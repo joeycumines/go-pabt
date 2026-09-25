@@ -546,9 +546,12 @@ type walkDecision struct {
 	Redactions []redaction
 }
 
-// redaction is one sensitive value and the mechanism that found it.
+// redaction is one sensitive value and the mechanism that found it. Key is set
+// when the map key itself is what was sensitive, whose own material is then a
+// secret as well.
 type redaction struct {
 	Value  reflect.Value
+	Key    reflect.Value
 	Reason string
 }
 
@@ -609,7 +612,15 @@ func (c *redactionContext) walk(path string, v reflect.Value, depth, nodes uint3
 			// application answering directly and a non-string key is merely a shape
 			// this recorder cannot render.
 			if declaredSensitive(key) {
-				found = append(found, redaction{Value: iter.Value(), Reason: RedactionDeclared})
+				// The key's own material is registered as well as the value's. A
+				// declared key is the application saying the key is a secret, and a
+				// record that honours that while leaving the key readable in a later
+				// message would not have honoured it.
+				found = append(found, redaction{
+					Value:  iter.Value(),
+					Key:    key,
+					Reason: RedactionDeclared,
+				})
 				continue
 			}
 			// A non-string key is refused rather than rendered: the int 1 and the
@@ -625,7 +636,11 @@ func (c *redactionContext) walk(path string, v reflect.Value, depth, nodes uint3
 			// not, so a map keyed by a secret is redacted for the same reason a
 			// field named for one is.
 			if IsSensitiveSegment(segment) {
-				found = append(found, redaction{Value: iter.Value(), Reason: RedactionInferred})
+				found = append(found, redaction{
+					Value:  iter.Value(),
+					Key:    key,
+					Reason: RedactionInferred,
+				})
 				continue
 			}
 			decision, err := c.walk(child, iter.Value(), depth+1, nodes)

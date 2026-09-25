@@ -247,6 +247,9 @@ func (r *CodecRegistry) Encode(ctx context.Context, source string, v any) (Store
 		// so a value with two secrets cannot leak the second through later text.
 		for _, r := range decision.Redactions {
 			redactor.registerLeaves(r.Value)
+			if r.Key.IsValid() {
+				redactor.registerLeaves(r.Key)
+			}
 		}
 		return finishValue(&out)
 	}
@@ -267,11 +270,7 @@ func (r *CodecRegistry) Encode(ctx context.Context, source string, v any) (Store
 	out.CodecVersion = codec.Version()
 	out.Data = data
 	out.Visibility = codecVisibility(codec)
-	out.Display = san.Sanitize(displayOf(v))
-	// The display rendering is derived from the value, so it can repeat a secret
-	// that the walk did not mark. Scrubbing it here means the record and the
-	// response carry the same text.
-	out.Display = redactor.scrub(out.Display)
+	out.Display = displayFor(reflect.ValueOf(v), redactor.limits)
 	return finishValue(&out)
 }
 
@@ -367,11 +366,29 @@ func typeName(v any) string {
 	return reflect.TypeOf(v).String()
 }
 
-func displayOf(v any) string {
-	if s, ok := v.(fmt.Stringer); ok {
-		return s.String()
+// displayFor renders a value's human-readable form from its projection.
+//
+// It deliberately does not render the value itself. A direct rendering shows
+// unexported fields, which the pre-codec walk cannot inspect and therefore never
+// registers, and it would call a String method, which is free to print anything.
+// Either would put a declared secret into the display, and the display is part of
+// the record and of every digest computed over it. Deriving the display from the
+// projection means it can never disclose more than the record's own data does.
+func displayFor(v reflect.Value, limits ValueLimits) string {
+	projection, err := projectStructure(v, 0, 0)
+	if err != nil {
+		// A value with no canonical form still has a type, and a type is not a
+		// disclosure.
+		if v.IsValid() {
+			return v.Type().String()
+		}
+		return "<nil>"
 	}
-	return fmt.Sprintf("%v", v)
+	rendered := fmt.Sprintf("%v", projection)
+	if uint32(len([]rune(rendered))) > limits.MaxDisplayBytes {
+		rendered = string([]rune(rendered)[:limits.MaxDisplayBytes]) + "…"
+	}
+	return rendered
 }
 
 // projectedName returns the key a field is recorded under.
@@ -657,7 +674,19 @@ func projectRedacted(limits ValueLimits, v reflect.Value, depth, nodes uint32) (
 			// A declared key takes its whole entry with it, honoured before the key
 			// has to be renderable as text.
 			if declaredSensitive(iter.Key()) {
-				if err := putProjected(out, RedactedMarker, RedactedMarker); err != nil {
+				// Two declared keys must not collapse onto one marker name, or the
+				// map would appear to hold fewer entries than it does.
+				name := RedactedMarker
+				if _, taken := out[name]; taken {
+					for n := 2; ; n++ {
+						candidate := fmt.Sprintf("%s_%d", RedactedMarker, n)
+						if _, clash := out[candidate]; !clash {
+							name = candidate
+							break
+						}
+					}
+				}
+				if err := putProjected(out, name, RedactedMarker); err != nil {
 					return nil, err
 				}
 				continue
