@@ -25,7 +25,70 @@ import (
 	"unicode/utf8"
 )
 
-// The sensitivity rule, in one place.
+// Sensitive is the optional interface an application implements on one of its own
+// types to declare that the type's values are secrets.
+//
+// The name-based rule below is a fallback, and it has to be a guess: a field
+// named Password must be redacted even when the application never said anything,
+// because a debugger cannot ask. A guess is also imprecise, and six review
+// passes established it cannot be both complete and precise. A declaration
+// replaces the guess, so an application whose field names say nothing, such as a
+// database source named Field, still gets a guarantee rather than a heuristic.
+//
+// The record says which mechanism decided, so a reader can tell a declared
+// secret from a merely suspicious name.
+type Sensitive interface {
+	// PabtSensitive reports whether this value is a secret. It runs before any codec
+	// and before any digest, so it must be cheap, must not have side effects, and
+	// must not reveal the value it is protecting.
+	PabtSensitive() bool
+}
+
+// Redaction mechanisms, recorded on a redacted value so a consumer can tell an
+// application that declared a secret from a name the recorder happened to
+// recognise.
+const (
+	// RedactionDeclared means the value's own type declared it a secret.
+	RedactionDeclared = "declared_by_application"
+
+	// RedactionInferred means the recorder recognised the name and nothing else.
+	RedactionInferred = "inferred_from_name"
+)
+
+// declaredSensitive reports whether a value declares itself a secret.
+//
+// Both the value and its address are tried, because a method with a pointer
+// receiver is only in the method set of the pointer, and a field of a struct
+// reached through an interface is commonly a pointer.
+func declaredSensitive(v reflect.Value) bool {
+	if !v.IsValid() {
+		return false
+	}
+	switch v.Kind() {
+	case reflect.Pointer, reflect.Interface:
+		if v.IsNil() {
+			return false
+		}
+		if declared, ok := v.Interface().(Sensitive); ok {
+			return declared.PabtSensitive()
+		}
+		return declaredSensitive(v.Elem())
+	default:
+		if v.CanInterface() {
+			if declared, ok := v.Interface().(Sensitive); ok {
+				return declared.PabtSensitive()
+			}
+		}
+		if v.CanAddr() {
+			if declared, ok := v.Addr().Interface().(Sensitive); ok {
+				return declared.PabtSensitive()
+			}
+		}
+		return false
+	}
+}
+
+// The sensitivity rule below is the fallback, in one place.
 //
 // A segment is a credential when a credential word appears in the name, when the
 // name combines something that says the purpose is private with something that
@@ -435,7 +498,27 @@ type walkDecision struct {
 	// nested secret has two of them, and returning early discarded the outer one,
 	// which then reappeared verbatim in a later diagnostic and was signed by that
 	// record's digest. Map iteration made the survivor vary per run.
-	Redactions []reflect.Value
+	Redactions []redaction
+}
+
+// redaction is one sensitive value and the mechanism that found it.
+type redaction struct {
+	Value  reflect.Value
+	Reason string
+}
+
+// reason reports the mechanism to record, preferring a declaration because it is
+// the stronger statement.
+func (d walkDecision) reason() string {
+	for _, r := range d.Redactions {
+		if r.Reason == RedactionDeclared {
+			return RedactionDeclared
+		}
+	}
+	if len(d.Redactions) > 0 {
+		return RedactionInferred
+	}
+	return ""
 }
 
 // walk inspects a value before any codec sees it.
@@ -454,6 +537,15 @@ func (c *redactionContext) walk(path string, v reflect.Value, depth, nodes uint3
 	if !v.IsValid() {
 		return walkDecision{Path: path}, nil
 	}
+	// A declaration outranks any name, and it applies to a value that is not a field
+	// at all: a slice of a declared type is declared wherever it appears.
+	if declaredSensitive(v) {
+		return walkDecision{
+			Path:       path,
+			Redacted:   true,
+			Redactions: []redaction{{Value: v, Reason: RedactionDeclared}},
+		}, nil
+	}
 	switch v.Kind() {
 	case reflect.Pointer, reflect.Interface:
 		if v.IsNil() {
@@ -463,7 +555,7 @@ func (c *redactionContext) walk(path string, v reflect.Value, depth, nodes uint3
 	case reflect.Map:
 		// Every key is examined, so two sensitive keys both contribute. Returning
 		// on the first made the survivor depend on Go's map iteration order.
-		var found []reflect.Value
+		var found []redaction
 		iter := v.MapRange()
 		for iter.Next() {
 			key := iter.Key()
@@ -480,7 +572,7 @@ func (c *redactionContext) walk(path string, v reflect.Value, depth, nodes uint3
 			// not, so a map keyed by a secret is redacted for the same reason a
 			// field named for one is.
 			if IsSensitiveSegment(segment) {
-				found = append(found, iter.Value())
+				found = append(found, redaction{Value: iter.Value(), Reason: RedactionInferred})
 				continue
 			}
 			decision, err := c.walk(child, iter.Value(), depth+1, nodes)
@@ -496,7 +588,7 @@ func (c *redactionContext) walk(path string, v reflect.Value, depth, nodes uint3
 		}
 		// Every element is visited, so a second secret in a slice is found even
 		// though the first one already made the value sensitive.
-		var found []reflect.Value
+		var found []redaction
 		for i := range v.Len() {
 			decision, err := c.walk(joinPath(path, fmt.Sprint(i)), v.Index(i), depth+1, nodes)
 			if err != nil {
@@ -510,7 +602,7 @@ func (c *redactionContext) walk(path string, v reflect.Value, depth, nodes uint3
 		// Every sensitive field in one struct is collected, because a value with two
 		// secrets has two of them and registering only the first would let the second
 		// reappear in later text.
-		var found []reflect.Value
+		var found []redaction
 		for i := range t.NumField() {
 			field := t.Field(i)
 			if !field.IsExported() {
@@ -520,8 +612,8 @@ func (c *redactionContext) walk(path string, v reflect.Value, depth, nodes uint3
 			// would record a field named Password in the clear whenever its tag
 			// happened to be innocuous, and consulting only the Go one would record a
 			// field tagged "password" in the clear.
-			if isSensitiveField(field) {
-				found = append(found, v.Field(i))
+			if reason := fieldRedactionReason(field, v.Field(i)); reason != "" {
+				found = append(found, redaction{Value: v.Field(i), Reason: reason})
 				continue
 			}
 			decision, err := c.walk(joinPath(path, field.Name), v.Field(i), depth+1, nodes)

@@ -108,8 +108,8 @@ func TestRedactionKeepsSecretsOutOfEveryArtifact(t *testing.T) {
 	if valueOut.Visibility != ValueRedacted {
 		t.Fatalf("visibility = %q, want %q", valueOut.Visibility, ValueRedacted)
 	}
-	if valueOut.Error != RedactedReason {
-		t.Errorf("reason = %q, want %q", valueOut.Error, RedactedReason)
+	if valueOut.Redaction != RedactionInferred {
+		t.Errorf("mechanism = %q, want %q", valueOut.Redaction, RedactionInferred)
 	}
 	if valueOut.SHA256 == "" {
 		t.Error("a redacted value carries no digest")

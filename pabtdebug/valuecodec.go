@@ -67,10 +67,6 @@ const (
 // itself not a disclosure.
 const RedactedMarker = "REDACTED"
 
-// RedactedReason names why a value was removed. It is recorded so a consumer can
-// explain the gap without the value.
-const RedactedReason = "sensitive_path"
-
 // StoredValue is one recorded value, or the record that one could not be
 // recorded.
 //
@@ -86,7 +82,14 @@ type StoredValue struct {
 	Display      string
 	Source       string
 	Error        string
-	SHA256       string
+
+	// Redaction names the mechanism that removed a redacted value: a declaration by
+	// the application, or a name the recorder recognised. It is empty for a value
+	// that was not redacted, so a reader can tell a declared secret from a merely
+	// suspicious name rather than having to infer it.
+	Redaction string
+
+	SHA256 string
 }
 
 // ValueCodec reproduces one kind of value as bytes.
@@ -223,7 +226,7 @@ func (r *CodecRegistry) Encode(ctx context.Context, source string, v any) (Store
 		out.Source = joinPath(source, decision.Path)
 		out.CodecID = structureCodecID
 		out.CodecVersion = 1
-		out.Error = RedactedReason
+		out.Redaction = decision.reason()
 		out.Display = RedactedMarker
 		projection, err := projectRedacted(redactor.limits, reflect.ValueOf(v), 0, 0)
 		if err != nil {
@@ -243,7 +246,7 @@ func (r *CodecRegistry) Encode(ctx context.Context, source string, v any) (Store
 		// Every sensitive value the walk found contributes a literal, at any depth,
 		// so a value with two secrets cannot leak the second through later text.
 		for _, r := range decision.Redactions {
-			redactor.registerLeaves(r)
+			redactor.registerLeaves(r.Value)
 		}
 		return finishValue(&out)
 	}
@@ -404,6 +407,19 @@ func projectedName(f reflect.StructField, taken map[string]bool) string {
 // name or its declared wire name.
 func isSensitiveField(f reflect.StructField) bool {
 	return IsSensitiveSegment(f.Name) || IsSensitiveSegment(declaredName(f))
+}
+
+// fieldRedactionReason returns why a field is redacted, or an empty string when it
+// is not. A declaration outranks the name, so a value that declares itself a
+// secret is recorded as declared even when its field name also looks sensitive.
+func fieldRedactionReason(f reflect.StructField, v reflect.Value) string {
+	if declaredSensitive(v) {
+		return RedactionDeclared
+	}
+	if isSensitiveField(f) {
+		return RedactionInferred
+	}
+	return ""
 }
 
 // declaredName returns the name a field is recorded under: the declared wire name
@@ -610,9 +626,9 @@ func projectRedacted(limits ValueLimits, v reflect.Value, depth, nodes uint32) (
 				continue
 			}
 			taken[name] = true
-			// The same rule the walk used, so the projection replaces exactly what
-			// the walk decided was sensitive.
-			if isSensitiveField(field) {
+			// The same rule the walk used, declaration included, so the projection
+			// replaces exactly what the walk decided was sensitive.
+			if fieldRedactionReason(field, v.Field(i)) != "" {
 				if err := putProjected(out, name, RedactedMarker); err != nil {
 					return nil, err
 				}
@@ -632,7 +648,7 @@ func projectRedacted(limits ValueLimits, v reflect.Value, depth, nodes uint32) (
 		iter := v.MapRange()
 		for iter.Next() {
 			segment := iter.Key().String()
-			if IsSensitiveSegment(segment) {
+			if IsSensitiveSegment(segment) || declaredSensitive(iter.Value()) {
 				if err := putProjected(out, segment, RedactedMarker); err != nil {
 					return nil, err
 				}

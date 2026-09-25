@@ -196,8 +196,8 @@ func TestCanonicalRejectsUnrepresentableNumbers(t *testing.T) {
 // properties in TestCanonicalProperties are what pin the format to its
 // specification, and TestGoldenVectorsAreSensitive proves these locks can fail.
 const (
-	valueVectorBytes  = `{"CodecID":"structure/v1","CodecVersion":1,"Data":"Imh1bnRlcjIi","Display":"REDACTED","Error":"sensitive_path","ReflectType":"string","SHA256":"","Source":"credentials.password","Visibility":"redacted"}`
-	valueVectorDigest = "498ade3e5df13cf2a2668da6f37687e31a972d55c337c9e51e90445392e4827c"
+	valueVectorBytes  = `{"CodecID":"structure/v1","CodecVersion":1,"Data":"Imh1bnRlcjIi","Display":"REDACTED","Error":"","Redaction":"declared_by_application","ReflectType":"string","SHA256":"","Source":"credentials.password","Visibility":"redacted"}`
+	valueVectorDigest = "a86d813fb6b131e4fc54c24ead985e0dcb42a03ba8aa7dd98984970e54afea64"
 
 	treeVectorBytes  = `{"digest":"","nodeCount":0,"nodes":null,"planRevision":7,"rootId":"n1","runKey":{"planId":"p","runId":"r","sessionId":"s"},"sequence":1}`
 	treeVectorDigest = "e74c9277caa17ac8305d5b83a4395f565ca9952fc2353f2422cd1abd1e670a64"
@@ -218,7 +218,7 @@ func goldenValue() StoredValue {
 		Data:         Bytes(`"hunter2"`),
 		Display:      RedactedMarker,
 		Source:       "credentials.password",
-		Error:        RedactedReason,
+		Redaction:    RedactionDeclared,
 	}
 }
 
@@ -1489,5 +1489,98 @@ func TestHighValueCredentialSpellingsAreRedacted(t *testing.T) {
 		if !IsSensitiveSegment(name) {
 			t.Errorf("IsSensitiveSegment(%q) = false, want true", name)
 		}
+	}
+}
+
+// declaredSecret is a value whose type declares itself a secret, with a field name
+// that says nothing. It is the guarantee an application gets in exchange for one
+// method, and it is what a name-based rule cannot give.
+type declaredSecret struct {
+	Value string
+}
+
+func (declaredSecret) PabtSensitive() bool { return true }
+
+type notASecret struct {
+	Value string
+}
+
+func TestADeclarationRedactsAValueItsNameNeverReveals(t *testing.T) {
+	reg := NewCodecRegistry(DefaultValueLimits())
+	// Every field name here is ordinary. Only the declaration can protect them.
+	type payload struct {
+		Field   declaredSecret
+		Detail  notASecret
+		Entries []declaredSecret
+		ByName  map[string]declaredSecret
+	}
+	const literal = "declared-secret-literal-value"
+	got := mustEncode(t, reg, payload{
+		Field:   declaredSecret{Value: literal},
+		Detail:  notASecret{Value: "keep me"},
+		Entries: []declaredSecret{{Value: literal}},
+		ByName:  map[string]declaredSecret{"anything": {Value: literal}},
+	})
+	if got.Visibility != ValueRedacted {
+		t.Fatalf("visibility = %q, want %q", got.Visibility, ValueRedacted)
+	}
+	if got.Redaction != RedactionDeclared {
+		t.Errorf("mechanism = %q, want %q", got.Redaction, RedactionDeclared)
+	}
+	encoded, err := CanonicalEncode(got)
+	if err != nil {
+		t.Fatalf("CanonicalEncode: %v", err)
+	}
+	assertNoSecret(t, "a declared secret", encoded, got.Data, []byte(got.Display))
+	// The declared value is gone everywhere, including a slice element and a map
+	// value, because the declaration travels with the type.
+	if !strings.Contains(string(got.Data), "keep me") {
+		t.Errorf("an undeclared sibling was destroyed: %s", got.Data)
+	}
+	digest, err := HashValue(got)
+	if err != nil {
+		t.Fatalf("HashValue: %v", err)
+	}
+	assertNoSecret(t, "the digest of a declared secret", []byte(digest))
+}
+
+func TestAnInferredRedactionIsRecordedAsInferred(t *testing.T) {
+	reg := NewCodecRegistry(DefaultValueLimits())
+	// Nothing declared this. The name did, and the record must say so rather than
+	// letting a reader assume the application agreed.
+	type payload struct {
+		Password string
+		Field    notASecret
+	}
+	got := mustEncode(t, reg, payload{Password: "hunter2hunter2", Field: notASecret{Value: "keep"}})
+	if got.Visibility != ValueRedacted {
+		t.Fatalf("visibility = %q, want %q", got.Visibility, ValueRedacted)
+	}
+	if got.Redaction != RedactionInferred {
+		t.Errorf("mechanism = %q, want %q", got.Redaction, RedactionInferred)
+	}
+	if !strings.Contains(string(got.Data), "keep") {
+		t.Errorf("an ordinary sibling was destroyed: %s", got.Data)
+	}
+}
+
+func TestADeclarationOutranksTheNameAndTheRecordSaysSo(t *testing.T) {
+	reg := NewCodecRegistry(DefaultValueLimits())
+	// A field named Password whose type also declares itself: the declaration is the
+	// stronger statement, so the record names it.
+	type payload struct {
+		Password declaredSecret
+	}
+	got := mustEncode(t, reg, payload{Password: declaredSecret{Value: "x"}})
+	if got.Redaction != RedactionDeclared {
+		t.Errorf("mechanism = %q, want %q", got.Redaction, RedactionDeclared)
+	}
+}
+
+func TestAnUnredactedValueCarriesNoMechanism(t *testing.T) {
+	reg := NewCodecRegistry(DefaultValueLimits())
+	got := mustEncode(t, reg, notASecret{Value: "ordinary"})
+	if got.Redaction != "" {
+		t.Errorf("an unredacted value reports a mechanism: %q", got.Redaction)
 	}
 }
