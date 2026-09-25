@@ -18,6 +18,7 @@ package pabt
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sync/atomic"
 
@@ -26,6 +27,11 @@ import (
 
 // statusKey is the unexported key type for retrieving NodeStatus via Value.
 type statusKey struct{}
+
+// ErrStatusValue reports a status outside the three values go-behaviortree
+// defines. It is exported so a durable decoder can classify the rejection
+// instead of matching on message text.
+var ErrStatusValue = errors.New(`pabt: invalid status value`)
 
 // ValidateStatus reports whether s is one of the three statuses
 // go-behaviortree defines.
@@ -40,7 +46,7 @@ func ValidateStatus(s bt.Status) error {
 	case bt.Running, bt.Success, bt.Failure:
 		return nil
 	}
-	return fmt.Errorf(`pabt: invalid status %d`, int(s))
+	return fmt.Errorf("%w: %d", ErrStatusValue, int(s))
 }
 
 // NodeStatusSnapshot is a coherent view of a node's tick accounting.
