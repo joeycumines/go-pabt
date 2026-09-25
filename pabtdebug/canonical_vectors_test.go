@@ -1812,3 +1812,139 @@ func TestTheDisplayDoesNotCallAValueStringMethod(t *testing.T) {
 		t.Errorf("the exported field was lost: %s", got.Data)
 	}
 }
+
+// revHidden is the shape the display fix exists for: a declared secret in an
+// unexported field, which the pre-codec walk cannot inspect and therefore never
+// registers, next to an ordinary exported field.
+type revHidden struct {
+	handle declaredSecret
+	Port   int
+}
+
+func TestTheDisplayRevealsNothingTheWalkCannotSee(t *testing.T) {
+	reg := NewCodecRegistry(DefaultValueLimits())
+	// Before the display was derived from the projection, this rendered as
+	// "{{literal} 8080}" through the default formatter while the record claimed
+	// visibility: "semantic" and no mechanism at all.
+	const literal = "hidden-declared-literal-4d7f"
+	got := mustEncode(t, reg, revHidden{handle: declaredSecret{Value: literal}, Port: 8080})
+	for _, artifact := range []struct {
+		what  string
+		value string
+	}{
+		{"display", got.Display},
+		{"data", string(got.Data)},
+		{"source", got.Source},
+		{"error", got.Error},
+	} {
+		if strings.Contains(artifact.value, literal) {
+			t.Errorf("the %s disclosed a secret in an unexported field: %q", artifact.what, artifact.value)
+		}
+	}
+	// The ordinary exported field is still shown, so the record is not simply
+	// blanked in the attempt to be safe.
+	if !strings.Contains(string(got.Data), "8080") {
+		t.Errorf("the record lost an ordinary exported field: %s", got.Data)
+	}
+	encoded, err := CanonicalEncode(got)
+	if err != nil {
+		t.Fatalf("CanonicalEncode: %v", err)
+	}
+	digest, err := HashValue(got)
+	if err != nil {
+		t.Fatalf("HashValue: %v", err)
+	}
+	for _, artifact := range []string{string(encoded), string(got.Data), got.Display, digest} {
+		if strings.Contains(artifact, literal) {
+			t.Error("a secret in an unexported field reached an artifact")
+		}
+	}
+	// The display is a prefix of the record's own bytes for a structural value, so
+	// it cannot describe something the data does not contain.
+	if !strings.HasPrefix(strings.TrimSuffix(got.Display, "…"), string(got.Data)) &&
+		!strings.HasPrefix(string(got.Data), strings.TrimSuffix(got.Display, "…")) {
+		t.Errorf("the display and the data describe different things: %q vs %s", got.Display, got.Data)
+	}
+}
+
+// The field is exported so the projection carries a value at all; an unexported
+// one projects to an empty object, which is the safer outcome but leaves nothing
+// here to dispatch a method with.
+type methodScalar struct{ Text string }
+
+// The three method sets a named scalar can carry, any of which fmt would
+// dispatch to if the display were rendered with a formatter.
+func (methodScalar) String() string { return "S:" + methodScalarSecret }
+func (methodScalar) Error() string  { return "E:" + methodScalarSecret }
+func (methodScalar) Format(f fmt.State, verb rune) {
+	_, _ = f.Write([]byte("F:" + methodScalarSecret))
+}
+
+const methodScalarSecret = "method-scalar-literal-7b3c"
+
+func TestTheDisplayNeverDispatchesToAValueMethod(t *testing.T) {
+	reg := NewCodecRegistry(DefaultValueLimits())
+	// A named scalar inside a struct is projected as itself, so a formatter over
+	// the projection would still call its String, Error, or Format method. The
+	// display is canonical bytes, which write a scalar as text and dispatch to
+	// nothing.
+	got := mustEncode(t, reg, struct {
+		Note methodScalar
+		N    int
+	}{Note: methodScalar{Text: "harmless"}, N: 1})
+	for _, artifact := range []string{got.Display, string(got.Data), got.Error, got.Source} {
+		if strings.Contains(artifact, methodScalarSecret) {
+			t.Errorf("a value method was dispatched: %q", artifact)
+		}
+	}
+	if !strings.Contains(string(got.Data), "harmless") {
+		t.Errorf("the projection lost the value: %s", got.Data)
+	}
+	// A String method that panics must not take the encoder with it.
+	got = mustEncode(t, reg, struct {
+		Note panickingStringer
+		N    int
+	}{Note: panickingStringer{}, N: 1})
+	if strings.Contains(got.Display, "PANIC") {
+		t.Errorf("a panicking value method reached the display: %q", got.Display)
+	}
+}
+
+type panickingStringer struct{}
+
+func (panickingStringer) String() string { panic("PANIC: stringer panicked") }
+
+// TestADeclarationIsRememberedSoTwoPassesCannotDisagree proves the walk and the
+// projector cannot be made to disagree. A declaration that answered yes once and
+// then no would let the walk redact and the projector write the value out, which
+// is a record that claims the application declared a secret and then carries it.
+func TestADeclarationIsRememberedSoTwoPassesCannotDisagree(t *testing.T) {
+	reg := NewCodecRegistry(DefaultValueLimits())
+	if !declaredSensitive(reflect.ValueOf(flakySecret{})) {
+		t.Fatal("the first declaration did not register")
+	}
+	// The second and third answers are false. The type must still be honoured.
+	if !declaredSensitive(reflect.ValueOf(flakySecret{})) {
+		t.Error("a type that declared itself was forgotten, so two passes could disagree")
+	}
+	got := mustEncode(t, reg, struct {
+		Field flakySecret
+		Keep  string
+	}{Field: flakySecret{}, Keep: "keep"})
+	if got.Visibility != ValueRedacted {
+		t.Errorf("visibility = %q, want %q", got.Visibility, ValueRedacted)
+	}
+	if strings.Contains(string(got.Data), got.Display) && got.Display == "" {
+		t.Error("no display was produced for a redacted value")
+	}
+}
+
+type flakySecret struct{ calls *int }
+
+func (f *flakySecret) PabtSensitive() bool {
+	if f.calls == nil {
+		f.calls = new(int)
+	}
+	*f.calls++
+	return *f.calls == 1
+}

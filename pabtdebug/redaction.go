@@ -59,6 +59,25 @@ type Sensitive interface {
 // addressable copy, and the answer depends only on the type, so it is cached.
 var sensitivePointerTypes sync.Map
 
+// declaredTypes remembers types that have answered yes.
+//
+// Only a yes is remembered. The walk and the projector each ask, so a declaration
+// that answered differently the second time would let the walk redact and the
+// projector write the value out, producing a record that claims the application
+// declared a secret and then carries it. Remembering the yes closes that exactly;
+// a no is never cached, so a type that starts declining cannot lock a later
+// declaration out.
+var declaredTypes sync.Map
+
+// markDeclared remembers that a type has declared itself sensitive.
+func markDeclared(t reflect.Type) { declaredTypes.Store(t, true) }
+
+// alreadyDeclared reports whether a type has previously declared itself.
+func alreadyDeclared(t reflect.Type) bool {
+	seen, ok := declaredTypes.Load(t)
+	return ok && seen.(bool)
+}
+
 func pointerToIsSensitive(t reflect.Type) bool {
 	if cached, ok := sensitivePointerTypes.Load(t); ok {
 		return cached.(bool)
@@ -77,9 +96,16 @@ func declared(v any) (sensitive bool) {
 	if !ok {
 		return false
 	}
+	t := reflect.TypeOf(v)
+	if alreadyDeclared(t) {
+		return true
+	}
 	defer func() {
 		if recover() != nil {
 			sensitive = true
+		}
+		if sensitive {
+			markDeclared(t)
 		}
 	}()
 	return d.PabtSensitive()

@@ -191,10 +191,18 @@ func (r *CodecRegistry) Codecs() []ValueCodec {
 
 // Encode records one value.
 //
-// The pre-codec walk runs first, so a sensitive value is removed before any codec
-// and before any digest can see it. An exact type match wins; failing that, the
-// unique most specific assignable codec wins; a tie is refused rather than
-// resolved arbitrarily.
+// The pre-codec walk runs first, so a value the walk can reach is removed before
+// any codec and before any digest sees it. An exact type match wins; failing
+// that the structure codec records canonical JSON as semantic; a value with no
+// codec at all is refused rather than guessed.
+//
+// The limit worth knowing: reflection cannot read an unexported field, so a
+// declared secret inside one is not visible to the walk. A codec this recorder
+// chooses encodes only what the projection can reach, so such a secret cannot
+// reach the record. A codec the APPLICATION registers is handed the value
+// itself, including its unexported fields, and can therefore emit anything; that
+// is the one path where a declared secret can still leave the process, and it is
+// the application's own code doing it.
 func (r *CodecRegistry) Encode(ctx context.Context, source string, v any) (StoredValue, error) {
 	if err := ctx.Err(); err != nil {
 		return StoredValue{}, err
@@ -366,29 +374,41 @@ func typeName(v any) string {
 	return reflect.TypeOf(v).String()
 }
 
-// displayFor renders a value's human-readable form from its projection.
+// displayFor renders a value's human-readable form from the same canonical bytes
+// its data is built from.
 //
-// It deliberately does not render the value itself. A direct rendering shows
+// It deliberately does not render the value. A direct rendering with %v shows
 // unexported fields, which the pre-codec walk cannot inspect and therefore never
-// registers, and it would call a String method, which is free to print anything.
-// Either would put a declared secret into the display, and the display is part of
-// the record and of every digest computed over it. Deriving the display from the
-// projection means it can never disclose more than the record's own data does.
+// registers, and it dispatches to String, Error, and Format methods, which are
+// free to print anything at all. Both would put a declared secret into the
+// display, and the display is part of the record and of every digest computed over
+// it.
+//
+// Deriving the display from the canonical encoding closes the class rather than
+// the instance: for a value the structure codec recorded, the display is a
+// bounded prefix of exactly the bytes the data holds, so it cannot disclose more
+// than the record does, and no method is ever called.
 func displayFor(v reflect.Value, limits ValueLimits) string {
-	projection, err := projectStructure(v, 0, 0)
-	if err != nil {
-		// A value with no canonical form still has a type, and a type is not a
-		// disclosure.
-		if v.IsValid() {
-			return v.Type().String()
-		}
+	if !v.IsValid() {
 		return "<nil>"
 	}
-	rendered := fmt.Sprintf("%v", projection)
-	if uint32(len([]rune(rendered))) > limits.MaxDisplayBytes {
-		rendered = string([]rune(rendered)[:limits.MaxDisplayBytes]) + "…"
+	projection, err := projectStructure(v, 0, 0)
+	if err != nil {
+		// A value with no canonical form still has a type, and a type is a
+		// compile-time identifier rather than a disclosure.
+		return v.Type().String()
 	}
-	return rendered
+	rendered, err := CanonicalEncode(projection)
+	if err != nil {
+		return v.Type().String()
+	}
+	text := string(rendered)
+	if uint32(len([]rune(text))) > limits.MaxDisplayBytes {
+		// Cut on a rune boundary, so the display stays valid text, and mark that it
+		// was cut rather than leaving a reader to assume it is complete.
+		text = string([]rune(text)[:limits.MaxDisplayBytes]) + "…"
+	}
+	return text
 }
 
 // projectedName returns the key a field is recorded under.
