@@ -504,3 +504,77 @@ func TestTheSessionRefusesAnUnusableConfiguration(t *testing.T) {
 		t.Errorf("attaching to a missing run = %v, want not found", err)
 	}
 }
+
+// failingObserver fails as a whole rather than per value, which is the case the
+// per-value error path cannot see.
+type failingObserver struct{}
+
+func (failingObserver) ObserveExecution(pabt.ActionObservationRequest) (pabt.ActionObservation, error) {
+	return pabt.ActionObservation{}, errors.New("the observer could not read the world")
+}
+
+func TestAFailedObservationIsRecordedAsUncertaintyNotAbsence(t *testing.T) {
+	// An observer that fails outright must not leave the condition claiming there
+	// was nothing to report. That is the difference between "nothing was wrong"
+	// and "we could not find out".
+	condition := &fixtureCondition{key: "x", expected: "done"}
+	state := &fixtureState{variables: map[string]any{"x": "start"}}
+	plan, err := pabt.NewCaptured(
+		state,
+		[]pabt.Conditions[*fixtureCondition]{{condition}},
+		pabt.WithExecutionObserver[*fixtureCondition](failingObserver{}),
+		pabt.WithTransitionVerifier[*fixtureCondition](&fixtureVerifier{}),
+	)
+	if err != nil {
+		t.Fatalf("NewCaptured: %v", err)
+	}
+	store := openTestStore(t, testStorePath(t))
+	identity := bootstrapTestStore(t, store)
+	session, err := OpenSession(context.Background(), store, plan, SessionConfig{
+		Identity: identity, Codecs: NewCodecRegistry(DefaultValueLimits()),
+	})
+	if err != nil {
+		t.Fatalf("OpenSession: %v", err)
+	}
+	ctx := context.Background()
+	for range 3 {
+		result := session.Tick(ctx)
+		if result.Err != nil {
+			t.Fatalf("Tick: %v", result.Err)
+		}
+	}
+	// Every record is inspected, not only the last. Once the goal is met the action
+	// stops running, so its post-action read stops happening too, and the settled
+	// record legitimately has nothing to report. The failure belongs to the ticks
+	// in which the action actually ran.
+	head, err := store.Head(ctx, session.RunKey())
+	if err != nil {
+		t.Fatalf("Head: %v", err)
+	}
+	reported := 0
+	for sequence := uint64(1); sequence <= head.HeadSequence; sequence++ {
+		record, err := store.RecordAt(ctx, session.RunKey(), sequence)
+		if err != nil {
+			t.Fatalf("RecordAt %d: %v", sequence, err)
+		}
+		for _, c := range record.Conditions {
+			switch c.Uncertainty.State {
+			case UncertaintyError:
+				if c.Observed != nil {
+					t.Errorf("record %d: condition %s has both a value and an error",
+						sequence, c.ConditionID)
+				}
+				reported++
+			case UncertaintyUnavailable:
+				reported++
+			case UncertaintyNone:
+			default:
+				t.Errorf("record %d: condition %s has an unknown uncertainty state %q",
+					sequence, c.ConditionID, c.Uncertainty.State)
+			}
+		}
+	}
+	if reported == 0 {
+		t.Error("no condition on any record reported that its post-action observation failed")
+	}
+}

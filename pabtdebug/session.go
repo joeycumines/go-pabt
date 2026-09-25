@@ -414,7 +414,7 @@ func (s *Session) terminalRecord(
 		Revision: RevisionScope{
 			RunKey:       s.key,
 			Sequence:     ticket.Sequence,
-			PlanRevision: max64(exec.PlanRevision, 0),
+			PlanRevision: exec.PlanRevision,
 		},
 		CaptureError: &StoredError{
 			Code:    ErrorCodeCapture,
@@ -569,6 +569,10 @@ func (s *Session) observedByCondition(
 	values := map[string]StoredValue{}
 	unknown := map[string]StoredUncertainty{}
 
+	// Two actions supporting one condition in a single tick both report a value,
+	// and the record carries one. The last execution wins, which is deterministic
+	// because the snapshot's order is the planner's, and is recorded here rather
+	// than left to a map's iteration order.
 	postOfAction := make(map[string]string, len(snapshot.Actions))
 	for _, action := range snapshot.Actions {
 		if action.PostconditionID != "" {
@@ -578,6 +582,17 @@ func (s *Session) observedByCondition(
 	for _, evidence := range snapshot.Executions {
 		conditionID, ok := postOfAction[string(evidence.Execution.ActionID)]
 		if !ok {
+			continue
+		}
+		if evidence.Err != nil {
+			// The observer or verifier failed as a whole rather than per value.
+			// Reading only the per-value errors reported nothing at all for a
+			// post-action read that had in fact failed.
+			unknown[conditionID] = StoredUncertainty{
+				State:   UncertaintyError,
+				Code:    "observer_error",
+				Message: s.codecs.sanitizeText(evidence.Err.Message),
+			}
 			continue
 		}
 		for _, observation := range evidence.Observation.EffectValues {
@@ -599,15 +614,25 @@ func (s *Session) observedByCondition(
 				}
 			default:
 				encoded, err := s.codecs.Encode(ctx, source, observation.Value)
-				if err != nil {
+				switch {
+				case err != nil:
 					unknown[conditionID] = StoredUncertainty{
 						State:   UncertaintyError,
 						Code:    "encoding_failed",
 						Message: s.codecs.sanitizeText(err.Error()),
 					}
-					continue
+				case encoded.Visibility == ValueError:
+					// A codec that fails comes back as a value carrying the reason
+					// rather than as an error, so the reason is read from the value
+					// or it is lost.
+					unknown[conditionID] = StoredUncertainty{
+						State:   UncertaintyError,
+						Code:    "codec_failed",
+						Message: s.codecs.sanitizeText(encoded.Error),
+					}
+				default:
+					values[conditionID] = encoded
 				}
-				values[conditionID] = encoded
 			}
 		}
 	}
@@ -710,7 +735,9 @@ func errorText(recorded *pabt.RecordedError) string {
 }
 
 // max64 returns the higher of two revisions, so a record is never stamped below
-// the revision its attempt began at.
+// the revision its attempt began at. On a normal tick the snapshot's revision is
+// already at or above the execution's, so this only matters when a tick produced
+// no snapshot at all.
 func max64(a, b uint64) uint64 {
 	if a > b {
 		return a
