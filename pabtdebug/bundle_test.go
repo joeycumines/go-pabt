@@ -228,14 +228,6 @@ func TestAnExportArtifactIsSingleUseAndReleasable(t *testing.T) {
 	}
 }
 
-// bundleFrame is one decoded frame.
-type bundleFrame struct {
-	Kind    BundleEntryKind
-	Run     string
-	SHA256  string
-	Payload []byte
-}
-
 // readBundle decodes a whole bundle, so the format's own framing is under test
 // rather than a round trip through the writer.
 func readBundle(t *testing.T, data []byte) ([]bundleFrame, BundleTrailer, error) {
@@ -355,4 +347,288 @@ func TestAnAlteredBundleIsDetected(t *testing.T) {
 		return
 	}
 	t.Error("the altered bundle has no record frame to check")
+}
+
+func TestAnImportReproducesEveryRecordUnderNewIdentities(t *testing.T) {
+	source, key := bundleFixture(t, 6)
+	ctx := context.Background()
+
+	artifact, err := source.Export(ctx, ExportRequest{Key: key})
+	if err != nil {
+		t.Fatalf("Export: %v", err)
+	}
+	payload, err := io.ReadAll(mustOpen(t, artifact))
+	if err != nil {
+		t.Fatalf("read the export: %v", err)
+	}
+	if err := artifact.Release(); err != nil {
+		t.Fatalf("Release: %v", err)
+	}
+
+	target := openTestStore(t, testStorePath(t))
+	bootstrapTestStore(t, target)
+	ticket, err := target.StageImport(ctx, bytes.NewReader(payload), DefaultImportLimits())
+	if err != nil {
+		t.Fatalf("StageImport: %v", err)
+	}
+	if ticket.LocalSessionID == key.SessionID {
+		t.Error("the import reused the source session identity")
+	}
+	if ticket.RecordCount != 6 {
+		t.Errorf("the ticket claims %d records, want 6", ticket.RecordCount)
+	}
+	// Staging changes nothing the store serves, so the target still has its own
+	// empty run.
+	before, err := target.Installation(ctx)
+	if err != nil {
+		t.Fatalf("Installation: %v", err)
+	}
+	if before.ActiveSessionID == ticket.LocalSessionID {
+		t.Error("staging an import already made it active")
+	}
+
+	activated, err := target.ActivateImport(ctx, ticket)
+	if err != nil {
+		t.Fatalf("ActivateImport: %v", err)
+	}
+	if activated.Generation != before.Generation+1 {
+		t.Errorf("activation reports generation %d, want %d", activated.Generation, before.Generation+1)
+	}
+	if activated.RecordCount != 6 {
+		t.Errorf("activation reports %d records, want 6", activated.RecordCount)
+	}
+	imported := RunKey{
+		SessionID: activated.SessionID, PlanID: activated.PlanID, RunID: activated.RunID,
+	}
+	if verified, err := target.VerifyChain(ctx, imported); err != nil {
+		t.Errorf("the imported chain does not verify: %v", err)
+	} else if verified != 6 {
+		t.Errorf("the imported chain verified %d records, want 6", verified)
+	}
+	// Every record carries a fresh identity and a digest over its own bytes.
+	for sequence := uint64(1); sequence <= 6; sequence++ {
+		record, err := target.RecordAt(ctx, imported, sequence)
+		if err != nil {
+			t.Fatalf("RecordAt %d: %v", sequence, err)
+		}
+		if record.RunKey != imported {
+			t.Errorf("record %d still names run %v", sequence, record.RunKey)
+		}
+		original, err := source.RecordAt(ctx, key, sequence)
+		if err != nil {
+			t.Fatalf("source RecordAt %d: %v", sequence, err)
+		}
+		if record.EventUID == original.EventUID {
+			t.Errorf("record %d kept the source event identity, so two imports would collide", sequence)
+		}
+		if sequence == 1 {
+			if record.PreviousRecordSHA256 != zeroDigest {
+				t.Errorf("the first imported record links to %q, want the chain's zero",
+					record.PreviousRecordSHA256)
+			}
+			continue
+		}
+		previous, err := target.RecordAt(ctx, imported, sequence-1)
+		if err != nil {
+			t.Fatalf("RecordAt %d: %v", sequence-1, err)
+		}
+		if record.PreviousRecordSHA256 != previous.RecordSHA256 {
+			t.Errorf("record %d links to %q, the imported predecessor is %q", sequence,
+				record.PreviousRecordSHA256, previous.RecordSHA256)
+		}
+	}
+	// A tree the run committed is still readable after the import.
+	if _, err := target.TreeAt(ctx, imported, 1); err != nil {
+		t.Errorf("an imported tree is not readable: %v", err)
+	}
+}
+
+func mustOpen(t *testing.T, a *ExportArtifact) io.ReadCloser {
+	t.Helper()
+	reader, err := a.Open()
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	return reader
+}
+
+func TestTheSameBundleImportsTwiceWithoutColliding(t *testing.T) {
+	source, key := bundleFixture(t, 5)
+	ctx := context.Background()
+	artifact, err := source.Export(ctx, ExportRequest{Key: key})
+	if err != nil {
+		t.Fatalf("Export: %v", err)
+	}
+	payload, err := io.ReadAll(mustOpen(t, artifact))
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if err := artifact.Release(); err != nil {
+		t.Fatalf("Release: %v", err)
+	}
+
+	target := openTestStore(t, testStorePath(t))
+	bootstrapTestStore(t, target)
+
+	var sessions []RunKey
+	var generations []uint64
+	for round := range 2 {
+		ticket, err := target.StageImport(ctx, bytes.NewReader(payload), DefaultImportLimits())
+		if err != nil {
+			t.Fatalf("StageImport %d: %v", round, err)
+		}
+		activated, err := target.ActivateImport(ctx, ticket)
+		if err != nil {
+			t.Fatalf("ActivateImport %d: %v", round, err)
+		}
+		sessions = append(sessions, RunKey{
+			SessionID: activated.SessionID, PlanID: activated.PlanID, RunID: activated.RunID,
+		})
+		generations = append(generations, activated.Generation)
+	}
+	if sessions[0] == sessions[1] {
+		t.Fatal("two imports of one bundle produced the same run identity")
+	}
+	if generations[0] == generations[1] {
+		t.Error("two activations reported the same generation")
+	}
+	if generations[1] != generations[0]+1 {
+		t.Errorf("the second activation reported generation %d, want %d", generations[1], generations[0]+1)
+	}
+	// Both histories are independently readable and independently intact, which is
+	// the point of rewriting the identity rather than copying it.
+	for i, session := range sessions {
+		if verified, err := target.VerifyChain(ctx, session); err != nil {
+			t.Errorf("import %d does not verify: %v", i, err)
+		} else if verified != 5 {
+			t.Errorf("import %d verified %d records, want 5", i, verified)
+		}
+	}
+	// The second import is what the store now serves.
+	installation, err := target.Installation(ctx)
+	if err != nil {
+		t.Fatalf("Installation: %v", err)
+	}
+	if installation.ActiveSessionID != sessions[1].SessionID {
+		t.Errorf("the active session is %q, want the second import's",
+			installation.ActiveSessionID)
+	}
+}
+
+func TestAStaleImportTicketIsRefused(t *testing.T) {
+	source, key := bundleFixture(t, 3)
+	ctx := context.Background()
+	artifact, err := source.Export(ctx, ExportRequest{Key: key})
+	if err != nil {
+		t.Fatalf("Export: %v", err)
+	}
+	payload, err := io.ReadAll(mustOpen(t, artifact))
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	_ = artifact.Release()
+
+	target := openTestStore(t, testStorePath(t))
+	bootstrapTestStore(t, target)
+	first, err := target.StageImport(ctx, bytes.NewReader(payload), DefaultImportLimits())
+	if err != nil {
+		t.Fatalf("StageImport: %v", err)
+	}
+	// Activating advances the generation, so the other ticket was staged against a
+	// generation that is no longer current.
+	if _, err := target.ActivateImport(ctx, first); err != nil {
+		t.Fatalf("ActivateImport: %v", err)
+	}
+	second, err := target.StageImport(ctx, bytes.NewReader(payload), DefaultImportLimits())
+	if err != nil {
+		t.Fatalf("StageImport after an activation: %v", err)
+	}
+	forged := second
+	forged.proof[0] ^= 0xff
+	if _, err := target.ActivateImport(ctx, forged); !errors.Is(err, ErrImportStale) {
+		t.Errorf("a forged ticket = %v, want a stale refusal", err)
+	}
+	// A ticket whose bundle is gone is refused rather than activating nothing.
+	removed := second
+	if err := os.Remove(removed.StagedPath); err != nil {
+		t.Fatalf("remove: %v", err)
+	}
+	if _, err := target.ActivateImport(ctx, removed); !errors.Is(err, ErrImportStale) {
+		t.Errorf("activating a removed bundle = %v, want a stale refusal", err)
+	}
+}
+
+func TestADamagedBundleIsRefused(t *testing.T) {
+	source, key := bundleFixture(t, 4)
+	ctx := context.Background()
+	artifact, err := source.Export(ctx, ExportRequest{Key: key})
+	if err != nil {
+		t.Fatalf("Export: %v", err)
+	}
+	payload, err := io.ReadAll(mustOpen(t, artifact))
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	_ = artifact.Release()
+
+	for _, test := range []struct {
+		name   string
+		damage func([]byte) []byte
+	}{
+		{
+			name:   "no magic",
+			damage: func(b []byte) []byte { return append([]byte("NOTABUNDLE"), b[9:]...) },
+		},
+		{
+			name: "a flipped record byte",
+			damage: func(b []byte) []byte {
+				out := append([]byte(nil), b...)
+				if at := bytes.Index(out, []byte(`"name":"a"`)); at >= 0 {
+					out[at+8] = 'z'
+				}
+				return out
+			},
+		},
+		{
+			name:   "truncated",
+			damage: func(b []byte) []byte { return b[:len(b)/2] },
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			target := openTestStore(t, testStorePath(t))
+			bootstrapTestStore(t, target)
+			if _, err := target.StageImport(ctx, bytes.NewReader(test.damage(payload)),
+				DefaultImportLimits()); err == nil {
+				t.Error("a damaged bundle was staged")
+			}
+		})
+	}
+}
+
+func TestAnOversizedBundleIsRefused(t *testing.T) {
+	source, key := bundleFixture(t, 2)
+	ctx := context.Background()
+	artifact, err := source.Export(ctx, ExportRequest{Key: key})
+	if err != nil {
+		t.Fatalf("Export: %v", err)
+	}
+	payload, err := io.ReadAll(mustOpen(t, artifact))
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	_ = artifact.Release()
+
+	target := openTestStore(t, testStorePath(t))
+	bootstrapTestStore(t, target)
+	limits := DefaultImportLimits()
+	limits.MaxBytes = 16
+	if _, err := target.StageImport(ctx, bytes.NewReader(payload), limits); !errors.Is(err, ErrImportTooLarge) {
+		t.Errorf("an oversized bundle = %v, want a size refusal", err)
+	}
+	if err := (ImportLimits{}).Validate(); err == nil {
+		t.Error("incomplete import limits were accepted")
+	}
+	if err := DefaultImportLimits().Validate(); err != nil {
+		t.Errorf("the default limits do not validate: %v", err)
+	}
 }
