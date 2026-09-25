@@ -199,8 +199,8 @@ const (
 	valueVectorBytes  = `{"CodecID":"structure/v1","CodecVersion":1,"Data":"Imh1bnRlcjIi","Display":"REDACTED","Error":"","Redaction":"declared_by_application","ReflectType":"string","SHA256":"","Source":"credentials.password","Visibility":"redacted"}`
 	valueVectorDigest = "a86d813fb6b131e4fc54c24ead985e0dcb42a03ba8aa7dd98984970e54afea64"
 
-	treeVectorBytes  = `{"digest":"","nodeCount":0,"nodes":null,"planRevision":7,"rootId":"n1","runKey":{"planId":"p","runId":"r","sessionId":"s"},"sequence":1}`
-	treeVectorDigest = "e74c9277caa17ac8305d5b83a4395f565ca9952fc2353f2422cd1abd1e670a64"
+	treeVectorBytes  = `{"digest":"","eventUid":"","nodeCount":0,"nodes":null,"planRevision":7,"rootId":"n1","runKey":{"planId":"p","runId":"r","sessionId":"s"},"sequence":1}`
+	treeVectorDigest = "2e2206274a5ee6abf498587cd4a21703292cfbe95f1e66e17a61540695a183c7"
 
 	recordVectorBytes   = `{"attemptId":"","captureError":null,"completedAt":"2026-09-25T00:00:00.000000001Z","conditions":null,"eventUid":"e1","executionStarted":false,"format":"pabtdebug.record","kind":"tick","panic":null,"payloadSha256":"","payloadState":"complete","plannerError":null,"previousRecordSha256":"0000000000000000000000000000000000000000000000000000000000000000","recordSha256":"","relations":null,"revision":{"coherence":"","planRevision":0,"runKey":{"planId":"","runId":"","sessionId":""},"sequence":0,"state":{"modelRevision":"","planRevision":0,"worldRevision":""}},"runKey":{"planId":"p","runId":"r","sessionId":"s"},"sequence":1,"startedAt":"2026-09-25T00:00:00Z","status":"","statusPresent":false,"tree":null,"treeEligible":false,"version":1}`
 	recordVectorDigest  = "e27dd8579107cf44f2a62c50faa2952358364ed1669d4c441edc9a671ed53b22"
