@@ -961,7 +961,12 @@ func TestCompoundCredentialNamesAreRedacted(t *testing.T) {
 		"auth_token", "access_token", "refresh_token", "id_token", "bearer_token",
 		"access_key", "secret_key", "session_key", "api_key", "private_key",
 		"secretKey", "authToken", "ACCESS-KEY", "Password", "cookie",
-		"user_password", "credentials",
+		"user_password", "credentials", "token", "tokens",
+		// The plural compounds of every family, which the earlier snake-keyed
+		// table missed entirely.
+		"apiKeys", "secretKeys", "sessionKeys", "passWords", "authTokens",
+		"accessKeys", "privateKeys", "clientSecret", "jwtToken", "apiToken",
+		"x-api-key", "awsSecretAccessKey", "passPhrase", "userPasswords",
 	} {
 		text := "config " + name + "=hunter2 trailing"
 		got := san.Sanitize(text)
@@ -981,6 +986,8 @@ func TestCompoundCredentialNamesAreRedacted(t *testing.T) {
 	for _, text := range []string{
 		"tokenizer=fast", "cookiecutter=chocolate", "passworder=1",
 		"credentials_manager=ok", "my_tokenizer_count=3",
+		// A planner variable identifier is not a credential.
+		"key=actor", "keys=3", "keypath=/usr/bin", "monkey=1", "turnkey=yes",
 	} {
 		if got := san.Sanitize(text); got != text {
 			t.Errorf("Sanitize(%q) = %q, want it unchanged", text, got)
@@ -1118,5 +1125,97 @@ func TestByteRunsAreRecordedLosslessly(t *testing.T) {
 	asBytes := mustEncode(t, reg, []byte("abc"))
 	if asString.SHA256 == asBytes.SHA256 {
 		t.Error("a string and the bytes holding it share a digest")
+	}
+}
+
+func TestRegisteringLeavesDoesNotDestroyOrdinaryText(t *testing.T) {
+	reg := NewCodecRegistry(DefaultValueLimits())
+	// A redacted subtree whose leaves are short ordinary strings. Registering
+	// those would let any later text containing "/" or "a" or "bearer" be mangled.
+	holder := map[string]any{
+		"credential": struct{ Kind, Path, Pad string }{"bearer", "/", "a"},
+	}
+	err := WithRedaction(context.Background(), DefaultValueLimits(),
+		func(ctx context.Context) error {
+			c, _ := redactionFor(ctx)
+			if _, encErr := reg.Encode(ctx, "record", holder); encErr != nil {
+				return encErr
+			}
+			for _, ordinary := range []string{
+				"/usr/local/bin", "Authorization: Bearer abc", "negotiated with a peer",
+				"a plain sentence with ordinary words",
+			} {
+				got := c.scrub(ordinary)
+				if got != ordinary {
+					t.Errorf("scrub(%q) = %q, ordinary text was destroyed by a short registered leaf",
+						ordinary, got)
+				}
+			}
+			return nil
+		})
+	if err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+}
+
+func TestASchemeWordDoesNotShieldTheCredentialBehindIt(t *testing.T) {
+	san := &textSanitizer{limits: DefaultValueLimits()}
+	// "Authorization: Basic <credential>" puts a scheme where the value would be,
+	// so replacing only the scheme would leave the credential in the clear.
+	for _, text := range []string{
+		"Authorization: Basic dXNlcjpwYXNzd29yZA==",
+		"authorization: Digest response=deadbeef",
+		"Authorization: Negotiate YII=",
+		"Authorization: Bearer abc123",
+	} {
+		got := san.Sanitize(text)
+		if strings.Contains(got, "dXNlcjpwYXNzd29yZA==") || strings.Contains(got, "deadbeef") ||
+			strings.Contains(got, "abc123") {
+			t.Errorf("Sanitize(%q) = %q, the credential survived", text, got)
+		}
+	}
+	// A bearer prefix with extra spaces must not abandon the rest of the line.
+	got := san.Sanitize("bearer  first and Bearer second")
+	for _, secret := range []string{"first", "second"} {
+		if strings.Contains(got, secret) {
+			t.Errorf("Sanitize left %q: %q", secret, got)
+		}
+	}
+}
+
+func TestAWireTagNamingASecretIsHonoured(t *testing.T) {
+	reg := NewCodecRegistry(DefaultValueLimits())
+	// The declared name is the one the record carries, so it is the one that
+	// decides sensitivity, whatever the Go field is called.
+	type payload struct {
+		Value string `json:"password"`
+		Other string `json:"other"`
+	}
+	got := mustEncode(t, reg, payload{Value: secretLiteralValue, Other: "keep"})
+	if got.Visibility != ValueRedacted {
+		t.Fatalf("visibility = %q, want %q", got.Visibility, ValueRedacted)
+	}
+	encoded, err := CanonicalEncode(got)
+	if err != nil {
+		t.Fatalf("CanonicalEncode: %v", err)
+	}
+	assertNoSecret(t, "a field whose wire tag names a secret", encoded, got.Data)
+	if !strings.Contains(string(got.Data), "keep") {
+		t.Errorf("the safe field was lost: %s", got.Data)
+	}
+}
+
+func TestARecordRefusesAContradictoryPresenceFlag(t *testing.T) {
+	rec := goldenRecord()
+	rec.Status = uint8(bt.Success)
+	rec.StatusPresent = true
+	encoded := string(mustCanonical(t, rec))
+	contradictory := strings.Replace(encoded, `"statusPresent":true`, `"statusPresent":false`, 1)
+	var back StoredRecord
+	if err := CanonicalDecode([]byte(contradictory), &back); err == nil {
+		t.Error("a record with a present status and an absent flag was accepted")
+	}
+	if err := CanonicalDecode([]byte(encoded), &back); err != nil {
+		t.Errorf("the untampered record did not decode: %v", err)
 	}
 }

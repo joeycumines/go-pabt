@@ -466,7 +466,8 @@ func (r *StoredRecord) UnmarshalJSON(data []byte) error {
 	type alias StoredRecord
 	var raw struct {
 		alias
-		Status string `json:"status"`
+		Status        string `json:"status"`
+		StatusPresent *bool  `json:"statusPresent"`
 	}
 	if err := decodeStrict(data, &raw); err != nil {
 		return err
@@ -474,6 +475,10 @@ func (r *StoredRecord) UnmarshalJSON(data []byte) error {
 	status, present, err := DecodeStatusText(raw.Status)
 	if err != nil {
 		return err
+	}
+	if raw.StatusPresent != nil && *raw.StatusPresent != present {
+		return fmt.Errorf("%w: status %q is present=%v but the flag says %v",
+			ErrCanonicalDecoding, raw.Status, present, *raw.StatusPresent)
 	}
 	*r = StoredRecord(raw.alias)
 	r.StatusPresent = present

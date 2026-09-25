@@ -20,41 +20,62 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"sort"
 	"strings"
 	"unicode/utf8"
 )
 
-// sensitiveSegments are the normalised path segments that mark a value secret.
+// sensitiveNames are segments that are a credential in their own right, in lower
+// snake case. Compound names are handled by sensitiveSuffixes instead, because
+// enumerating them means missing one.
 //
 // A map key is a path segment even when the struct field holding it is not, so a
 // map keyed by an access token is redacted for the same reason a field named
 // AccessToken is.
-// sensitiveSegments is keyed by a segment normalised to lower snake case, so one
-// entry covers Password, passWord, pass_word, and PASS-WORD alike. Compound names
-// are listed explicitly, because dropping the separator would make auth_token and
-// authtoken the same key while neither spelling is a word anyone writes.
-var sensitiveSegments = map[string]struct{}{
-	"password": {}, "passwords": {}, "pass_word": {},
-	"passwd": {}, "pass_word_phrase": {},
-	"secret": {}, "secrets": {}, "secret_key": {},
-	"token": {}, "tokens": {},
-	"auth_token": {}, "access_token": {}, "refresh_token": {},
-	"id_token": {}, "bearer_token": {},
-	"api_key": {}, "apikeys": {}, "api_secret": {},
+var sensitiveNames = map[string]struct{}{
+	"password": {}, "passwd": {},
+	"passphrase": {}, "pass_phrase": {}, "pass_phrases": {},
+	"secret": {}, "credential": {}, "credentials": {},
 	"authorization": {}, "authorisation": {},
-	"cookie": {}, "cookies": {}, "set_cookie": {},
-	"private_key": {}, "private_keys": {}, "private_key_phrase": {},
-	"credential": {}, "credentials": {},
-	"session_key": {}, "session_token": {},
-	"access_key": {}, "access_keys": {},
-	"user_password": {},
+	"cookie": {}, "salt": {}, "signature": {},
+	// The bare token forms are credentials. A bare "key" deliberately is not: the
+	// planner uses that word for a variable identifier, and redacting it would
+	// destroy ordinary state.
+	"token": {}, "tokens": {},
+}
+
+// sensitiveSuffixes are endings that make any compound segment a credential.
+//
+// The separator is required, so a benign word that merely ends in "key" is not
+// affected: monkey, hotkey, and turnkey stay ordinary data, while jwtToken,
+// client_secret, x-api-key, awsSecretAccessKey, and apiKeys are all caught
+// without anyone having to enumerate them.
+var sensitiveSuffixes = []string{
+	"_token", "_tokens",
+	"_key", "_keys",
+	"_secret", "_secrets",
+	"_password", "_passwords",
+	"_passwd", "_passphrase", "_passphrases",
+	"_word", "_words",
+	"_credential", "_credentials",
+	"_cookie", "_cookies",
+	"_authorization", "_authorisation",
+	"_signature", "_salt",
 }
 
 // IsSensitiveSegment reports whether a path segment marks a secret, whatever
 // casing and separators the application used to write it.
 func IsSensitiveSegment(segment string) bool {
-	_, ok := sensitiveSegments[normaliseSegment(segment)]
-	return ok
+	name := normaliseSegment(segment)
+	if _, ok := sensitiveNames[name]; ok {
+		return true
+	}
+	for _, suffix := range sensitiveSuffixes {
+		if strings.HasSuffix(name, suffix) {
+			return true
+		}
+	}
+	return false
 }
 
 // normaliseSegment rewrites a segment to lower snake case.
@@ -71,7 +92,6 @@ func normaliseSegment(segment string) string {
 	for i, r := range runes {
 		switch {
 		case r >= 'A' && r <= 'Z':
-			// A boundary before a capital, unless one was just written.
 			if i > 0 && !prevUnderscore {
 				lowerBefore := runes[i-1] >= 'a' && runes[i-1] <= 'z' ||
 					(runes[i-1] >= 'A' && runes[i-1] <= 'Z' && i+1 < len(runes) &&
@@ -86,7 +106,6 @@ func normaliseSegment(segment string) string {
 			b.WriteRune(r)
 			prevUnderscore = false
 		default:
-			// Every separator kind collapses to one underscore.
 			if !prevUnderscore {
 				b.WriteByte('_')
 				prevUnderscore = true
@@ -144,6 +163,19 @@ func WithRedaction(ctx context.Context, limits ValueLimits, fn func(context.Cont
 
 type redactionKey struct{}
 
+// maxRegisteredLeafDepth bounds how deep into a redacted value the search for
+// candidate literals goes. Reaching the bound counts as a drop rather than
+// stopping silently, so a caller can tell that a literal went unregistered.
+const maxRegisteredLeafDepth = 32
+
+// maxRegisteredLeafBytes is the shortest leaf worth remembering.
+//
+// A one character path or a two character code is not a credential, and
+// registering one would let an ordinary word be destroyed from every later
+// message that happened to contain it. A credential shorter than this is not
+// detected in later free text; the record itself is still redacted.
+const maxRegisteredLeafBytes = 8
+
 // maxRegisteredSecrets bounds the per-record literal list. A record that somehow
 // needs more has a value too tangled to record safely, and the walk is told
 // rather than the excess being dropped without trace.
@@ -155,7 +187,7 @@ const maxRegisteredSecrets = 256
 // what is lost is the ability to scrub that one literal from later free text,
 // which is a smaller loss than an unbounded list, so it is counted instead.
 func (c *redactionContext) registerSecret(literal string) {
-	if c == nil || literal == "" {
+	if c == nil || len(literal) < maxRegisteredLeafBytes {
 		return
 	}
 	if len(c.secrets) >= maxRegisteredSecrets {
@@ -175,10 +207,12 @@ func (c *redactionContext) scrub(text string) string {
 	if c == nil || text == "" {
 		return text
 	}
-	for _, secret := range c.secrets {
-		if secret != "" {
-			text = strings.ReplaceAll(text, secret, RedactedMarker)
-		}
+	// Longest first, so a literal that is a prefix of another cannot leave a
+	// fragment behind that no longer matches anything.
+	ordered := append([]string(nil), c.secrets...)
+	sort.Slice(ordered, func(i, j int) bool { return len(ordered[i]) > len(ordered[j]) })
+	for _, secret := range ordered {
+		text = strings.ReplaceAll(text, secret, RedactedMarker)
 	}
 	return text
 }
@@ -263,8 +297,11 @@ func (c *redactionContext) walk(path string, v reflect.Value, depth, nodes uint3
 			if !field.IsExported() {
 				continue
 			}
+			// The declared wire name is the name the record will carry, so it is
+			// the name that decides sensitivity. A field tagged "password" is
+			// sensitive even when its Go name is innocuous.
 			child := joinPath(path, field.Name)
-			if IsSensitiveSegment(field.Name) {
+			if IsSensitiveSegment(declaredName(field)) {
 				return walkDecision{Path: child, Redacted: true, Value: v.Field(i)}, nil
 			}
 			decision, err := c.walk(child, v.Field(i), depth+1, nodes)
@@ -326,6 +363,12 @@ func (c *redactionContext) registerValueLeaves(v reflect.Value, depth uint32) {
 			c.registerValueLeaves(v.Index(i), depth+1)
 		}
 	case reflect.Array:
+		// A byte array is as much a byte run as a slice, and its bytes are just as
+		// much a candidate.
+		if v.Type().Elem().Kind() == reflect.Uint8 {
+			c.registerSecret(string(bytesOf(v)))
+			return
+		}
 		for i := range v.Len() {
 			c.registerValueLeaves(v.Index(i), depth+1)
 		}
@@ -421,7 +464,12 @@ func redactCredentialShapes(text string) string {
 	runes := []rune(text)
 	var out strings.Builder
 	out.Grow(len(text))
-	for i := 0; i < len(runes); {
+	// The scan is bounded by the input length plus a small constant. Every branch
+	// below advances i, so this is unreachable, and it is here so that a future
+	// edit that forgets to cannot turn a diagnostic into a hang.
+	limit := len(runes) + 64
+	for i := 0; i < len(runes) && limit > 0; {
+		limit--
 		if runes[i] != '=' && runes[i] != ':' {
 			out.WriteRune(runes[i])
 			i++
@@ -464,9 +512,42 @@ func redactCredentialShapes(text string) string {
 		if i == valueStart {
 			continue
 		}
+		scheme := isAuthScheme(string(runes[valueStart:i]))
 		out.WriteString(RedactedMarker)
+		if !scheme {
+			continue
+		}
+		// "Authorization: Basic <credential>" puts a scheme where the value would
+		// be. Replacing only the scheme would leave the credential behind, so the
+		// token after the scheme is replaced as well.
+		probe := i
+		for probe < len(runes) && isSkippableRune(runes[probe]) {
+			probe++
+		}
+		tokenEnd := probe
+		for tokenEnd < len(runes) && !strings.ContainsRune(" \t,;\"'}", runes[tokenEnd]) {
+			tokenEnd++
+		}
+		if tokenEnd <= probe {
+			continue
+		}
+		for at := i; at < probe; at++ {
+			out.WriteRune(runes[at])
+		}
+		out.WriteString(RedactedMarker)
+		i = tokenEnd
 	}
 	return out.String()
+}
+
+// isAuthScheme reports whether a word names an authentication scheme, which means
+// a credential follows it rather than being it.
+func isAuthScheme(word string) bool {
+	switch strings.ToLower(word) {
+	case "basic", "bearer", "digest", "negotiate", "ntlm", "token", "key":
+		return true
+	}
+	return false
 }
 
 // isIdentifierRune reports whether a rune can be part of an assignment target.
@@ -498,12 +579,19 @@ func redactBearer(text string) string {
 			return text
 		}
 		start := from + rel + len("bearer ")
-		stop := start
+		probe := start
+		for probe < len(text) && isSkippableRuneAt(text[probe]) {
+			probe++
+		}
+		stop := probe
 		for stop < len(text) && !isSkippableRuneAt(text[stop]) {
 			stop++
 		}
-		if stop == start {
-			return text
+		if stop == probe {
+			// No token after the word, so this occurrence is not a credential and
+			// the rest of the line is still worth scanning.
+			from = from + rel + len("bearer")
+			continue
 		}
 		text = text[:start] + RedactedMarker + text[stop:]
 		lower = strings.ToLower(text)

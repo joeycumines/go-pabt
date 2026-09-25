@@ -377,17 +377,9 @@ func displayOf(v any) string {
 // same string, and letting them collide would drop one of them without trace and
 // assert a value the application never held.
 func projectedName(f reflect.StructField, taken map[string]bool) string {
-	name := f.Name
-	if tag, ok := f.Tag.Lookup("json"); ok {
-		if comma := strings.IndexByte(tag, ','); comma >= 0 {
-			tag = tag[:comma]
-		}
-		if tag == "-" {
-			return ""
-		}
-		if tag != "" {
-			name = tag
-		}
+	name := declaredName(f)
+	if name == "" {
+		return ""
 	}
 	if !taken[name] {
 		return name
@@ -402,6 +394,27 @@ func projectedName(f reflect.StructField, taken map[string]bool) string {
 			return candidate
 		}
 	}
+}
+
+// declaredName returns the name a field is recorded under: the declared wire name
+// when there is one, otherwise the field name. An empty result means the field is
+// excluded from the record.
+func declaredName(f reflect.StructField) string {
+	name := f.Name
+	tag, ok := f.Tag.Lookup("json")
+	if !ok {
+		return name
+	}
+	if comma := strings.IndexByte(tag, ','); comma >= 0 {
+		tag = tag[:comma]
+	}
+	switch tag {
+	case "-":
+		return ""
+	case "":
+		return name
+	}
+	return tag
 }
 
 // putProjected stores one projected entry, refusing to overwrite another.
@@ -587,7 +600,9 @@ func projectRedacted(limits ValueLimits, v reflect.Value, depth, nodes uint32) (
 				continue
 			}
 			taken[name] = true
-			if IsSensitiveSegment(field.Name) {
+			// The declared name decides sensitivity here too, so the projection
+			// replaces exactly what the walk decided was sensitive.
+			if IsSensitiveSegment(declaredName(field)) {
 				if err := putProjected(out, name, RedactedMarker); err != nil {
 					return nil, err
 				}
