@@ -1870,10 +1870,13 @@ func TestTheDisplayRevealsNothingTheWalkCannotSee(t *testing.T) {
 // The field is exported so the projection carries a value at all; an unexported
 // one projects to an empty object, which is the safer outcome but leaves nothing
 // here to dispatch a method with.
-type methodScalar struct{ Text string }
+// methodScalar is a named SCALAR, not a struct. A struct would be projected
+// into a plain map, which drops the method set, so the display could never
+// dispatch to it and the test would pass on an implementation that leaks. A
+// named scalar passes through the projection unchanged, carrying its methods, so
+// a formatter over the projection would call every one of them.
+type methodScalar string
 
-// The three method sets a named scalar can carry, any of which fmt would
-// dispatch to if the display were rendered with a formatter.
 func (methodScalar) String() string { return "S:" + methodScalarSecret }
 func (methodScalar) Error() string  { return "E:" + methodScalarSecret }
 func (methodScalar) Format(f fmt.State, verb rune) {
@@ -1891,7 +1894,7 @@ func TestTheDisplayNeverDispatchesToAValueMethod(t *testing.T) {
 	got := mustEncode(t, reg, struct {
 		Note methodScalar
 		N    int
-	}{Note: methodScalar{Text: "harmless"}, N: 1})
+	}{Note: "harmless", N: 1})
 	for _, artifact := range []string{got.Display, string(got.Data), got.Error, got.Source} {
 		if strings.Contains(artifact, methodScalarSecret) {
 			t.Errorf("a value method was dispatched: %q", artifact)
@@ -1900,19 +1903,23 @@ func TestTheDisplayNeverDispatchesToAValueMethod(t *testing.T) {
 	if !strings.Contains(string(got.Data), "harmless") {
 		t.Errorf("the projection lost the value: %s", got.Data)
 	}
-	// A String method that panics must not take the encoder with it.
+	// A String method that panics must not take the encoder with it, and the text
+	// it panicked with must not survive either.
 	got = mustEncode(t, reg, struct {
-		Note panickingStringer
+		Note panickingScalar
 		N    int
-	}{Note: panickingStringer{}, N: 1})
-	if strings.Contains(got.Display, "PANIC") {
-		t.Errorf("a panicking value method reached the display: %q", got.Display)
+	}{Note: "harmless", N: 1})
+	for _, artifact := range []string{got.Display, string(got.Data), got.Error, got.Source} {
+		if strings.Contains(artifact, "PANIC") {
+			t.Errorf("a panicking value method reached an artifact: %q", artifact)
+		}
 	}
 }
 
-type panickingStringer struct{}
+// panickingScalar is a named scalar for the same reason methodScalar is.
+type panickingScalar string
 
-func (panickingStringer) String() string { panic("PANIC: stringer panicked") }
+func (panickingScalar) String() string { panic("PANIC: stringer panicked") }
 
 // TestADeclarationIsRememberedSoTwoPassesCannotDisagree proves the walk and the
 // projector cannot be made to disagree. A declaration that answered yes once and
@@ -1920,31 +1927,47 @@ func (panickingStringer) String() string { panic("PANIC: stringer panicked") }
 // is a record that claims the application declared a secret and then carries it.
 func TestADeclarationIsRememberedSoTwoPassesCannotDisagree(t *testing.T) {
 	reg := NewCodecRegistry(DefaultValueLimits())
-	if !declaredSensitive(reflect.ValueOf(flakySecret{})) {
-		t.Fatal("the first declaration did not register")
-	}
-	// The second and third answers are false. The type must still be honoured.
-	if !declaredSensitive(reflect.ValueOf(flakySecret{})) {
-		t.Error("a type that declared itself was forgotten, so two passes could disagree")
-	}
+	// The counter lives behind a pointer the test owns, not inside the value.
+	// A counter inside the value would be copied with it, so every ask would be
+	// the "first" one, every answer would be true, and the test would pass on an
+	// implementation with no memo at all.
+	calls := new(int)
 	got := mustEncode(t, reg, struct {
 		Field flakySecret
 		Keep  string
-	}{Field: flakySecret{}, Keep: "keep"})
+	}{Field: flakySecret{calls: calls}, Keep: "keep"})
+
+	if *calls == 0 {
+		t.Fatal("the declaration was never asked, so this test proves nothing")
+	}
 	if got.Visibility != ValueRedacted {
 		t.Errorf("visibility = %q, want %q", got.Visibility, ValueRedacted)
 	}
-	if strings.Contains(string(got.Data), got.Display) && got.Display == "" {
-		t.Error("no display was produced for a redacted value")
+	// Without the memo the second ask answers false, so the projector writes the
+	// value out and the record claims a declaration it did not honour.
+	if strings.Contains(string(got.Data), "memo-load-bearing-literal") {
+		t.Errorf("the value was written out despite the declaration: %s", got.Data)
+	}
+	if !strings.Contains(string(got.Data), "keep") {
+		t.Errorf("the ordinary sibling was lost: %s", got.Data)
+	}
+	// The memo is what makes one ask enough: the walk redacts, and the projector
+	// would otherwise ask again and be told no. A fresh value of the same type is
+	// therefore honoured without the method running at all.
+	asked := *calls
+	if !declaredSensitive(reflect.ValueOf(&flakySecret{calls: calls})) {
+		t.Error("a type that declared itself was forgotten, so the two passes could disagree")
+	}
+	if *calls != asked {
+		t.Errorf("a memoised type was asked again: calls went from %d to %d", asked, *calls)
 	}
 }
 
+// flakySecret answers true exactly once, which is what a stateful or otherwise
+// impure declaration would do and what the memo exists to make harmless.
 type flakySecret struct{ calls *int }
 
 func (f *flakySecret) PabtSensitive() bool {
-	if f.calls == nil {
-		f.calls = new(int)
-	}
 	*f.calls++
 	return *f.calls == 1
 }
