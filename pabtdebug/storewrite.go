@@ -57,6 +57,12 @@ func (s *SQLiteStore) Bootstrap(ctx context.Context, req BootstrapRequest) (Sess
 		Metadata:  req.Metadata,
 		CreatedAt: Timestamp(now),
 	}
+	// The metadata is stored as its own column as well as inside the plan's
+	// canonical bytes, so a reader can fetch it without decoding the whole plan.
+	metadataJSON, err := CanonicalEncode(req.Metadata)
+	if err != nil {
+		return SessionIdentity{}, err
+	}
 	// The digest covers the plan as stored, so the field is stamped first and the
 	// stored bytes are the ones the digest was taken over.
 	plan.RecordSHA256 = ""
@@ -91,8 +97,9 @@ func (s *SQLiteStore) Bootstrap(ctx context.Context, req BootstrapRequest) (Sess
 			"VALUES (1, ?, 1, ?, ?, ?)", []any{storeID, sessionID, string(RecoveryReady), stamp(now)}},
 		{"INSERT INTO sessions (session_id, store_id, generation, read_only, created_at, record_count) " +
 			"VALUES (?, ?, 1, 0, ?, 0)", []any{sessionID, storeID, stamp(now)}},
-		{"INSERT INTO plans (session_id, plan_id, title, created_at, record_sha256) VALUES (?, ?, ?, ?, ?)",
-			[]any{sessionID, req.PlanID, planTitle(req.Title), stamp(now), mustHex(planDigest)}},
+		{"INSERT INTO plans (session_id, plan_id, title, created_at, metadata_json, record_sha256) " +
+			"VALUES (?, ?, ?, ?, ?, ?)",
+			[]any{sessionID, req.PlanID, planTitle(req.Title), stamp(now), metadataJSON, mustHex(planDigest)}},
 		{"INSERT INTO runs (session_id, plan_id, run_id, state, started_at, initial_plan_revision, " +
 			"head_seq, head_tree_seq, head_plan_revision, append_epoch) " +
 			"VALUES (?, ?, ?, 'active', ?, 0, 0, 0, 0, 0)", []any{sessionID, req.PlanID, req.RunID, stamp(now)}},

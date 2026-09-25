@@ -57,6 +57,9 @@ CREATE TABLE IF NOT EXISTS plans (
     plan_id        TEXT NOT NULL,
     title          TEXT NOT NULL,
     created_at     TEXT NOT NULL,
+    -- The plan's recorded metadata, encoded canonically. A NULL means the plan
+    -- declared none, which is distinct from declaring an empty list.
+    metadata_json  BLOB,
     record_sha256  BLOB NOT NULL CHECK (length(record_sha256) = 32),
     PRIMARY KEY (session_id, plan_id),
     FOREIGN KEY (session_id) REFERENCES sessions(session_id) ON DELETE RESTRICT
