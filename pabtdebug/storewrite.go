@@ -1,0 +1,552 @@
+/*
+   Copyright 2021 Joseph Cumines
+
+   Licensed under the Apache License, Version 2.0 (the "License");
+   you may not use this file except in compliance with the License.
+   You may obtain a copy of the License at
+
+       http://www.apache.org/licenses/LICENSE-2.0
+
+   Unless required by applicable law or agreed to in writing, software
+   distributed under the License is distributed on an "AS IS" BASIS,
+   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+   See the License for the specific language governing permissions and
+   limitations under the License.
+*/
+
+package pabtdebug
+
+import (
+	"context"
+	"database/sql"
+	"encoding/hex"
+	"errors"
+	"fmt"
+	"strings"
+	"time"
+)
+
+// zeroDigest is the previous-record link of the first record in a run.
+const zeroDigest = "0000000000000000000000000000000000000000000000000000000000000000"
+
+// Bootstrap creates the installation, session, plan, and run of a fresh store.
+//
+// All four are written in one transaction. A store is either fully bootstrapped
+// or not bootstrapped at all, because a half-created history has no run to record
+// into and no way to be told apart from a complete one.
+func (s *SQLiteStore) Bootstrap(ctx context.Context, req BootstrapRequest) (SessionIdentity, error) {
+	if err := s.checkUsable(true); err != nil {
+		return SessionIdentity{}, err
+	}
+	if strings.TrimSpace(req.PlanID) == "" || strings.TrimSpace(req.RunID) == "" {
+		return SessionIdentity{}, fmt.Errorf(`pabtdebug: a plan id and a run id are required`)
+	}
+	storeID, err := randomID("store")
+	if err != nil {
+		return SessionIdentity{}, err
+	}
+	sessionID, err := randomID("session")
+	if err != nil {
+		return SessionIdentity{}, err
+	}
+	now := s.clock().UTC()
+
+	plan := StoredPlan{
+		PlanID:    req.PlanID,
+		Title:     req.Title,
+		Metadata:  req.Metadata,
+		CreatedAt: Timestamp(now),
+	}
+	// The digest covers the plan as stored, so the field is stamped first and the
+	// stored bytes are the ones the digest was taken over.
+	plan.RecordSHA256 = ""
+	planDigest, err := HashCanonical(DomainPlan, plan)
+	if err != nil {
+		return SessionIdentity{}, err
+	}
+	plan.RecordSHA256 = planDigest
+	if _, err := CanonicalEncode(plan); err != nil {
+		return SessionIdentity{}, err
+	}
+
+	tx, err := s.writer.BeginTx(ctx, nil)
+	if err != nil {
+		return SessionIdentity{}, fmt.Errorf("pabtdebug: bootstrap: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var exists int
+	if err := tx.QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM installation WHERE singleton = 1").Scan(&exists); err != nil {
+		return SessionIdentity{}, fmt.Errorf("pabtdebug: bootstrap: %w", err)
+	}
+	if exists > 0 {
+		return SessionIdentity{}, fmt.Errorf("%w: the store is already bootstrapped", ErrHeadMismatch)
+	}
+	statements := []struct {
+		query string
+		args  []any
+	}{
+		{"INSERT INTO installation (singleton, store_id, generation, active_session_id, recovery, updated_at) " +
+			"VALUES (1, ?, 1, ?, ?, ?)", []any{storeID, sessionID, string(RecoveryReady), stamp(now)}},
+		{"INSERT INTO sessions (session_id, store_id, generation, read_only, created_at, record_count) " +
+			"VALUES (?, ?, 1, 0, ?, 0)", []any{sessionID, storeID, stamp(now)}},
+		{"INSERT INTO plans (session_id, plan_id, title, created_at, record_sha256) VALUES (?, ?, ?, ?, ?)",
+			[]any{sessionID, req.PlanID, planTitle(req.Title), stamp(now), mustHex(planDigest)}},
+		{"INSERT INTO runs (session_id, plan_id, run_id, state, started_at, initial_plan_revision, " +
+			"head_seq, head_tree_seq, head_plan_revision, append_epoch) " +
+			"VALUES (?, ?, ?, 'active', ?, 0, 0, 0, 0, 0)", []any{sessionID, req.PlanID, req.RunID, stamp(now)}},
+	}
+	for _, statement := range statements {
+		if _, err := tx.ExecContext(ctx, statement.query, statement.args...); err != nil {
+			return SessionIdentity{}, fmt.Errorf("pabtdebug: bootstrap: %w", err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return SessionIdentity{}, fmt.Errorf("pabtdebug: bootstrap: %w", err)
+	}
+	s.mu.Lock()
+	s.storeID = StoreID(storeID)
+	s.mu.Unlock()
+	return SessionIdentity{
+		StoreID:    StoreID(storeID),
+		SessionID:  sessionID,
+		PlanID:     req.PlanID,
+		RunID:      req.RunID,
+		Generation: 1,
+	}, nil
+}
+
+func planTitle(title string) string {
+	if strings.TrimSpace(title) == "" {
+		return "pabtdebug"
+	}
+	return title
+}
+
+func stamp(t time.Time) string { return t.UTC().Format(time.RFC3339Nano) }
+
+func mustHex(digest string) []byte {
+	raw, err := hex.DecodeString(digest)
+	if err != nil {
+		// A digest this layer computed is always hex, so a failure here is a bug
+		// rather than an input problem and must not be silently written.
+		panic("pabtdebug: digest is not hex: " + err.Error())
+	}
+	return raw
+}
+
+// Begin allocates the next sequence for a run under its append lease.
+//
+// The lease is what makes the chain gap-free: a sequence is allocated here and
+// committed by CommitIntent or released by AbortIntent, and nothing else may
+// allocate one in between. A caller that already holds the lease is told so
+// rather than being allowed to interleave, because two interleaved appends would
+// leave the chain with two records claiming one predecessor.
+func (s *SQLiteStore) Begin(ctx context.Context, req BeginRequest) (IntentTicket, error) {
+	if err := s.checkUsable(true); err != nil {
+		return IntentTicket{}, err
+	}
+	if err := ctx.Err(); err != nil {
+		return IntentTicket{}, err
+	}
+	head, err := s.Head(ctx, req.RunKey)
+	if err != nil {
+		return IntentTicket{}, err
+	}
+	attemptID, err := randomID("attempt")
+	if err != nil {
+		return IntentTicket{}, err
+	}
+	eventUID, err := randomID("event")
+	if err != nil {
+		return IntentTicket{}, err
+	}
+	now := s.clock().UTC()
+	sequence := head.HeadSequence + 1
+
+	// The lease and the intent row are written together, so a crash between them
+	// cannot leave a sequence allocated with nothing to say it belongs to.
+	tx, err := s.writer.BeginTx(ctx, nil)
+	if err != nil {
+		return IntentTicket{}, fmt.Errorf("pabtdebug: begin intent: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var owner sql.NullString
+	if err := tx.QueryRowContext(ctx,
+		"SELECT append_owner FROM runs WHERE session_id = ? AND run_id = ?",
+		req.RunKey.SessionID, req.RunKey.RunID).Scan(&owner); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return IntentTicket{}, fmt.Errorf("%w: run %s", ErrNotFound, req.RunKey.RunID)
+		}
+		return IntentTicket{}, fmt.Errorf("pabtdebug: begin intent: %w", err)
+	}
+	if owner.Valid {
+		return IntentTicket{}, fmt.Errorf("%w: held by attempt %s", ErrAppendBusy, owner.String)
+	}
+	if head.HeadSequence != headSequenceOf(tx, req.RunKey) {
+		return IntentTicket{}, fmt.Errorf("%w: the head moved between reads", ErrHeadMismatch)
+	}
+
+	update, err := tx.ExecContext(ctx,
+		"UPDATE runs SET append_owner = ?, append_attempt_id = ?, append_epoch = "+
+			"(append_epoch + 1), head_plan_revision = ? "+
+			"WHERE session_id = ? AND run_id = ? AND append_owner IS NULL",
+		attemptID, attemptID, req.ExpectedPlanRevision, req.RunKey.SessionID, req.RunKey.RunID)
+	if err != nil {
+		return IntentTicket{}, fmt.Errorf("pabtdebug: begin intent: %w", err)
+	}
+	affected, err := update.RowsAffected()
+	if err != nil {
+		return IntentTicket{}, fmt.Errorf("pabtdebug: begin intent: %w", err)
+	}
+	if affected == 0 {
+		return IntentTicket{}, ErrAppendBusy
+	}
+	if _, err := tx.ExecContext(ctx,
+		"INSERT INTO intents (session_id, event_uid, plan_id, run_id, seq, attempt_id, "+
+			"expected_head_seq, expected_tree_seq, expected_plan_revision, expected_generation, "+
+			"execution_started, started_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)",
+		req.RunKey.SessionID, eventUID, req.RunKey.PlanID, req.RunKey.RunID, sequence, attemptID,
+		head.HeadSequence, head.HeadTreeSequence, req.ExpectedPlanRevision, head.Generation, stamp(now),
+	); err != nil {
+		return IntentTicket{}, fmt.Errorf("pabtdebug: begin intent: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return IntentTicket{}, fmt.Errorf("pabtdebug: begin intent: %w", err)
+	}
+	ticket := IntentTicket{
+		RunKey:               req.RunKey,
+		Sequence:             sequence,
+		EventUID:             eventUID,
+		AttemptID:            attemptID,
+		ExpectedHeadSequence: head.HeadSequence,
+		ExpectedTreeSequence: head.HeadTreeSequence,
+		ExpectedPlanRevision: req.ExpectedPlanRevision,
+		ExpectedGeneration:   head.Generation,
+		StartedAt:            now,
+	}
+	ticket.proof = s.proof(ticket.RunKey, ticket.Sequence, ticket.EventUID, ticket.AttemptID)
+	return ticket, nil
+}
+
+// headSequenceOf reads a run's head sequence inside a transaction.
+func headSequenceOf(tx *sql.Tx, key RunKey) uint64 {
+	var head uint64
+	if err := tx.QueryRow("SELECT head_seq FROM runs WHERE session_id = ? AND run_id = ?",
+		key.SessionID, key.RunID).Scan(&head); err != nil {
+		return 0
+	}
+	return head
+}
+
+// MarkExecutionStarted records that a tick began executing the application.
+//
+// It is written before the planner runs, so a crash mid-tick is distinguishable
+// from a crash before it started, and recovery can say which.
+func (s *SQLiteStore) MarkExecutionStarted(ctx context.Context, ticket IntentTicket) error {
+	if err := s.checkUsable(true); err != nil {
+		return err
+	}
+	if err := s.verifyTicket(ticket); err != nil {
+		return err
+	}
+	_, err := s.writer.ExecContext(ctx,
+		"UPDATE intents SET execution_started = 1 WHERE session_id = ? AND event_uid = ? AND attempt_id = ?",
+		ticket.RunKey.SessionID, ticket.EventUID, ticket.AttemptID)
+	if err != nil {
+		return fmt.Errorf("pabtdebug: mark execution started: %w", err)
+	}
+	return nil
+}
+
+// verifyTicket refuses a ticket that did not come from Begin.
+func (s *SQLiteStore) verifyTicket(ticket IntentTicket) error {
+	want := s.proof(ticket.RunKey, ticket.Sequence, ticket.EventUID, ticket.AttemptID)
+	if ticket.proof != want {
+		return fmt.Errorf("%w: the intent ticket was not issued by this store", ErrHeadMismatch)
+	}
+	return nil
+}
+
+// Commit writes a record, its tree, and the run head in one transaction.
+//
+// Nothing here is separate: the record row, its representation, the chain link,
+// and the head advance either all land or none do. A kill between any two steps
+// therefore leaves no half-written record, and because the sequence was already
+// allocated by Begin, it also leaves no gap: the sequence is either committed or
+// still held by an open intent that recovery can resolve.
+func (s *SQLiteStore) Commit(ctx context.Context, ticket IntentTicket, record StoredRecord) (CommitReceipt, error) {
+	if err := s.checkUsable(true); err != nil {
+		return CommitReceipt{}, err
+	}
+	if err := ctx.Err(); err != nil {
+		return CommitReceipt{}, err
+	}
+	if err := s.verifyTicket(ticket); err != nil {
+		return CommitReceipt{}, err
+	}
+	// The ticket owns the identity, so a record that names a different one is
+	// refused rather than restamped. A record that names none is the normal case:
+	// the caller built a payload and the store attaches it to the attempt.
+	if record.EventUID != "" && record.EventUID != ticket.EventUID {
+		return CommitReceipt{}, fmt.Errorf("%w: the record names event %s, the ticket is %s",
+			ErrHeadMismatch, record.EventUID, ticket.EventUID)
+	}
+	if record.Sequence != 0 && record.Sequence != ticket.Sequence {
+		return CommitReceipt{}, fmt.Errorf("%w: the record names sequence %d, the ticket is %d",
+			ErrHeadMismatch, record.Sequence, ticket.Sequence)
+	}
+	if !record.RunKey.IsZero() && record.RunKey != ticket.RunKey {
+		return CommitReceipt{}, fmt.Errorf("%w: the record belongs to run %s, the ticket is %s",
+			ErrHeadMismatch, record.RunKey.RunID, ticket.RunKey.RunID)
+	}
+
+	now := s.clock().UTC()
+
+	tx, err := s.writer.BeginTx(ctx, nil)
+	if err != nil {
+		return CommitReceipt{}, fmt.Errorf("pabtdebug: commit: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var (
+		headSeq       uint64
+		appendOwner   sql.NullString
+		appendAttempt sql.NullString
+		previous      []byte
+	)
+	err = tx.QueryRowContext(ctx,
+		"SELECT head_seq, append_owner, append_attempt_id, head_record_sha256 "+
+			"FROM runs WHERE session_id = ? AND run_id = ?",
+		ticket.RunKey.SessionID, ticket.RunKey.RunID).
+		Scan(&headSeq, &appendOwner, &appendAttempt, &previous)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return CommitReceipt{}, fmt.Errorf("%w: run %s", ErrNotFound, ticket.RunKey.RunID)
+	case err != nil:
+		return CommitReceipt{}, fmt.Errorf("pabtdebug: commit: %w", err)
+	}
+	if !appendOwner.Valid || appendAttempt.String != ticket.AttemptID {
+		return CommitReceipt{}, fmt.Errorf("%w: the lease is not held by attempt %s",
+			ErrAppendBusy, ticket.AttemptID)
+	}
+	if headSeq+1 != ticket.Sequence {
+		return CommitReceipt{}, fmt.Errorf("%w: expected sequence %d, the run is at %d",
+			ErrHeadMismatch, ticket.Sequence, headSeq)
+	}
+
+	// The chain link is read from the store, never from the caller, so a record
+	// cannot claim a predecessor the run does not have.
+	link := zeroDigest
+	if headSeq > 0 {
+		if len(previous) == 0 {
+			return CommitReceipt{}, fmt.Errorf("%w: the run has records but no head digest", ErrStoreCorrupt)
+		}
+		link = hex.EncodeToString(previous)
+	}
+
+	// Everything the store owns is stamped first, and the digests are taken over
+	// the record as it will be stored. Hashing before the store-owned fields are
+	// set would produce a digest over a record that is not the one being written.
+	record.PreviousRecordSHA256 = link
+	record.Format = FormatName
+	record.Version = FormatVersion
+	record.EventUID = ticket.EventUID
+	record.Sequence = ticket.Sequence
+	record.RunKey = ticket.RunKey
+	record.AttemptID = ticket.AttemptID
+	record.RecordSHA256 = ""
+
+	payloadDigest, err := HashPayload(record)
+	if err != nil {
+		return CommitReceipt{}, err
+	}
+	record.PayloadSHA256 = payloadDigest
+	record.RecordSHA256 = ""
+	recordDigest, err := HashRecord(record)
+	if err != nil {
+		return CommitReceipt{}, err
+	}
+	record.RecordSHA256 = recordDigest
+	recordBytes, err := CanonicalEncode(record)
+	if err != nil {
+		return CommitReceipt{}, err
+	}
+	if uint64(len(recordBytes)) > s.limits.MaxRecordBytes {
+		return CommitReceipt{}, fmt.Errorf("%w: the record is %d bytes, over the %d limit",
+			ErrValueUnencodable, len(recordBytes), s.limits.MaxRecordBytes)
+	}
+
+	var treeDigest string
+	var pendingTree []byte
+	if record.Tree != nil {
+		treeBytes, err := CanonicalEncode(record.Tree)
+		if err != nil {
+			return CommitReceipt{}, err
+		}
+		if uint64(len(treeBytes)) > s.limits.MaxTreeBytes {
+			return CommitReceipt{}, fmt.Errorf("%w: the tree is %d bytes, over the %d limit",
+				ErrValueUnencodable, len(treeBytes), s.limits.MaxTreeBytes)
+		}
+		treeDigest, err = HashTree(*record.Tree)
+		if err != nil {
+			return CommitReceipt{}, err
+		}
+		pendingTree = treeBytes
+	}
+
+	// The record comes first: the representation below references it, and the head
+	// below is the run's own link to it. All are in one transaction, so they land
+	// together or not at all.
+	if _, err := tx.ExecContext(ctx,
+		"INSERT INTO records (session_id, event_uid, plan_id, run_id, seq, attempt_id, kind, "+
+			"payload_state, tree_eligible, execution_started, recorded_at, record_json, "+
+			"payload_sha256, previous_record_sha256, record_sha256) "+
+			"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		ticket.RunKey.SessionID, ticket.EventUID, ticket.RunKey.PlanID, ticket.RunKey.RunID,
+		ticket.Sequence, ticket.AttemptID, string(record.Kind), string(record.PayloadState),
+		boolToInt(record.TreeEligible), boolToInt(record.ExecutionStarted), stamp(now), recordBytes,
+		mustHex(payloadDigest), mustHex(link), mustHex(recordDigest),
+	); err != nil {
+		return CommitReceipt{}, fmt.Errorf("pabtdebug: commit record: %w", err)
+	}
+	if pendingTree != nil {
+		if _, err := tx.ExecContext(ctx,
+			"INSERT INTO representations (session_id, event_uid, plan_id, run_id, seq, "+
+				"target_plan_revision, tree_json, tree_sha256) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+			ticket.RunKey.SessionID, ticket.EventUID, ticket.RunKey.PlanID, ticket.RunKey.RunID,
+			ticket.Sequence, record.Revision.PlanRevision, pendingTree, mustHex(treeDigest),
+		); err != nil {
+			return CommitReceipt{}, fmt.Errorf("pabtdebug: commit tree: %w", err)
+		}
+	}
+	if _, err := tx.ExecContext(ctx,
+		"UPDATE runs SET head_seq = ?, append_owner = NULL, append_attempt_id = NULL, "+
+			"head_record_sha256 = ?, record_sha256 = ? WHERE session_id = ? AND run_id = ?",
+		ticket.Sequence, mustHex(recordDigest), mustHex(recordDigest),
+		ticket.RunKey.SessionID, ticket.RunKey.RunID,
+	); err != nil {
+		return CommitReceipt{}, fmt.Errorf("pabtdebug: commit head: %w", err)
+	}
+	if record.Tree != nil {
+		if _, err := tx.ExecContext(ctx,
+			"UPDATE runs SET head_tree_seq = ?, head_tree_event_uid = ?, head_tree_digest = ? "+
+				"WHERE session_id = ? AND run_id = ?",
+			ticket.Sequence, ticket.EventUID, treeDigest,
+			ticket.RunKey.SessionID, ticket.RunKey.RunID,
+		); err != nil {
+			return CommitReceipt{}, fmt.Errorf("pabtdebug: commit tree head: %w", err)
+		}
+	}
+	if _, err := tx.ExecContext(ctx,
+		"DELETE FROM intents WHERE session_id = ? AND event_uid = ? AND attempt_id = ?",
+		ticket.RunKey.SessionID, ticket.EventUID, ticket.AttemptID,
+	); err != nil {
+		return CommitReceipt{}, fmt.Errorf("pabtdebug: commit intent: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx,
+		"UPDATE sessions SET record_count = record_count + 1 WHERE session_id = ?",
+		ticket.RunKey.SessionID); err != nil {
+		return CommitReceipt{}, fmt.Errorf("pabtdebug: commit session: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return CommitReceipt{}, fmt.Errorf("pabtdebug: commit: %w", err)
+	}
+	return CommitReceipt{
+		RunKey:       ticket.RunKey,
+		Sequence:     ticket.Sequence,
+		EventUID:     ticket.EventUID,
+		RecordSHA256: recordDigest,
+		TreeSHA256:   treeDigest,
+		CommittedAt:  now,
+		proof:        s.proof(ticket.RunKey, ticket.Sequence, ticket.EventUID, recordDigest),
+	}, nil
+}
+
+func boolToInt(v bool) int {
+	if v {
+		return 1
+	}
+	return 0
+}
+
+// Abort releases a sequence without writing a record.
+//
+// It is used when a tick fails before it can produce a record, and when recovery
+// decides an intent should not become one. Releasing rather than committing an
+// empty record is what keeps the chain free of records that say nothing happened.
+func (s *SQLiteStore) Abort(ctx context.Context, ticket IntentTicket) error {
+	if err := s.checkUsable(true); err != nil {
+		return err
+	}
+	if err := s.verifyTicket(ticket); err != nil {
+		return err
+	}
+	tx, err := s.writer.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("pabtdebug: abort: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx,
+		"DELETE FROM intents WHERE session_id = ? AND event_uid = ? AND attempt_id = ?",
+		ticket.RunKey.SessionID, ticket.EventUID, ticket.AttemptID); err != nil {
+		return fmt.Errorf("pabtdebug: abort: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx,
+		"UPDATE runs SET append_owner = NULL, append_attempt_id = NULL "+
+			"WHERE session_id = ? AND run_id = ? AND append_attempt_id = ?",
+		ticket.RunKey.SessionID, ticket.RunKey.RunID, ticket.AttemptID); err != nil {
+		return fmt.Errorf("pabtdebug: abort: %w", err)
+	}
+	return tx.Commit()
+}
+
+// PendingIntents returns the intents left open by an earlier process, in sequence
+// order.
+//
+// An open intent is not a record. It says a sequence was allocated and never
+// resolved, and the caller must decide what it becomes before recording more.
+func (s *SQLiteStore) PendingIntents(ctx context.Context) ([]IntentTicket, error) {
+	if err := s.checkUsable(false); err != nil {
+		return nil, err
+	}
+	rows, err := s.readers.QueryContext(ctx,
+		"SELECT session_id, plan_id, run_id, seq, event_uid, attempt_id, "+
+			"expected_head_seq, expected_tree_seq, expected_plan_revision, expected_generation, started_at "+
+			"FROM intents ORDER BY session_id, run_id, seq")
+	if err != nil {
+		return nil, fmt.Errorf("pabtdebug: read intents: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var out []IntentTicket
+	for rows.Next() {
+		var (
+			ticket                               IntentTicket
+			started                              string
+			seq, headSeq, treeSeq, revision, gen int
+		)
+		if err := rows.Scan(&ticket.RunKey.SessionID, &ticket.RunKey.PlanID, &ticket.RunKey.RunID,
+			&seq, &ticket.EventUID, &ticket.AttemptID, &headSeq, &treeSeq, &revision, &gen,
+			&started); err != nil {
+			return nil, fmt.Errorf("pabtdebug: read intents: %w", err)
+		}
+		ticket.Sequence = uint64(seq)
+		ticket.ExpectedHeadSequence = uint64(headSeq)
+		ticket.ExpectedTreeSequence = uint64(treeSeq)
+		ticket.ExpectedPlanRevision = uint64(revision)
+		ticket.ExpectedGeneration = uint64(gen)
+		if parsed, perr := time.Parse(time.RFC3339Nano, started); perr == nil {
+			ticket.StartedAt = parsed.UTC()
+		}
+		// A recovered ticket gets a fresh proof so it can be resolved. The old one
+		// is meaningless in a new process.
+		ticket.proof = s.proof(ticket.RunKey, ticket.Sequence, ticket.EventUID, ticket.AttemptID)
+		out = append(out, ticket)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("pabtdebug: read intents: %w", err)
+	}
+	return out, nil
+}
