@@ -221,9 +221,6 @@ type (
 		// id identifies this action instance for the life of the plan.
 		id OccurrenceID
 
-		// lineage names the occurrence this action was copied from.
-		lineage LineageID
-
 		// postconditionID is the condition whose failure caused this action to
 		// be generated, which is the post-condition this action must achieve.
 		postconditionID OccurrenceID
@@ -335,8 +332,9 @@ func (p *Plan[T]) bt() (bt.Tick, []bt.Node) {
 	return func(children []bt.Node) (status bt.Status, err error) {
 		defer func() {
 			if p.root != nil && p.root.status != nil {
-				p.root.status.IncrTickCount()
-				p.root.status.SetLastStatus(status)
+				// One publish, so a reader never sees a tick count paired with
+				// the status of a different tick.
+				p.root.status.record(status)
 			}
 		}()
 		p.running = false

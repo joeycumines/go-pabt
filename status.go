@@ -161,19 +161,27 @@ func (s *NodeStatus) UnmarshalJSON(data []byte) error {
 	if string(data) == "null" {
 		return nil
 	}
+	// StatusPresent is a pointer so a blob written before the field existed does
+	// not decode a recorded status as an absence. Absence is derived from the
+	// status when the field is missing, which is the one thing the old format
+	// could express.
 	var aux struct {
 		TickCount     int       `json:"TickCount"`
 		LastStatus    bt.Status `json:"LastStatus"`
-		StatusPresent bool      `json:"StatusPresent"`
+		StatusPresent *bool     `json:"StatusPresent"`
 		Version       uint64    `json:"Version"`
 	}
 	if err := json.Unmarshal(data, &aux); err != nil {
 		return err
 	}
+	present := ValidateStatus(aux.LastStatus) == nil
+	if aux.StatusPresent != nil {
+		present = *aux.StatusPresent
+	}
 	s.state.Store(&NodeStatusSnapshot{
 		TickCount:     aux.TickCount,
 		LastStatus:    aux.LastStatus,
-		StatusPresent: aux.StatusPresent,
+		StatusPresent: present,
 		Version:       aux.Version,
 	})
 	return nil

@@ -26,6 +26,16 @@ import (
 	bt "github.com/joeycumines/go-behaviortree"
 )
 
+// keyOrder renders a variable key into a total order.
+//
+// The display form alone is not a total order: two distinct comparable keys can
+// render identically, for example the int 1 and the string "1". Ordering on the
+// type and the exact value as well means two identical runs produce identical
+// evidence even then, instead of inheriting Go's randomised map iteration.
+func keyOrder(key any) string {
+	return fmt.Sprintf("%T\x00%#v\x00%v", key, key, key)
+}
+
 func captureFrame(n bt.Node) *FrameInfo {
 	if n == nil {
 		return nil
@@ -149,7 +159,9 @@ func (n *node[T]) generateAnd(conditions Conditions[T]) (and map[any]*preconditi
 		if c != nil {
 			// An absent declaration stays unknown. It is never inferred from
 			// the key, because the key names a variable, not a requirement.
+			started := time.Now()
 			pre.expected, pre.expectedKnown = ExpectedValue(condition)
+			c.recordExpected(pre.id, pre.expected, pre.expectedKnown, time.Since(started))
 		}
 		node := &node[T]{
 			goal:          n.goal,
@@ -303,9 +315,7 @@ func (a *action[T]) effectName(values map[any]any) string {
 	for key := range a.effects {
 		keys = append(keys, key)
 	}
-	sort.Slice(keys, func(i, j int) bool {
-		return fmt.Sprintf("%v", keys[i]) < fmt.Sprintf("%v", keys[j])
-	})
+	sort.Slice(keys, func(i, j int) bool { return keyOrder(keys[i]) < keyOrder(keys[j]) })
 	var b strings.Builder
 	for i, key := range keys {
 		if i > 0 {
@@ -368,9 +378,7 @@ func (n *node[T]) buildEffects() Effects {
 	for key := range n.action.effects {
 		keys = append(keys, key)
 	}
-	sort.Slice(keys, func(i, j int) bool {
-		return fmt.Sprintf("%v", keys[i]) < fmt.Sprintf("%v", keys[j])
-	})
+	sort.Slice(keys, func(i, j int) bool { return keyOrder(keys[i]) < keyOrder(keys[j]) })
 	effects := make(Effects, 0, len(keys))
 	for _, key := range keys {
 		effects = append(effects, n.action.effects[key])
@@ -469,6 +477,10 @@ func (p *precondition[T]) expand() (err error) {
 
 	// original root is copied and used as the post-condition, then has it's links preserved and is updated
 	// with a new ppa (linking to the new copy), note the original root has all fields overwritten except it's links
+	// The post node re-runs the condition's own tick closure, so it must keep the
+	// status object that closure publishes into. Replacing it would leave the
+	// node that actually evaluates the condition reporting no ticks at all.
+	condStatus := p.root.status
 	post := new(node[T]).copy(p.root)
 	post.id = p.root.goal.mint()
 	post.lineage = lineageOf(p.root.id)
@@ -487,7 +499,7 @@ func (p *precondition[T]) expand() (err error) {
 	p.root.append(nil, p.root.ppa.post)
 	p.root.ppa.post.ppa = p.root.ppa
 	p.root.ppa.post.typ = NodeTypePPAPost
-	p.root.ppa.post.status = &NodeStatus{}
+	p.root.ppa.post.status = condStatus
 
 	// need to build all actions as their own trees first
 	for _, act := range acts {
@@ -596,7 +608,12 @@ func (n *node[T]) generateAction(post Condition, postID OccurrenceID, act Action
 	}
 
 	// create action node
-	if actNode := act.Node(); actNode == nil {
+	started := time.Now()
+	actNode := act.Node()
+	if c != nil {
+		c.recordActionCalls(CallbackActionNode, "", r.id, actNode != nil, time.Since(started))
+	}
+	if actNode == nil {
 		return false, fmt.Errorf(`pabt: invalid action`)
 	} else {
 		actionStatus := &NodeStatus{}
@@ -747,9 +764,7 @@ func (p *ppa[T]) conflicts(o *ppa[T]) bool {
 	// Map iteration order is unspecified, so the pairs are ordered before any
 	// are compared. The answer is unchanged by the order, but the recorded
 	// evidence for a run would otherwise differ between identical runs.
-	sort.Slice(pairs, func(i, j int) bool {
-		return fmt.Sprintf("%v", pairs[i].K) < fmt.Sprintf("%v", pairs[j].K)
-	})
+	sort.Slice(pairs, func(i, j int) bool { return keyOrder(pairs[i].K) < keyOrder(pairs[j].K) })
 
 	// ensure that p's conditions are compatible with any corresponding effects from o (also checks all sub-ppa)
 	c := p.root.goal.capture()
@@ -767,7 +782,9 @@ func (p *ppa[T]) conflicts(o *ppa[T]) bool {
 				started := time.Now()
 				value := eff.Value()
 				if c != nil {
-					c.recordEffectValue("", "", pair.K, value, UseConflictTest, time.Since(started))
+					c.recordEffectValue(
+						"", act.capturedEffectID(pair.K), pair.K, value, UseConflictTest, time.Since(started),
+					)
 				}
 				var matched bool
 				if c != nil {

@@ -88,7 +88,11 @@ func newPlan[T Condition](
 			return nil, err
 		}
 	}
-	if captured && p.config.views == nil {
+	if p.config.views == nil {
+		// Every plan gets a provider so the captured entry point is never a trap
+		// for a caller that reached the plan through New. The default is chosen
+		// here rather than after a configured provider fails, and it labels its
+		// own reads live.
 		p.config.views = NewLiveStateViewProvider[T](state)
 	}
 	// Construction happens with a capture published so the goal's initial
@@ -164,6 +168,14 @@ func (p *Plan[T]) TickCaptured(env TickEnvironment) (out TickExecution) {
 	}
 	defer p.gate.Unlock()
 
+	if p.config.views == nil {
+		out.CaptureError = &RecordedError{
+			Type:    "pabt.ErrStateViewRequired",
+			Message: "the plan has no state view provider",
+		}
+		out.CompletedAt = time.Now()
+		return
+	}
 	view, err := p.config.views.OpenStateView(StateViewRequest{
 		Role:         StateViewPreTick,
 		PlanRevision: p.PlannerRevision(),
@@ -324,6 +336,29 @@ func (c *tickCapture[T]) recordStateActions(conditionID OccurrenceID, count int,
 	})
 }
 
+// recordExpected records the application's declared expectation, including the
+// fact that it declared none. The call is recorded even when it returns nothing,
+// because a consumer auditing what the application was asked must be able to see
+// that it was asked.
+func (c *tickCapture[T]) recordExpected(
+	conditionID OccurrenceID,
+	expected any,
+	known bool,
+	d time.Duration,
+) {
+	if c == nil {
+		return
+	}
+	c.record(CallbackEvidence{
+		Kind:      CallbackExpected,
+		Subject:   SubjectCondition,
+		SubjectID: conditionID,
+		Result:    expected,
+		Known:     known,
+		Duration:  d,
+	})
+}
+
 func (c *tickCapture[T]) recordActionCalls(
 	kind CallbackKind,
 	nodeID, actionID OccurrenceID,
@@ -393,7 +428,15 @@ func (c *tickCapture[T]) afterAction(
 		return
 	}
 	exec.Duration = time.Since(started)
-	ev := ActionEvidence{Execution: exec}
+	// The before-revision is the one view opened for the whole tick, so it can
+	// only bound this action alone when no other action has run yet.
+	isolated := len(c.executions) == 0
+	ev := ActionEvidence{
+		Execution: exec,
+		Before:    before,
+		After:     before,
+		Isolated:  isolated,
+	}
 	defer func() { c.executions = append(c.executions, ev) }()
 
 	cfg := c.plan.config
@@ -435,6 +478,7 @@ func (c *tickCapture[T]) afterAction(
 		return
 	}
 	after, afterCoherence := view.Revision(), view.Coherence()
+	ev.After = after
 	verdicts, verr := cfg.verifier.VerifyTransitions(TransitionRequest{
 		PlanRevision:    c.plan.PlannerRevision(),
 		ActionID:        act.id,
@@ -449,9 +493,11 @@ func (c *tickCapture[T]) afterAction(
 		AfterCoherence:  afterCoherence,
 	})
 	// The planner, not the verifier, decides whether the bracketing reads can
-	// support an authoritative claim.
+	// support an authoritative claim. Two coherent reads are not enough: the
+	// window must also contain nothing but this action.
 	for i := range verdicts {
-		verdicts[i].Authoritative = beforeCoherence.coherent() && afterCoherence.coherent() &&
+		verdicts[i].Authoritative = isolated &&
+			beforeCoherence.coherent() && afterCoherence.coherent() &&
 			verdicts[i].Err == nil
 	}
 	ev.Relations = verdicts
@@ -472,5 +518,11 @@ func mergeError(a, b *RecordedError) *RecordedError {
 	case a == nil:
 		return b
 	}
-	return &RecordedError{Type: a.Type, Message: a.Message + "; " + b.Message}
+	// Both types are kept. A merged record that named only one of them could not
+	// say what actually went wrong.
+	typ := a.Type
+	if b.Type != a.Type {
+		typ = a.Type + "|" + b.Type
+	}
+	return &RecordedError{Type: typ, Message: a.Message + "; " + b.Message}
 }

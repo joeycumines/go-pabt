@@ -49,14 +49,17 @@ type OccurrenceID string
 // planner performs, so this is currently a single-valued relation.
 type LineageID string
 
-// Expecting is an optional interface a [Condition] or [Effect] may implement to
-// declare the value it expects.
+// Expecting is an optional interface a [Condition] may implement to declare
+// the value it requires.
 //
-// The planner calls only [Condition.Key], [Condition.Match], [Effect.Key], and
-// [Effect.Value], so an expected value cannot be recovered from the key without
-// guessing. A type that implements Expecting supplies the declaration
-// explicitly; a type that does not has an unavailable expected value, which the
-// capture boundary reports as such rather than inferring one.
+// The planner calls only [Condition.Key] and [Condition.Match], so an expected
+// value cannot be recovered from the key without guessing. A condition that
+// implements Expecting supplies the declaration explicitly; one that does not
+// has an unavailable expected value, which the capture boundary reports as such
+// rather than inferring one.
+//
+// An [Effect] needs no equivalent: [Effect.Value] already is its declared new
+// value, and an effect whose Value call failed is recorded as not known.
 type Expecting interface {
 	// Expected returns the value the receiver requires or intends, if it declares
 	// one. Returning a nil value with a true second result is not supported; use

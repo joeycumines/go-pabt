@@ -51,6 +51,7 @@ const (
 	CallbackActionConditions CallbackKind = "action_conditions"
 	CallbackActionNode       CallbackKind = "action_node"
 	CallbackEffectValue      CallbackKind = "effect_value"
+	CallbackExpected         CallbackKind = "expected"
 )
 
 // MatchUse says why Match was called.
@@ -103,6 +104,7 @@ type CallbackEvidence struct {
 	Key       any
 	Input     any
 	Result    any
+	Known     bool
 	Err       *RecordedError
 	Duration  time.Duration
 }
@@ -146,9 +148,11 @@ type EffectOccurrence struct {
 }
 
 // ActionOccurrence is one action instance in a captured tick.
+//
+// It carries no lineage: expansion creates an action once and never copies it,
+// so there is no derivation to record. Only nodes are copied.
 type ActionOccurrence struct {
 	ID              OccurrenceID
-	Lineage         LineageID
 	NodeID          OccurrenceID
 	Name            string
 	PostconditionID OccurrenceID
@@ -257,7 +261,6 @@ func (p *Plan[T]) snapshot(c *tickCapture[T]) TickSnapshot {
 func (a *action[T]) occurrence(nodeID OccurrenceID) ActionOccurrence {
 	out := ActionOccurrence{
 		ID:              a.id,
-		Lineage:         a.lineage,
 		NodeID:          nodeID,
 		PostconditionID: a.postconditionID,
 	}
@@ -280,6 +283,20 @@ func (a *action[T]) occurrence(nodeID OccurrenceID) ActionOccurrence {
 		return out.ConditionIDs[i] < out.ConditionIDs[j]
 	})
 	return out
+}
+
+// capturedEffectID returns the occurrence identity of one of the action's
+// effects, or an empty identity when no capture ran.
+func (a *action[T]) capturedEffectID(key any) OccurrenceID {
+	if a.cache == nil {
+		return ""
+	}
+	for _, e := range a.cache.effects {
+		if e.Key == key {
+			return e.ID
+		}
+	}
+	return ""
 }
 
 // capturedEffects returns the action's effects as captured, or nil when no

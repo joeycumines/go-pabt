@@ -58,7 +58,8 @@ type (
 		coherence StateCoherence
 	}
 	sealedProvider struct {
-		state     *sealedState
+		variable  func(key any) (any, error)
+		actions   func(*sealedCondition) ([]Action[*sealedCondition], error)
 		coherence StateCoherence
 
 		mu     sync.Mutex
@@ -130,10 +131,10 @@ func (s *sealedState) Actions(failed *sealedCondition) ([]Action[*sealedConditio
 	}}, nil
 }
 
-func (v *sealedView) Variable(key any) (any, error) { return v.provider.state.Variable(key) }
+func (v *sealedView) Variable(key any) (any, error) { return v.provider.variable(key) }
 
 func (v *sealedView) Actions(failed *sealedCondition) ([]Action[*sealedCondition], error) {
-	return v.provider.state.Actions(failed)
+	return v.provider.actions(failed)
 }
 
 func (v *sealedView) Revision() StateRevision   { return v.revision }
@@ -155,6 +156,12 @@ func (p *sealedProvider) OpenStateView(req StateViewRequest) (TypedStateView[*se
 		revision:  StateRevision{PlanRevision: req.PlanRevision, WorldRevision: "w1"},
 		coherence: p.coherence,
 	}, nil
+}
+
+func (p *sealedProvider) forState(s *sealedState) *sealedProvider {
+	p.variable = s.Variable
+	p.actions = s.Actions
+	return p
 }
 
 func (p *sealedProvider) counts() (opens, closes int) {
@@ -229,7 +236,7 @@ func newSealedFixture(t *testing.T, coherence StateCoherence) (
 	cond := &sealedCondition{key: "x", expected: "done"}
 	state := &sealedState{variables: map[string]any{"x": "start"}}
 	state.apply = func() { state.variables["x"] = "done" }
-	provider := &sealedProvider{state: state, coherence: coherence}
+	provider := (&sealedProvider{coherence: coherence}).forState(state)
 	plan, err := NewCaptured(
 		state,
 		[]Conditions[*sealedCondition]{{cond}},
@@ -431,13 +438,31 @@ func TestConstructionCallbacksAreSeparateFromTick(t *testing.T) {
 	if len(plan.construction) == 0 {
 		t.Fatal("no construction callbacks recorded")
 	}
+	var keys, expected int
 	for _, cb := range plan.construction {
-		if cb.Kind != CallbackKey {
-			t.Errorf("construction callback kind = %v, want key", cb.Kind)
-		}
 		if cb.Phase != CallbackPhaseConstruction {
 			t.Errorf("construction callback phase = %q, want construction", cb.Phase)
 		}
+		switch cb.Kind {
+		case CallbackKey:
+			keys++
+		case CallbackExpected:
+			expected++
+			if !cb.Known {
+				t.Error("the construction phase recorded an expectation as unknown")
+			}
+			if cb.Result != "done" {
+				t.Errorf("recorded expectation = %v, want done", cb.Result)
+			}
+		default:
+			t.Errorf("construction callback kind = %v, want key or expected", cb.Kind)
+		}
+	}
+	if keys == 0 {
+		t.Error("the construction phase recorded no key callback")
+	}
+	if expected == 0 {
+		t.Error("the construction phase recorded no expected callback")
 	}
 	result := plan.TickCaptured(TickEnvironment{})
 	for _, cb := range result.Snapshot.Callbacks {
@@ -537,7 +562,7 @@ func TestOccurrenceIdentitySurvivesConflictResolution(t *testing.T) {
 	plan, err := NewCaptured(
 		state,
 		[]Conditions[*sealedCondition]{{condA}, {condB}},
-		WithStateViews[*sealedCondition](&sealedProvider{state: state, coherence: CoherenceSnapshot}),
+		WithStateViews[*sealedCondition]((&sealedProvider{coherence: CoherenceSnapshot}).forState(state)),
 	)
 	if err != nil {
 		t.Fatalf("NewCaptured: %v", err)
@@ -760,7 +785,7 @@ func TestCapturedViewClosesExactlyOnceWhenThePlannerPanics(t *testing.T) {
 	variables := map[string]any{"x": "start"}
 	state := &sealedState{variables: variables}
 	state.apply = func() { panic(`pabt test: action panicked`) }
-	provider := &sealedProvider{state: state, coherence: CoherenceSnapshot}
+	provider := (&sealedProvider{coherence: CoherenceSnapshot}).forState(state)
 	plan, err := NewCaptured(
 		state,
 		[]Conditions[*sealedCondition]{{cond}},
@@ -1017,8 +1042,10 @@ func TestNewRemainsUncaptured(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	if plan.config.views != nil {
-		t.Error("a plan built with New configured a state view")
+	// New installs the same explicit live provider, so the captured entry point
+	// is usable on any plan; what it does not do is record anything.
+	if plan.config.views == nil {
+		t.Error("a plan built with New has no state view provider")
 	}
 	if len(plan.construction) != 0 {
 		t.Error("a plan built with New recorded construction callbacks")
@@ -1054,4 +1081,380 @@ func TestCapturedProviderRejectsNilConfiguration(t *testing.T) {
 	if _, err := NewCaptured[*sealedCondition](nil, nil); err == nil {
 		t.Error("a nil state was accepted")
 	}
+}
+
+// --- Regression coverage for the findings of the first review pass. ---
+
+// TestCapturedEntryPointWorksOnAPlanBuiltWithNew proves the captured tick path is
+// not a trap for a caller that reached the plan through New.
+func TestCapturedEntryPointWorksOnAPlanBuiltWithNew(t *testing.T) {
+	cond := &sealedCondition{key: "x", expected: "done"}
+	variables := map[string]any{"x": "done"}
+	state := &sealedState{variables: variables}
+	plan, err := New(state, []Conditions[*sealedCondition]{{cond}})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	result := plan.TickCaptured(TickEnvironment{})
+	if result.CaptureError != nil {
+		t.Fatalf("TickCaptured on a New-built plan: %v", result.CaptureError)
+	}
+	if result.Snapshot.Coherence != CoherenceLive {
+		t.Errorf("coherence = %q, want %q", result.Snapshot.Coherence, CoherenceLive)
+	}
+	if len(result.Snapshot.Conditions) != 1 {
+		t.Errorf("conditions = %d, want 1", len(result.Snapshot.Conditions))
+	}
+}
+
+// TestEveryApplicationCallIsRecorded proves the recorded evidence covers the
+// calls an audit would ask about, including the ones that return a value the
+// planner then caches.
+func TestEveryApplicationCallIsRecorded(t *testing.T) {
+	plan, _, _ := newSealedFixture(t, CoherenceSnapshot)
+	// Expansion records the action's own calls, which happen on the first tick.
+	first := plan.TickCaptured(TickEnvironment{})
+	tickUntilSettled(t, plan)
+	all := append([]CallbackEvidence{}, plan.construction...)
+	all = append(all, first.Snapshot.Callbacks...)
+
+	seen := map[CallbackKind]int{}
+	for _, cb := range all {
+		seen[cb.Kind]++
+	}
+	for _, want := range []CallbackKind{
+		CallbackKey, CallbackExpected, CallbackStateActions,
+		CallbackActionEffects, CallbackActionNode, CallbackActionConditions,
+		CallbackEffectValue, CallbackVariableRead, CallbackMatch,
+	} {
+		if seen[want] == 0 {
+			t.Errorf("no %v callback was recorded, so the audit of application calls has a hole", want)
+		}
+	}
+	// An expectation the application does not declare is still a call, and must
+	// be visible as such rather than absent.
+	bare := &bareState{variables: map[string]any{"x": "done"}}
+	barePlan, err := NewCaptured(
+		bare, []Conditions[*undeclaredCondition]{{&undeclaredCondition{key: "x", expected: "done"}}},
+		WithStateViews[*undeclaredCondition](&bareProvider{state: bare}),
+	)
+	if err != nil {
+		t.Fatalf("NewCaptured: %v", err)
+	}
+	var asked int
+	for _, cb := range barePlan.construction {
+		if cb.Kind == CallbackExpected {
+			asked++
+			if cb.Known {
+				t.Error("a condition that declares nothing was recorded as declaring one")
+			}
+		}
+	}
+	if asked == 0 {
+		t.Error("an undeclared expectation produced no recorded call")
+	}
+}
+
+// TestRootStatusIsPublishedInOneStep applies the same tear oracle the status
+// snapshot guarantees to the plan root, which the tick wrapper publishes.
+func TestRootStatusIsPublishedInOneStep(t *testing.T) {
+	var (
+		cond   = &sealedCondition{key: "x", expected: "done"}
+		vars   = map[string]any{"x": "start"}
+		state  *sealedState
+		plan   *Plan[*sealedCondition]
+		torn   atomic.Int64
+		reads  atomic.Int64
+		stop   = make(chan struct{})
+		guard  sync.WaitGroup
+		status *NodeStatus
+	)
+	state = &sealedState{variables: vars}
+	state.apply = func() { vars["x"] = "done" }
+	var err error
+	plan, err = NewCaptured(state, []Conditions[*sealedCondition]{{cond}},
+		WithStateViews[*sealedCondition](&sealedProvider{
+			coherence: CoherenceSnapshot, variable: state.Variable, actions: state.Actions,
+		}))
+	if err != nil {
+		t.Fatalf("NewCaptured: %v", err)
+	}
+	for range 6 {
+		plan.TickCaptured(TickEnvironment{})
+	}
+	status = plan.root.status
+	for range 4 {
+		guard.Add(1)
+		go func() {
+			defer guard.Done()
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+				}
+				got := status.Snapshot()
+				reads.Add(1)
+				if got.Version != uint64(got.TickCount) {
+					torn.Add(1)
+				}
+			}
+		}()
+	}
+	for range 3000 {
+		plan.TickCaptured(TickEnvironment{})
+	}
+	close(stop)
+	guard.Wait()
+	if reads.Load() == 0 {
+		t.Fatal("no reads happened")
+	}
+	if n := torn.Load(); n != 0 {
+		t.Errorf("observed %d torn root status reads", n)
+	}
+	final := status.Snapshot()
+	if final.Version != uint64(final.TickCount) {
+		t.Errorf("root status = %+v, want version equal to tick count", final)
+	}
+}
+
+// TestSecondActionInATickIsNotAuthoritative proves a verdict is refused when the
+// window also contains another action's effects.
+func TestSecondActionInATickIsNotAuthoritative(t *testing.T) {
+	state := &pairState{variables: map[string]any{"x": "start"}}
+	cond := &sealedCondition{key: "x", expected: "done"}
+	plan, err := NewCaptured(
+		state, []Conditions[*sealedCondition]{{cond}},
+		WithStateViews[*sealedCondition](&sealedProvider{
+			coherence: CoherenceSnapshot, variable: state.Variable, actions: state.Actions,
+		}),
+		WithExecutionObserver[*sealedCondition](&sealedObserver{}),
+		WithTransitionVerifier[*sealedCondition](sealedVerifier{}),
+	)
+	if err != nil {
+		t.Fatalf("NewCaptured: %v", err)
+	}
+	var found bool
+	for range 4 {
+		result := plan.TickCaptured(TickEnvironment{})
+		if len(result.Snapshot.Executions) < 2 {
+			continue
+		}
+		found = true
+		for i, exec := range result.Snapshot.Executions {
+			verdicts := 0
+			for _, rel := range exec.Relations {
+				verdicts++
+				want := i == 0
+				if rel.Authoritative != want {
+					t.Errorf("execution %d verdict authoritative = %v, want %v", i, rel.Authoritative, want)
+				}
+			}
+			if verdicts == 0 {
+				t.Errorf("execution %d has no verdict", i)
+			}
+			if exec.Isolated != (i == 0) {
+				t.Errorf("execution %d isolated = %v, want %v", i, exec.Isolated, i == 0)
+			}
+		}
+		break
+	}
+	if !found {
+		t.Fatal("no tick ran two actions, so the isolation rule was not exercised")
+	}
+}
+
+type pairState struct{ variables map[string]any }
+
+func (s *pairState) Variable(key any) (any, error) {
+	if v, ok := s.variables[fmt.Sprint(key)]; ok {
+		return v, nil
+	}
+	return nil, fmt.Errorf(`pabt test: no variable %v`, key)
+}
+
+// Actions returns two candidates that both support the failed condition and both
+// report failure, so the action selector visits both of them within one tick.
+//
+// A selector returns on the first Running or Success child, so two running
+// actions would execute one per tick and the case under test would never arise.
+// An action that did not support the condition would be discarded before it
+// ever reached the tree.
+func (s *pairState) Actions(failed *sealedCondition) ([]Action[*sealedCondition], error) {
+	keepRunning := bt.New(func([]bt.Node) (bt.Status, error) { return bt.Failure, nil })
+	return []Action[*sealedCondition]{
+		&sealedAction{effects: Effects{
+			&sealedEffect{key: failed.key, value: failed.expected},
+			&sealedEffect{key: "left", value: "a"},
+		}, node: keepRunning},
+		&sealedAction{effects: Effects{
+			&sealedEffect{key: failed.key, value: failed.expected},
+			&sealedEffect{key: "right", value: "b"},
+		}, node: keepRunning},
+	}, nil
+}
+
+func TestUnmarshalKeepsAPresentStatusFromTheOlderFormat(t *testing.T) {
+	var s NodeStatus
+	// The older format had no StatusPresent field, so its absence must be derived
+	// rather than decoded as "no status", which would silently lose the record.
+	if err := s.UnmarshalJSON([]byte(`{"TickCount":5,"LastStatus":2}`)); err != nil {
+		t.Fatalf("UnmarshalJSON: %v", err)
+	}
+	got := s.Snapshot()
+	if !got.StatusPresent {
+		t.Error("a recorded status decoded as an absence")
+	}
+	if got.LastStatus != bt.Success || got.TickCount != 5 {
+		t.Errorf("snapshot = %+v, want the recorded pair", got)
+	}
+	// An explicit false is still honoured.
+	if err := s.UnmarshalJSON([]byte(
+		`{"TickCount":5,"LastStatus":2,"StatusPresent":false}`)); err != nil {
+		t.Fatalf("UnmarshalJSON: %v", err)
+	}
+	if s.Snapshot().StatusPresent {
+		t.Error("an explicit absent status was read as present")
+	}
+	// A status the dependency does not define derives to absent.
+	if err := s.UnmarshalJSON([]byte(`{"TickCount":1,"LastStatus":7}`)); err != nil {
+		t.Fatalf("UnmarshalJSON: %v", err)
+	}
+	if s.Snapshot().StatusPresent {
+		t.Error("an undefined status was read as present")
+	}
+}
+
+func TestMergeErrorKeepsBothTypes(t *testing.T) {
+	got := mergeError(
+		&RecordedError{Type: "pabt.ErrOne", Message: "one"},
+		&RecordedError{Type: "pabt.ErrTwo", Message: "two"},
+	)
+	if got == nil {
+		t.Fatal("mergeError(nil, nil) is not nil")
+	}
+	if got.Type != "pabt.ErrOne|pabt.ErrTwo" {
+		t.Errorf("merged type = %q, want both types", got.Type)
+	}
+	if mergeError(nil, nil) != nil {
+		t.Error("merging two nil errors produced an error")
+	}
+}
+
+func TestPostExpansionNodesReportTheConditionTicks(t *testing.T) {
+	plan, _, _ := newSealedFixture(t, CoherenceSnapshot)
+	for range 3 {
+		plan.TickCaptured(TickEnvironment{})
+	}
+	snap := plan.snapshot(&tickCapture[*sealedCondition]{})
+	var post, postCondition bool
+	for _, n := range snap.Nodes {
+		switch n.Type {
+		case NodeTypePPAPost:
+			post = true
+			if n.Status.TickCount == 0 {
+				t.Error("the post-condition node reports no ticks, but it is the node that evaluates the condition")
+			}
+			if !n.Status.StatusPresent {
+				t.Error("the post-condition node reports no status after evaluating its condition")
+			}
+		case NodeTypePPARoot:
+			postCondition = true
+		}
+	}
+	if !post {
+		t.Skip("the plan was not expanded, so there is no post-condition node")
+	}
+	_ = postCondition
+}
+
+func TestCapturedEvidenceIsStableForCollidingKeyRendering(t *testing.T) {
+	// Two distinct keys render identically under %v. The order of recorded
+	// effects must still be the same on every run, or two identical runs would
+	// produce different evidence.
+	var names []string
+	for range 40 {
+		state := &collidingState{variables: map[string]any{"k": "start"}}
+		plan, err := NewCaptured(
+			state, []Conditions[*collidingCondition]{{&collidingCondition{key: "k", expected: "done"}}},
+			WithStateViews[*collidingCondition](&collidingProvider{state: state}),
+		)
+		if err != nil {
+			t.Fatalf("NewCaptured: %v", err)
+		}
+		plan.TickCaptured(TickEnvironment{})
+		snap := plan.snapshot(&tickCapture[*collidingCondition]{})
+		for _, a := range snap.Actions {
+			names = append(names, a.Name)
+		}
+	}
+	if len(names) == 0 {
+		t.Fatal("no action was generated, so there was no name to compare")
+	}
+	for _, n := range names {
+		if n != names[0] {
+			t.Fatalf("action name is not stable across runs: %q then %q", names[0], n)
+		}
+	}
+}
+
+type (
+	collidingCondition struct {
+		key      string
+		expected any
+	}
+	collidingEffect struct {
+		key   any
+		value any
+	}
+	collidingAction struct {
+		cond  *collidingCondition
+		value any
+	}
+
+	collidingState    struct{ variables map[string]any }
+	collidingView     struct{ state *collidingState }
+	collidingProvider struct{ state *collidingState }
+)
+
+func (c *collidingCondition) Key() any         { return c.key }
+func (c *collidingCondition) Match(v any) bool { return v == c.expected }
+
+func (e *collidingEffect) Key() any   { return e.key }
+func (e *collidingEffect) Value() any { return e.value }
+
+func (a *collidingAction) Conditions() []Conditions[*collidingCondition] { return nil }
+
+func (a *collidingAction) Effects() Effects {
+	// The int 1 and the string "1" are distinct keys that render identically, so
+	// ordering on the rendering alone would leave the order to map iteration.
+	return Effects{
+		&collidingEffect{key: 1, value: a.value},
+		&collidingEffect{key: "1", value: "other"},
+		&collidingEffect{key: a.cond.key, value: a.cond.expected},
+	}
+}
+
+func (a *collidingAction) Node() bt.Node {
+	return bt.New(func([]bt.Node) (bt.Status, error) { return bt.Success, nil })
+}
+
+func (s *collidingState) Variable(key any) (any, error) { return s.variables[fmt.Sprint(key)], nil }
+
+func (s *collidingState) Actions(failed *collidingCondition) ([]Action[*collidingCondition], error) {
+	return []Action[*collidingCondition]{&collidingAction{cond: failed, value: "a"}}, nil
+}
+
+func (v *collidingView) Variable(key any) (any, error) { return v.state.Variable(key) }
+
+func (v *collidingView) Actions(failed *collidingCondition) ([]Action[*collidingCondition], error) {
+	return v.state.Actions(failed)
+}
+
+func (v *collidingView) Revision() StateRevision   { return StateRevision{WorldRevision: "w1"} }
+func (v *collidingView) Coherence() StateCoherence { return CoherenceSnapshot }
+func (v *collidingView) Close() error              { return nil }
+
+func (p *collidingProvider) OpenStateView(StateViewRequest) (TypedStateView[*collidingCondition], error) {
+	return &collidingView{state: p.state}, nil
 }

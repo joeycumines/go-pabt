@@ -143,9 +143,19 @@ type TransitionVerifier interface {
 
 // ActionEvidence bundles one action's execution with what was observed about it
 // and what was concluded from it.
+//
+// Isolated reports whether the revisions bracketing this action bound only this
+// action. The before-revision is read from the one pre-tick view, so for any
+// action after the first in a tick the window also contains the earlier
+// actions' effects. The planner refuses an authoritative verdict in that case
+// rather than attributing a shared effect to the wrong action, and Isolated
+// records why.
 type ActionEvidence struct {
 	Execution   ActionExecution
 	Observation ActionObservation
 	Relations   []RelationVerdict
+	Before      StateRevision
+	After       StateRevision
+	Isolated    bool
 	Err         *RecordedError
 }
