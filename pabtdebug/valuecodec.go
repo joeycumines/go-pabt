@@ -600,6 +600,13 @@ func projectRedacted(limits ValueLimits, v reflect.Value, depth, nodes uint32) (
 	if !v.IsValid() {
 		return nil, nil
 	}
+	// A value that declares itself a secret is replaced here exactly as the walk
+	// decided it would be. Asking only at field and map positions would let a
+	// declared value reach the record in the clear while the record claimed the
+	// application had declared it.
+	if declaredSensitive(v) {
+		return RedactedMarker, nil
+	}
 	switch v.Kind() {
 	case reflect.Pointer, reflect.Interface:
 		if v.IsNil() {
@@ -647,6 +654,14 @@ func projectRedacted(limits ValueLimits, v reflect.Value, depth, nodes uint32) (
 		out := make(map[string]any, v.Len())
 		iter := v.MapRange()
 		for iter.Next() {
+			// A declared key takes its whole entry with it, honoured before the key
+			// has to be renderable as text.
+			if declaredSensitive(iter.Key()) {
+				if err := putProjected(out, RedactedMarker, RedactedMarker); err != nil {
+					return nil, err
+				}
+				continue
+			}
 			segment := iter.Key().String()
 			if IsSensitiveSegment(segment) || declaredSensitive(iter.Value()) {
 				if err := putProjected(out, segment, RedactedMarker); err != nil {

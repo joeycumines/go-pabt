@@ -22,6 +22,7 @@ import (
 	"reflect"
 	"sort"
 	"strings"
+	"sync"
 	"unicode/utf8"
 )
 
@@ -39,9 +40,49 @@ import (
 // secret from a merely suspicious name.
 type Sensitive interface {
 	// PabtSensitive reports whether this value is a secret. It runs before any codec
-	// and before any digest, so it must be cheap, must not have side effects, and
-	// must not reveal the value it is protecting.
+	// and before any digest, and it is called more than once per value, so it must
+	// be pure: the same value must give the same answer every time. It must not have
+	// side effects and must not reveal the value it is protecting.
+	//
+	// A value receiver and a pointer receiver are both honoured, including for a
+	// field whose value is not addressable.
+	//
+	// A panic is treated as a declaration, not as a failure. The method is
+	// application code whose panic text can carry the very value it is protecting,
+	// so assuming "not a secret" on a panic is the one answer that can leak.
 	PabtSensitive() bool
+}
+
+// sensitivePointerTypes caches, per concrete type, whether its pointer implements
+// [Sensitive]. A value receiver is found by the interface assertion itself; a
+// pointer receiver on a value that reflect cannot address is found by taking an
+// addressable copy, and the answer depends only on the type, so it is cached.
+var sensitivePointerTypes sync.Map
+
+func pointerToIsSensitive(t reflect.Type) bool {
+	if cached, ok := sensitivePointerTypes.Load(t); ok {
+		return cached.(bool)
+	}
+	ok := reflect.PointerTo(t).Implements(sensitiveType)
+	sensitivePointerTypes.Store(t, ok)
+	return ok
+}
+
+var sensitiveType = reflect.TypeOf((*Sensitive)(nil)).Elem()
+
+// declared reports whether a value declares itself a secret, containing a panic
+// as a declaration.
+func declared(v any) (sensitive bool) {
+	d, ok := v.(Sensitive)
+	if !ok {
+		return false
+	}
+	defer func() {
+		if recover() != nil {
+			sensitive = true
+		}
+	}()
+	return d.PabtSensitive()
 }
 
 // Redaction mechanisms, recorded on a redacted value so a consumer can tell an
@@ -69,20 +110,24 @@ func declaredSensitive(v reflect.Value) bool {
 		if v.IsNil() {
 			return false
 		}
-		if declared, ok := v.Interface().(Sensitive); ok {
-			return declared.PabtSensitive()
+		if v.CanInterface() && declared(v.Interface()) {
+			return true
 		}
 		return declaredSensitive(v.Elem())
 	default:
-		if v.CanInterface() {
-			if declared, ok := v.Interface().(Sensitive); ok {
-				return declared.PabtSensitive()
-			}
+		if v.CanInterface() && declared(v.Interface()) {
+			return true
 		}
-		if v.CanAddr() {
-			if declared, ok := v.Addr().Interface().(Sensitive); ok {
-				return declared.PabtSensitive()
-			}
+		if v.CanAddr() && v.Addr().CanInterface() && declared(v.Addr().Interface()) {
+			return true
+		}
+		// A value reflect cannot address, such as one held in an interface or taken
+		// out of a map, still gets its pointer receiver consulted, because whether
+		// the pointer type implements the interface depends only on the type.
+		if pointerToIsSensitive(v.Type()) {
+			addressable := reflect.New(v.Type())
+			addressable.Elem().Set(v)
+			return declared(addressable.Interface())
 		}
 		return false
 	}
@@ -559,6 +604,14 @@ func (c *redactionContext) walk(path string, v reflect.Value, depth, nodes uint3
 		iter := v.MapRange()
 		for iter.Next() {
 			key := iter.Key()
+			// A key that declares itself sensitive takes its whole entry with it, and
+			// is honoured before the key-kind rule below, because a declaration is the
+			// application answering directly and a non-string key is merely a shape
+			// this recorder cannot render.
+			if declaredSensitive(key) {
+				found = append(found, redaction{Value: iter.Value(), Reason: RedactionDeclared})
+				continue
+			}
 			// A non-string key is refused rather than rendered: the int 1 and the
 			// string "1" render identically, so projecting them would silently drop
 			// one of the entries.

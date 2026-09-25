@@ -1584,3 +1584,128 @@ func TestAnUnredactedValueCarriesNoMechanism(t *testing.T) {
 		t.Errorf("an unredacted value reports a mechanism: %q", got.Redaction)
 	}
 }
+
+// ptrDeclaredSecret declares itself through a pointer receiver, which is the
+// spelling an application reaches for when the type also has other methods on the
+// pointer. A value field it cannot address must still be honoured.
+type ptrDeclaredSecret struct {
+	Value string
+}
+
+func (*ptrDeclaredSecret) PabtSensitive() bool { return true }
+
+// panickingSecret panics from its declaration. The panic text is the value it is
+// protecting, so the answer must be treated as a declaration rather than a
+// failure.
+type panickingSecret struct {
+	Value string
+}
+
+func (panickingSecret) PabtSensitive() bool {
+	panic("PabtSensitive panicked with token=" + declaredPanicLiteral)
+}
+
+const declaredPanicLiteral = "panicking-declared-literal-value"
+
+// secretKey is a map key that declares itself sensitive, which takes its whole
+// entry with it.
+type secretKey struct{ Name string }
+
+func (secretKey) PabtSensitive() bool { return true }
+
+func TestADeclarationIsHonouredWhereverAValueAppears(t *testing.T) {
+	// Every shape the walk consults must be mirrored by the projection. A shape the
+	// walk treats as declared but the projection writes out is a record that claims
+	// the application declared a secret and then carries it in the clear, signed by
+	// its own digest.
+	reg := NewCodecRegistry(DefaultValueLimits())
+	const literal = "declared-secret-literal-value"
+
+	check := func(name string, value any) {
+		t.Helper()
+		got := mustEncode(t, reg, value)
+		if got.Visibility != ValueRedacted {
+			t.Errorf("%s: visibility = %q, want %q", name, got.Visibility, ValueRedacted)
+			return
+		}
+		if got.Redaction != RedactionDeclared {
+			t.Errorf("%s: mechanism = %q, want %q", name, got.Redaction, RedactionDeclared)
+		}
+		encoded, err := CanonicalEncode(got)
+		if err != nil {
+			t.Fatalf("%s: CanonicalEncode: %v", name, err)
+		}
+		if strings.Contains(string(encoded), literal) || strings.Contains(string(got.Data), literal) {
+			t.Errorf("%s: the declared secret is in the record: %s", name, got.Data)
+		}
+		if strings.Contains(got.Display, literal) {
+			t.Errorf("%s: the declared secret is in the display: %q", name, got.Display)
+		}
+		digest, err := HashValue(got)
+		if err != nil {
+			t.Fatalf("%s: HashValue: %v", name, err)
+		}
+		if strings.Contains(digest, literal) {
+			t.Errorf("%s: the declared secret is in the digest", name)
+		}
+	}
+
+	check("top level struct", declaredSecret{Value: literal})
+	check("pointer element", []*declaredSecret{{Value: literal}})
+	check("slice of declared", []declaredSecret{{Value: literal}})
+	check("array of declared", [1]declaredSecret{{Value: literal}})
+	check("any element", []any{declaredSecret{Value: literal}})
+	check("map value", map[string]declaredSecret{"k": {Value: literal}})
+	check("map of any", map[string]any{"k": declaredSecret{Value: literal}})
+	check("nested in a slice of maps", []map[string]any{{"k": declaredSecret{Value: literal}}})
+	check("pointer receiver on a value field", struct {
+		Handle ptrDeclaredSecret
+	}{ptrDeclaredSecret{Value: literal}})
+	check("pointer receiver at top level", ptrDeclaredSecret{Value: literal})
+	check("pointer receiver in a slice", []*ptrDeclaredSecret{{Value: literal}})
+	check("declared key", map[secretKey]string{{Name: "k"}: literal})
+	check("three levels down", map[string]any{"a": []any{map[string]any{
+		"b": declaredSecret{Value: literal},
+	}}})
+
+	// A panicking declaration is a declaration, because the panic text is the value
+	// it is protecting and assuming "not a secret" is the one answer that leaks.
+	got := mustEncode(t, reg, panickingSecret{Value: "kept"})
+	if got.Visibility != ValueRedacted {
+		t.Errorf("a panicking declaration: visibility = %q, want %q", got.Visibility, ValueRedacted)
+	}
+	if strings.Contains(got.Display, declaredPanicLiteral) {
+		t.Errorf("a panicking declaration leaked its own text: %q", got.Display)
+	}
+	encoded, err := CanonicalEncode(got)
+	if err != nil {
+		t.Fatalf("CanonicalEncode: %v", err)
+	}
+	if strings.Contains(string(encoded), declaredPanicLiteral) {
+		t.Error("a panicking declaration reached the record")
+	}
+}
+
+func TestANameOutrankingADeclarationStillRedacts(t *testing.T) {
+	// A field whose name is sensitive is redacted by the fallback even when its
+	// value declines to declare itself, because the fallback is what keeps an
+	// undeclared Password safe.
+	reg := NewCodecRegistry(DefaultValueLimits())
+	got := mustEncode(t, reg, struct {
+		Password notASecret
+	}{notASecret{Value: "keep-me-not-a-secret"}})
+	if got.Visibility != ValueRedacted {
+		t.Fatalf("visibility = %q, want %q", got.Visibility, ValueRedacted)
+	}
+	if got.Redaction != RedactionInferred {
+		t.Errorf("mechanism = %q, want %q", got.Redaction, RedactionInferred)
+	}
+	// The fallback replaced the value under the sensitive name, which is the whole
+	// point of keeping it: an undeclared Password is still safe.
+	if strings.Contains(string(got.Data), "keep-me-not-a-secret") {
+		t.Errorf("a value under a sensitive name was recorded: %s", got.Data)
+	}
+	if !strings.Contains(string(got.Data), RedactedMarker) {
+		t.Errorf("no marker was left: %s", got.Data)
+	}
+}
