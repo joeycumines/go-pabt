@@ -48,7 +48,18 @@ var sensitiveNames = map[string]struct{}{
 	"authorization": {}, "authorisation": {},
 	"cookie": {}, "cookies": {},
 	"token": {}, "tokens": {},
-	"pepper": {}, "pass": {},
+	"pass": {},
+	// Credential classes with no separable purpose and holder. A data source name
+	// carries a database password, a session id is a bearer credential when it is
+	// not an id, and a PKCE verifier is live until it is exchanged.
+	"dsn": {}, "jwt": {}, "totp": {},
+	"setcookie": {}, "proxyauthorization": {}, "proxyauthorizationheader": {},
+	"codeverifier": {}, "codechallenge": {},
+	"authheader": {}, "basicauth": {},
+	"sessionid": {}, "connectionstring": {},
+	"keymaterial": {}, "keybytes": {},
+	"mnemonicbackup": {}, "seedbackup": {},
+	"serviceaccountkey": {},
 }
 
 // sensitiveExact are words that are a credential only as the whole name, because
@@ -57,7 +68,7 @@ var sensitiveNames = map[string]struct{}{
 var sensitiveExact = map[string]struct{}{
 	"salt": {}, "seed": {}, "seeds": {}, "mnemonic": {}, "mnemonics": {},
 	"signature": {}, "signatures": {},
-	"code": {}, "codes": {}, "pin": {}, "pins": {}, "otp": {},
+	"pin": {}, "pins": {}, "otp": {},
 	"answer": {}, "answers": {}, "hint": {}, "hints": {},
 }
 
@@ -72,11 +83,14 @@ var secrecyQualifiers = map[string]struct{}{
 	"pepper": {}, "aws": {}, "azure": {}, "gcp": {},
 	"session": {}, "service": {}, "system": {}, "app": {}, "application": {},
 	"ssh": {}, "gpg": {}, "kms": {}, "pgp": {}, "deploy": {}, "deployment": {},
-	"license": {}, "client": {}, "user": {}, "backup": {}, "wrapped": {},
+	"license": {}, "client": {}, "backup": {}, "wrapped": {},
 	"aes": {}, "rsa": {}, "ecdsa": {}, "ed25519": {}, "x25519": {},
 	"id": {}, "pass": {}, "seed": {}, "mnemonic": {}, "vault": {}, "keystore": {},
 	"csrf": {}, "xsrf": {}, "mfa": {}, "recovery": {}, "magic": {},
 	"db": {}, "salt": {}, "root": {}, "admin": {}, "ops": {}, "ci": {}, "env": {},
+	"pin": {}, "otp": {},
+	// "dsn" and "connection" carry a database password inside a URI.
+	"dsn": {}, "connection": {},
 }
 
 // credentialNouns are the things a secret is held in.
@@ -96,7 +110,9 @@ var credentialNouns = map[string]struct{}{
 	"authorization": {}, "authorisation": {},
 	"word": {}, "words": {},
 	"answer": {}, "answers": {}, "hint": {}, "hints": {},
-	"nonce": {}, "material": {}, "value": {},
+	"nonce": {}, "material": {}, "string": {}, "bytes": {}, "data": {},
+	// N3: a BIP39 backup phrase is the highest-value secret in a crypto system.
+	"backup": {}, "list": {}, "copy": {},
 }
 
 // ordinaryKeyQualifiers are purposes that end in "key" without being private. A
@@ -108,6 +124,7 @@ var ordinaryKeyQualifiers = map[string]struct{}{
 	"index": {}, "group": {}, "public": {}, "answer": {}, "field": {},
 	"column": {}, "config": {}, "setting": {}, "map": {}, "registry": {},
 	"alternate": {}, "surrogate": {}, "composite": {}, "cluster": {},
+	"hash": {}, "digest": {}, "checksum": {}, "value": {},
 }
 
 // IsSensitiveSegment reports whether a path segment marks a secret, whatever
@@ -139,6 +156,9 @@ func IsSensitiveSegment(segment string) bool {
 		if _, ordinary := ordinaryKeyQualifiers[lastSegment(head)]; !ordinary {
 			return true
 		}
+	}
+	if _, ok := sensitiveNames[strings.ReplaceAll(name, "_", "")]; ok {
+		return true
 	}
 	words := segmentWords(name)
 	for _, w := range words {
@@ -201,6 +221,11 @@ func segmentWords(name string) []string {
 	return out
 }
 
+// maxSplittableWord is the longest word the glued split will consider. The
+// longest purpose in the table is "authorization" and the longest holder is
+// "mnemonics", so nothing longer can be a purpose/holder pair.
+const maxSplittableWord = 24
+
 // splitQualifierFromNoun separates a glued pair such as "apikey" into its two
 // words, so a name written without any separator is still recognised.
 //
@@ -208,6 +233,13 @@ func segmentWords(name string) []string {
 // read: the split is taken where the remainder is a credential noun, and the
 // purpose is whatever the head ends with.
 func splitQualifierFromNoun(word string) []string {
+	// A word long enough to be application data rather than a name is not split.
+	// Every purpose and holder in the tables above is short, so a word beyond this
+	// cannot be one of them, and trying every position of an unbounded word is
+	// quadratic on a path that takes application-controlled text.
+	if len(word) > maxSplittableWord {
+		return nil
+	}
 	for i := 1; i < len(word); i++ {
 		head, tail := word[:i], word[i:]
 		if !isCredentialNoun(tail) {
@@ -219,6 +251,15 @@ func splitQualifierFromNoun(word string) []string {
 		for qualifier := range secrecyQualifiers {
 			if strings.HasSuffix(head, qualifier) {
 				return []string{qualifier, tail}
+			}
+		}
+		// The purpose may itself be two words written together, as in
+		// serviceaccountkey and proxyauthorization. Each purpose of at least two
+		// characters is tried against the head, which keeps this bounded by the
+		// cap above rather than by the length of the word.
+		for j := 2; j < len(head); j++ {
+			if _, ok := secrecyQualifiers[head[j:]]; ok {
+				return []string{head[j:], tail}
 			}
 		}
 	}
@@ -320,10 +361,13 @@ func WithRedaction(ctx context.Context, limits ValueLimits, fn func(context.Cont
 type redactionKey struct{}
 
 // maxLeafSearchDepth bounds how deep into a redacted value the search for
-// candidate literals goes. It matches the default the pre-codec walk enforces, so
-// a value the walk accepted is one the leaf search reaches in full; a caller that
-// raises the walk's limit above this accepts a value whose deepest leaves are not
-// registered, which is stated rather than hidden.
+// candidate literals goes.
+//
+// It is deliberately half the walk's default limit of 64, because the search
+// visits every leaf of a value rather than one path through it. A sensitive field
+// whose value is a container deeper than this is still fully redacted in the
+// record; only its deepest literals go unregistered, so they could survive in
+// later free text. That is the stated cost, not a claim that the record leaks.
 const maxLeafSearchDepth = 32
 
 // maxRegisteredLeafBytes is the shortest leaf worth remembering.
@@ -392,14 +436,6 @@ type walkDecision struct {
 	// which then reappeared verbatim in a later diagnostic and was signed by that
 	// record's digest. Map iteration made the survivor vary per run.
 	Redactions []reflect.Value
-}
-
-// first returns the first sensitive value, or an invalid value when there is none.
-func (d walkDecision) first() reflect.Value {
-	if len(d.Redactions) == 0 {
-		return reflect.Value{}
-	}
-	return d.Redactions[0]
 }
 
 // walk inspects a value before any codec sees it.

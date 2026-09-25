@@ -1397,7 +1397,7 @@ func TestDigitSuffixedAndGluedCredentialsAreRedacted(t *testing.T) {
 		"accesstoken", "bearertoken", "refreshtoken", "privatekey", "sessiontoken",
 		"authtoken", "secretkey", "signingkey", "encryptionkey", "masterkey",
 		"apitoken", "idtoken", "ssotoken", "hmacsecret", "xapikey", "userpassword",
-		"dbpassword", "peppervalue", "saltvalue", "sshKey", "gpgKey", "kmsKey",
+		"dbpassword", "sshKey", "gpgKey", "kmsKey",
 		"deployKey", "licenseKey", "clientKey", "backupKey", "aesKey", "ed25519PrivateKey",
 		"x25519PrivateKey", "serviceAccountKey", "csrfToken", "xsrfToken",
 		"recoveryCode", "mfaSecret", "vaultToken", "keystorePassword", "appSecret",
@@ -1408,9 +1408,10 @@ func TestDigitSuffixedAndGluedCredentialsAreRedacted(t *testing.T) {
 	}
 	// A name containing a credential word is redacted even where the compound reads
 	// as ordinary English: secretPlant, tokenRing, and seedValue are all lost, and
-	// losing them cannot leak anything. A seed value and a salt value are both
-	// worth protecting, so they go. The names below are ones where no credential
-	// word appears at all.
+	// losing them cannot leak anything. A saltValue and a pepperValue are also lost,
+	// which is the one deliberate gap: value is the least specific word in the noun
+	// table, and protecting every *Value field destroyed far more real data than it
+	// saved. The names below are ones where no credential word appears at all.
 	for _, name := range []string{
 		"sortKey", "primaryKey", "partitionKey", "cacheKey", "objectKey", "rowKey",
 		"idempotencyKey", "pubsubKey", "foreignKey", "shardingKey", "indexKey",
@@ -1422,6 +1423,71 @@ func TestDigitSuffixedAndGluedCredentialsAreRedacted(t *testing.T) {
 	} {
 		if IsSensitiveSegment(name) {
 			t.Errorf("IsSensitiveSegment(%q) = true, want false: ordinary state would be destroyed", name)
+		}
+	}
+}
+
+func TestWeakSignalsDoNotBecomeCredentials(t *testing.T) {
+	// A code, a value, a pepper, and a hash key are ordinary data. Redacting them
+	// would replace a value the debugger exists to show with the same marker used
+	// for a real secret, which is worse than the gap it hides.
+	for _, name := range []string{
+		"ErrorCode", "StatusCode", "HTTPStatusCode", "CountryCode", "CurrencyCode",
+		"PostalCode", "ProductCode", "SkuCode", "VerificationCode", "PartCode",
+		"TaxCode", "CouponCode", "InviteCode", "EmployeeCode", "JournalCode",
+		"GLCode", "DiscountCode", "UserCode", "Code", "userCode", "userName",
+		"SystemValue", "UserValue", "ClientValue", "SessionValue", "EnvValue",
+		"ApplicationValue", "TenantValue", "ServiceValue", "ValueKey",
+		"actualValue", "bellPepper", "blackPepper", "pepperMill", "PepperMill",
+		"HashKey", "hash_key", "hashKey", "digestKey", "checksumKey",
+		"ValueKey", "valueKey",
+	} {
+		if IsSensitiveSegment(name) {
+			t.Errorf("IsSensitiveSegment(%q) = true, want false: ordinary data would be destroyed", name)
+		}
+	}
+}
+
+func TestTheGluedSplitIsBounded(t *testing.T) {
+	// The split is tried at every position of a word, so an unbounded word is
+	// quadratic on a path that takes application-controlled text. A long word is
+	// data, not a name, and must be rejected without the work.
+	long := strings.Repeat("k", 200000) + "=v"
+	limits := DefaultValueLimits()
+	limits.MaxDisplayBytes = 64
+	san := &textSanitizer{limits: limits}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		got := san.Sanitize(long)
+		if len(got) > 128 {
+			t.Errorf("Sanitize returned %d bytes, want a bounded result", len(got))
+		}
+	}()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("Sanitize did not finish on a long application-supplied word")
+	}
+}
+
+func TestHighValueCredentialSpellingsAreRedacted(t *testing.T) {
+	// The names a real system uses for its most valuable secrets, including the
+	// spellings with no separator at all.
+	for _, name := range []string{
+		"mnemonicBackup", "seedBackup", "mnemonicList", "seedCopy",
+		"serviceaccountkey", "serviceAccountKey", "service_account_key",
+		"setcookie", "setCookie", "set_cookie", "proxyauthorization",
+		"proxyAuthorization", "proxy_authorization", "csrftoken", "xsrftoken",
+		"connectionString", "connection_string", "dsn", "databaseDSN",
+		"codeVerifier", "codeChallenge", "authHeader", "basicAuth", "jwt", "totp",
+		"sessionId", "keyMaterial", "keyBytes", "mnemonicPhrase", "mnemonicSeed",
+		// A private purpose in front of an ordinary holder still makes it one.
+		"accessCode", "pinCode", "otpCode", "recoveryCode", "userPassword",
+		"userKey", "userToken", "userSecret",
+	} {
+		if !IsSensitiveSegment(name) {
+			t.Errorf("IsSensitiveSegment(%q) = false, want true", name)
 		}
 	}
 }
