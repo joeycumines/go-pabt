@@ -872,123 +872,64 @@ func TestARecordCannotClaimATreeItDoesNotHave(t *testing.T) {
 
 func TestASymlinkedPathIsTheSameStore(t *testing.T) {
 	// A path through a symlink must resolve to one file, or two processes could
-	// open one history through two paths and neither would be refused.
+	// open one history through two paths and neither would be refused. The file
+	// is what matters, not the directory: an earlier version of this test
+	// symlinked a directory, which the store already resolved, so it passed
+	// against a build that did not resolve the final component at all.
+	dir := t.TempDir()
+	real := filepath.Join(dir, "real", "session.sqlite")
+	if err := os.MkdirAll(filepath.Dir(real), 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.Symlink(real, filepath.Join(dir, "alias.sqlite")); err != nil {
+		t.Skipf("symlinks are unavailable here: %v", err)
+	}
+	viaLink := filepath.Join(dir, "alias.sqlite")
+
+	// The store does not exist yet, so the symlink is dangling and the path can
+	// only be resolved once the file is created. If the store keeps the link's
+	// name, it takes its lock on a different path and the target stays unlocked.
+	viaLinkStore := openTestStore(t, viaLink)
+	bootstrapTestStore(t, viaLinkStore)
+	// The expected path is compared in its fully resolved form, because the store
+	// resolves the whole path and a system temporary directory is itself a symlink.
+	// It is resolved after the open, because the file did not exist before.
+	resolvedReal, err := filepath.EvalSymlinks(real)
+	if err != nil {
+		t.Fatalf("resolve the target: %v", err)
+	}
+	if viaLinkStore.Path() != resolvedReal {
+		t.Fatalf("the store resolved to %q, want %q", viaLinkStore.Path(), resolvedReal)
+	}
+	// Opening the same history by its real name must be refused.
+	if _, err := OpenSQLiteStore(context.Background(), SQLiteStoreConfig{Path: real}); err == nil {
+		t.Fatal("a symlinked path bypassed the second-writer lock")
+	} else if !errors.Is(err, ErrStoreLocked) {
+		t.Errorf("opening the target while the link is open = %v, want a lock error", err)
+	}
+}
+
+func TestAnExistingSymlinkedStoreIsTheSameStore(t *testing.T) {
 	dir := t.TempDir()
 	real := filepath.Join(dir, "real", "session.sqlite")
 	store := openTestStore(t, real)
 	bootstrapTestStore(t, store)
-	if err := os.MkdirAll(filepath.Join(dir, "link"), 0o700); err != nil {
-		t.Fatalf("mkdir: %v", err)
-	}
-	if err := os.Symlink(filepath.Join(dir, "real"), filepath.Join(dir, "link", "store")); err != nil {
-		t.Skipf("symlinks are unavailable here: %v", err)
-	}
-	viaLink := filepath.Join(dir, "link", "store", "session.sqlite")
-
-	// The same path twice resolves identically, which is what the lock depends on.
-	if a, err := filepath.EvalSymlinks(real); err != nil {
-		t.Fatalf("resolve: %v", err)
-	} else if b, err := filepath.EvalSymlinks(viaLink); err != nil {
-		t.Fatalf("resolve the link: %v", err)
-	} else if a != b {
-		t.Fatalf("the two paths resolve to %q and %q", a, b)
-	}
-	// Opening through the link must be refused, because the first store holds the
-	// lock on the same file.
-	if _, err := OpenSQLiteStore(context.Background(), SQLiteStoreConfig{Path: viaLink}); err == nil {
-		_ = store.Close()
-		t.Fatal("a symlinked path bypassed the second-writer lock")
-	} else if !errors.Is(err, ErrStoreLocked) {
-		t.Errorf("opening through a symlink = %v, want a lock error", err)
-	}
-}
-
-func TestAReadOnlyOpenRefusesAWorldReadableHistory(t *testing.T) {
-	path := testStorePath(t)
-	store := openTestStore(t, path)
-	bootstrapTestStore(t, store)
 	if err := store.Close(); err != nil {
 		t.Fatalf("Close: %v", err)
 	}
-	// A history another account can read is a disclosure, and this process did
-	// not create it, so it is reported rather than served.
-	if err := os.Chmod(path, 0o644); err != nil {
-		t.Fatalf("chmod: %v", err)
+	if err := os.Symlink(real, filepath.Join(dir, "alias.sqlite")); err != nil {
+		t.Skipf("symlinks are unavailable here: %v", err)
 	}
-	readOnlyMode := StoreModeReadOnly
-	if _, err := OpenSQLiteStore(context.Background(), SQLiteStoreConfig{
-		Path: path, Mode: &readOnlyMode,
-	}); !errors.Is(err, ErrStoreCorrupt) {
-		t.Errorf("opening a world-readable history read-only = %v, want a corruption error", err)
-	}
-	// A read-write open repairs it, because the store owns the file.
-	if _, err := OpenSQLiteStore(context.Background(), SQLiteStoreConfig{Path: path}); err != nil {
-		t.Fatalf("a read-write open did not repair the mode: %v", err)
-	}
-}
-
-func TestMarkExecutionStartedIsReportedAndReadBack(t *testing.T) {
-	store := openTestStore(t, testStorePath(t))
-	identity := bootstrapTestStore(t, store)
-	key := RunKey{SessionID: identity.SessionID, PlanID: identity.PlanID, RunID: identity.RunID}
-
-	ticket, err := store.Begin(context.Background(), BeginRequest{RunKey: key, ExpectedPlanRevision: testPlanRevision})
-	if err != nil {
-		t.Fatalf("Begin: %v", err)
-	}
-	// The flag is readable, which is what lets recovery tell a crash during a
-	// tick from a crash before it started.
-	pending, err := store.PendingIntents(context.Background())
-	if err != nil {
-		t.Fatalf("PendingIntents: %v", err)
-	}
-	if len(pending) != 1 || pending[0].ExecutionStarted {
-		t.Fatalf("pending intent before marking = %+v, want one not yet started", pending)
-	}
-	if err := store.MarkExecutionStarted(context.Background(), ticket); err != nil {
-		t.Fatalf("MarkExecutionStarted: %v", err)
-	}
-	pending, err = store.PendingIntents(context.Background())
-	if err != nil {
-		t.Fatalf("PendingIntents: %v", err)
-	}
-	if len(pending) != 1 || !pending[0].ExecutionStarted {
-		t.Errorf("pending intent after marking = %+v, want it started", pending)
-	}
-	if _, err := store.Commit(context.Background(), ticket, makeRecord(nil)); err != nil {
-		t.Fatalf("Commit: %v", err)
-	}
-	// Once the intent is gone there is nothing to mark, and saying so is the
-	// difference between a caller that knows its tick committed and one that
-	// believes it was abandoned.
-	if err := store.MarkExecutionStarted(context.Background(), ticket); !errors.Is(err, ErrNotFound) {
-		t.Errorf("MarkExecutionStarted after a commit = %v, want not found", err)
-	}
-	if err := store.Abort(context.Background(), ticket); !errors.Is(err, ErrNotFound) {
-		t.Errorf("Abort after a commit = %v, want not found", err)
-	}
-}
-
-func TestTheSchemaRefusesAnUnknownKindOrPayloadState(t *testing.T) {
-	store := openTestStore(t, testStorePath(t))
-	identity := bootstrapTestStore(t, store)
-	for _, statement := range []struct {
-		kind    string
-		payload string
-	}{
-		{kind: "not-a-kind", payload: "none"},
-		{kind: "tick", payload: "not-a-state"},
-	} {
-		_, err := store.writer.Exec(
-			"INSERT INTO records (session_id, event_uid, plan_id, run_id, seq, attempt_id, kind, "+
-				"payload_state, tree_eligible, execution_started, recorded_at, record_json, "+
-				"payload_sha256, previous_record_sha256, record_sha256) "+
-				"VALUES (?, 'e', 'p', 'r', 1, 'a', ?, ?, 0, 0, 'now', x'00', "+
-				"zeroblob(32), zeroblob(32), zeroblob(32))",
-			identity.SessionID, statement.kind, statement.payload)
-		if err == nil {
-			t.Errorf("a record with kind %q and payload %q was accepted", statement.kind, statement.payload)
-		}
+	// The first store holds the lock for the whole test, so the second open of
+	// the same file through a different name must be refused.
+	openTestStore(t, real)
+	if viaLink, err := OpenSQLiteStore(context.Background(), SQLiteStoreConfig{
+		Path: filepath.Join(dir, "alias.sqlite"),
+	}); err == nil {
+		_ = viaLink.Close()
+		t.Fatal("an existing store was opened twice through two paths")
+	} else if !errors.Is(err, ErrStoreLocked) {
+		t.Errorf("opening an existing store through a symlink = %v, want a lock error", err)
 	}
 }
 

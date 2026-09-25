@@ -408,6 +408,23 @@ func (s *SQLiteStore) Mode() StoreMode { return s.mode }
 // often a symlink, so refusing those would refuse ordinary use, and resolving
 // gives one canonical path that the lock, the mode, and a later export all agree
 // on.
+// resolveStorePath resolves every symlink in a store path, returning the
+// canonical file and its directory.
+//
+// A component that does not resolve yet, which is a file about to be created,
+// is left alone rather than treated as an error: the caller resolves again once
+// the file exists.
+func resolveStorePath(abs string) (resolved, dir string) {
+	dir = filepath.Dir(abs)
+	if target, err := filepath.EvalSymlinks(abs); err == nil {
+		return target, filepath.Dir(target)
+	}
+	if target, err := filepath.EvalSymlinks(dir); err == nil {
+		return filepath.Join(target, filepath.Base(abs)), target
+	}
+	return abs, dir
+}
+
 func canonicalStorePath(path string, mode StoreMode) (string, error) {
 	abs, err := filepath.Abs(path)
 	if err != nil {
@@ -422,13 +439,7 @@ func canonicalStorePath(path string, mode StoreMode) (string, error) {
 	// The final component matters as much as the directory. A symlinked file would
 	// otherwise let two processes open one history through two paths, and the
 	// second would take its own lock and never be refused.
-	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
-		abs = resolved
-		dir = filepath.Dir(resolved)
-	} else if resolved, err := filepath.EvalSymlinks(dir); err == nil {
-		dir = resolved
-		abs = filepath.Join(resolved, filepath.Base(abs))
-	}
+	abs, dir = resolveStorePath(abs)
 	if mode == StoreModeReadWrite {
 		if err := os.MkdirAll(dir, 0o700); err != nil {
 			return "", fmt.Errorf("pabtdebug: store directory: %w", err)
@@ -452,6 +463,11 @@ func canonicalStorePath(path string, mode StoreMode) (string, error) {
 		if err := os.Chmod(dir, 0o700); err != nil {
 			return "", fmt.Errorf("pabtdebug: store directory mode: %w", err)
 		}
+		// Creating the file may have made the last component resolvable, and a
+		// store opened through a dangling symlink now has a target. Resolving
+		// again is what makes such a store's path, and therefore its lock, name
+		// the same file as one opened through the target directly.
+		abs, dir = resolveStorePath(abs)
 	} else if _, err := os.Stat(abs); err != nil {
 		return "", fmt.Errorf("%w: %v", ErrNotFound, err)
 	}

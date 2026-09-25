@@ -44,7 +44,9 @@ func TestADurableHistorySurvivesAKilledProcess(t *testing.T) {
 	path := filepath.Join(dir, "history", "session.sqlite")
 
 	// The child commits two records, then takes a third sequence and dies.
-	cmd := exec.Command(os.Args[0], "-test.run=TestStoreCrashHelper", "-test.v")
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=TestStoreCrashHelper", "-test.v")
 	cmd.Env = append(os.Environ(),
 		"PABTDEBUG_CRASH_STORE="+path,
 		"PABTDEBUG_CRASH_HELPER=1",
@@ -53,17 +55,14 @@ func TestADurableHistorySurvivesAKilledProcess(t *testing.T) {
 	cmd.Stdout = &out
 	cmd.Stderr = &out
 	// The child kills itself, so a non-zero exit is expected and its message is
-	// the only report there will be. The context is what stops a child that
-	// neither died nor deadlocked from hanging the suite.
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-	runErr := cmd.Start()
-	if runErr == nil {
-		runErr = cmd.Wait()
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			_ = cmd.Process.Kill()
-			t.Fatalf("the crash helper neither died nor reported:\n%s", out.String())
-		}
+	// the only report there will be.
+	//
+	// The context is attached to the command, not merely consulted afterwards: a
+	// child that neither died nor deadlocked would otherwise hang the suite, and
+	// reading the context only after Wait returned is not a bound at all.
+	runErr := cmd.Run()
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		t.Fatalf("the crash helper neither died nor reported within the bound:\n%s", out.String())
 	}
 	if runErr == nil {
 		t.Fatal("the crash helper exited cleanly, so no process was killed")
