@@ -17,6 +17,9 @@
 package pabtdebug
 
 import (
+	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"sort"
 )
@@ -856,4 +859,181 @@ func rebuildTree(delta ExactTreeDelta, idx *nodeIndex) (StoredTree, error) {
 	}
 	tree.Digest = sealed
 	return tree, nil
+}
+
+// verifyDeltaReconstructs applies a delta to the base this store recorded and
+// requires the tree this store stored.
+//
+// That is the check that matters. The caller supplied the operations; the store
+// supplied the identity and the digest. A delta whose operations do not actually
+// produce the committed tree is refused rather than stored beside it, so a
+// representation is never a pair that disagrees with itself.
+func (s *SQLiteStore) verifyDeltaReconstructs(
+	ctx context.Context,
+	key RunKey,
+	delta ExactTreeDelta,
+	targetDigest string,
+) error {
+	baseRaw, err := s.readRepresentation(ctx, key, delta.BaseEventUID)
+	if err != nil {
+		return err
+	}
+	var base StoredTree
+	if err := CanonicalDecode(baseRaw, &base); err != nil {
+		return fmt.Errorf("%w: the delta base: %v", ErrStoreCorrupt, err)
+	}
+	rebuilt, err := ApplyExactDelta(base, delta)
+	if err != nil {
+		return err
+	}
+	if rebuilt.Digest != targetDigest {
+		return fmt.Errorf("%w: the delta reconstructs to %q, the record holds %q",
+			ErrStoreCorrupt, rebuilt.Digest, targetDigest)
+	}
+	return nil
+}
+
+// readRepresentation returns a run's stored tree bytes for one event.
+func (s *SQLiteStore) readRepresentation(ctx context.Context, key RunKey, eventUID string) ([]byte, error) {
+	var raw []byte
+	row := s.readers.QueryRowContext(ctx,
+		"SELECT tree_json FROM representations WHERE session_id = ? AND run_id = ? AND event_uid = ?",
+		key.SessionID, key.RunID, eventUID)
+	switch err := row.Scan(&raw); {
+	case errors.Is(err, sql.ErrNoRows):
+		return nil, fmt.Errorf("%w: the delta names base event %s, which is not recorded",
+			ErrHeadMismatch, eventUID)
+	case err != nil:
+		return nil, fmt.Errorf("pabtdebug: read the delta base: %w", err)
+	}
+	return raw, nil
+}
+
+// VerifyChain checks that a delta's base is genuinely recorded in the store, with
+// the tree the delta names.
+//
+// A delta stored beside a base that no longer verifies would reconstruct into
+// something the chain never committed, so the base is read and re-sealed here
+// rather than trusted because a row exists.
+func VerifyChain(ctx context.Context, readers *sql.DB, key RunKey, delta *ExactTreeDelta) error {
+	if delta == nil {
+		return nil
+	}
+	var raw []byte
+	row := readers.QueryRowContext(ctx,
+		"SELECT tree_json FROM representations WHERE session_id = ? AND run_id = ? AND event_uid = ?",
+		key.SessionID, key.RunID, delta.BaseEventUID)
+	switch err := row.Scan(&raw); {
+	case errors.Is(err, sql.ErrNoRows):
+		return fmt.Errorf("%w: the delta names base event %s, which is not recorded",
+			ErrHeadMismatch, delta.BaseEventUID)
+	case err != nil:
+		return fmt.Errorf("pabtdebug: read the delta base: %w", err)
+	}
+	var base StoredTree
+	if err := CanonicalDecode(raw, &base); err != nil {
+		return fmt.Errorf("%w: the delta base: %v", ErrStoreCorrupt, err)
+	}
+	return ValidateExactDelta(base, *delta)
+}
+
+// DeltaBase returns the representation a delta for targetSequence may be computed
+// from, or found=false when the target must be stored as a keyframe.
+//
+// A base is eligible only when it is a complete tree and no record between it
+// and the target is one a delta cannot be computed across: a failure, an
+// interruption, an abort, or a record with no tree. A delta spanning such a
+// record would claim a continuity the history does not have, so the target falls
+// back to a keyframe instead.
+func (s *SQLiteStore) DeltaBase(
+	ctx context.Context,
+	key RunKey,
+	targetSequence uint64,
+) (base StoredTree, found bool, err error) {
+	if err := s.checkUsable(false); err != nil {
+		return StoredTree{}, false, err
+	}
+	var raw []byte
+	row := s.readers.QueryRowContext(ctx,
+		`SELECT t.tree_json
+		 FROM records AS r
+		 JOIN representations AS t
+		   ON t.session_id = r.session_id AND t.event_uid = r.event_uid
+		 WHERE r.session_id = ? AND r.run_id = ? AND r.seq < ?
+		   AND r.payload_state = 'complete'
+		   AND r.tree_eligible = 1
+		   AND NOT EXISTS (
+		       SELECT 1 FROM records AS blocked
+		        WHERE blocked.session_id = r.session_id
+		          AND blocked.run_id = r.run_id
+		          AND blocked.seq > r.seq
+		          AND blocked.seq < ?
+		          AND NOT (blocked.payload_state = 'complete' AND blocked.tree_eligible = 1)
+		   )
+		 ORDER BY r.seq DESC
+		 LIMIT 1`,
+		key.SessionID, key.RunID, targetSequence, targetSequence)
+	switch err := row.Scan(&raw); {
+	case errors.Is(err, sql.ErrNoRows):
+		return StoredTree{}, false, nil
+	case err != nil:
+		return StoredTree{}, false, fmt.Errorf("pabtdebug: read a delta base: %w", err)
+	}
+	if err := CanonicalDecode(raw, &base); err != nil {
+		return StoredTree{}, false, fmt.Errorf("%w: a candidate base tree: %v", ErrStoreCorrupt, err)
+	}
+	digest, err := HashTree(base)
+	if err != nil {
+		return StoredTree{}, false, err
+	}
+	if digest != base.Digest {
+		return StoredTree{}, false, fmt.Errorf("%w: a candidate base tree digest is %q, recomputes to %q",
+			ErrStoreCorrupt, base.Digest, digest)
+	}
+	return base, true, nil
+}
+
+// Representation returns a record's stored tree and the base its delta names, so a
+// caller can reconstruct a tree from a delta and check it against the keyframe the
+// store also holds.
+func (s *SQLiteStore) Representation(
+	ctx context.Context,
+	key RunKey,
+	sequence uint64,
+) (tree StoredTree, base *string, delta *ExactTreeDelta, err error) {
+	if err := s.checkUsable(false); err != nil {
+		return StoredTree{}, nil, nil, err
+	}
+	var (
+		raw      []byte
+		baseUID  sql.NullString
+		baseSeq  sql.NullInt64
+		deltaRaw []byte
+	)
+	row := s.readers.QueryRowContext(ctx,
+		"SELECT tree_json, base_event_uid, base_seq, delta_json FROM representations "+
+			"WHERE session_id = ? AND run_id = ? AND seq = ?",
+		key.SessionID, key.RunID, sequence)
+	switch err := row.Scan(&raw, &baseUID, &baseSeq, &deltaRaw); {
+	case errors.Is(err, sql.ErrNoRows):
+		return StoredTree{}, nil, nil, fmt.Errorf("%w: no representation at sequence %d of run %s",
+			ErrNotFound, sequence, key.RunID)
+	case err != nil:
+		return StoredTree{}, nil, nil, fmt.Errorf("pabtdebug: read a representation: %w", err)
+	}
+	if err := CanonicalDecode(raw, &tree); err != nil {
+		return StoredTree{}, nil, nil, fmt.Errorf("%w: a representation tree: %v", ErrStoreCorrupt, err)
+	}
+	if baseUID.Valid {
+		uid := baseUID.String
+		base = &uid
+	}
+	if len(deltaRaw) > 0 {
+		var decoded ExactTreeDelta
+		if err := CanonicalDecode(deltaRaw, &decoded); err != nil {
+			return StoredTree{}, nil, nil, fmt.Errorf("%w: a stored delta: %v", ErrStoreCorrupt, err)
+		}
+		delta = &decoded
+	}
+	return tree, base, delta, nil
 }

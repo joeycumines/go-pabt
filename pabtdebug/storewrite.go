@@ -297,6 +297,29 @@ func (s *SQLiteStore) verifyTicket(ticket IntentTicket) error {
 // allocated by Begin, it also leaves no gap: the sequence is either committed or
 // still held by an open intent that recovery can resolve.
 func (s *SQLiteStore) Commit(ctx context.Context, ticket IntentTicket, record StoredRecord) (CommitReceipt, error) {
+	return s.commit(ctx, ticket, record, nil)
+}
+
+// CommitWithDelta commits a record together with the exact change from its base.
+//
+// A nil delta stores a keyframe, which is what a reader needs when no base is
+// eligible. A delta is stored beside the complete tree rather than instead of it,
+// so a delta is an economy in transfer and never the only copy.
+func (s *SQLiteStore) CommitWithDelta(
+	ctx context.Context,
+	ticket IntentTicket,
+	record StoredRecord,
+	delta *ExactTreeDelta,
+) (CommitReceipt, error) {
+	return s.commit(ctx, ticket, record, delta)
+}
+
+func (s *SQLiteStore) commit(
+	ctx context.Context,
+	ticket IntentTicket,
+	record StoredRecord,
+	delta *ExactTreeDelta,
+) (CommitReceipt, error) {
 	if err := s.checkUsable(true); err != nil {
 		return CommitReceipt{}, err
 	}
@@ -453,11 +476,53 @@ func (s *SQLiteStore) Commit(ctx context.Context, ticket IntentTicket, record St
 		return CommitReceipt{}, fmt.Errorf("pabtdebug: commit record: %w", err)
 	}
 	if pendingTree != nil {
+		var (
+			baseUID  any
+			baseSeq  any
+			deltaRaw any
+			deltaHex any
+			ops      = 0
+		)
+		if delta != nil {
+			// The store is the authority on what it committed, so it stamps the
+			// delta's target envelope from the ticket and the record rather than
+			// believing a caller-supplied one. The caller supplied the operations;
+			// the identity and the tree digest are this store's to fix.
+			sealed := *delta
+			sealed.RunKey = ticket.RunKey
+			sealed.TargetEventUID = ticket.EventUID
+			sealed.TargetSequence = ticket.Sequence
+			sealed.TargetPlanRevision = record.Revision.PlanRevision
+			sealed.TargetDigest = treeDigest
+			digest, err := HashDelta(sealed)
+			if err != nil {
+				return CommitReceipt{}, err
+			}
+			sealed.SHA256 = digest
+			// The strongest check available: the delta, applied to the base this store
+			// actually recorded, must produce the tree this store actually stored.
+			// Anything else means the operations do not describe the commit.
+			if err := s.verifyDeltaReconstructs(ctx, ticket.RunKey, sealed, treeDigest); err != nil {
+				return CommitReceipt{}, err
+			}
+			encoded, err := CanonicalEncode(sealed)
+			if err != nil {
+				return CommitReceipt{}, err
+			}
+			baseUID = sealed.BaseEventUID
+			baseSeq = sealed.BaseSequence
+			deltaRaw = encoded
+			deltaHex = mustHex(digest)
+			ops = len(sealed.Operations)
+		}
 		if _, err := tx.ExecContext(ctx,
 			"INSERT INTO representations (session_id, event_uid, plan_id, run_id, seq, "+
-				"target_plan_revision, tree_json, tree_sha256) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+				"base_event_uid, base_seq, target_plan_revision, tree_json, tree_sha256, "+
+				"delta_json, delta_sha256, operation_count) "+
+				"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
 			ticket.RunKey.SessionID, ticket.EventUID, ticket.RunKey.PlanID, ticket.RunKey.RunID,
-			ticket.Sequence, record.Revision.PlanRevision, pendingTree, mustHex(treeDigest),
+			ticket.Sequence, baseUID, baseSeq, record.Revision.PlanRevision, pendingTree,
+			mustHex(treeDigest), deltaRaw, deltaHex, ops,
 		); err != nil {
 			return CommitReceipt{}, fmt.Errorf("pabtdebug: commit tree: %w", err)
 		}
