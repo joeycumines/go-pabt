@@ -5,6 +5,7 @@ go 1.26.4
 require (
 	github.com/gdamore/tcell/v2 v2.1.0
 	github.com/joeycumines/go-behaviortree v1.11.0
+	modernc.org/sqlite v1.59.0
 )
 
 require (
@@ -22,5 +23,4 @@ require (
 	modernc.org/libc v1.75.7 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.12.1 // indirect
-	modernc.org/sqlite v1.59.0 // indirect
 )

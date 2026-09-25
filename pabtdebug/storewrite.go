@@ -185,7 +185,11 @@ func (s *SQLiteStore) Begin(ctx context.Context, req BeginRequest) (IntentTicket
 	if owner.Valid {
 		return IntentTicket{}, fmt.Errorf("%w: held by attempt %s", ErrAppendBusy, owner.String)
 	}
-	if head.HeadSequence != headSequenceOf(tx, req.RunKey) {
+	inTxHead, err := headSequenceInTx(ctx, tx, req.RunKey)
+	if err != nil {
+		return IntentTicket{}, fmt.Errorf("pabtdebug: begin intent: %w", err)
+	}
+	if head.HeadSequence != inTxHead {
 		return IntentTicket{}, fmt.Errorf("%w: the head moved between reads", ErrHeadMismatch)
 	}
 
@@ -231,14 +235,19 @@ func (s *SQLiteStore) Begin(ctx context.Context, req BeginRequest) (IntentTicket
 	return ticket, nil
 }
 
-// headSequenceOf reads a run's head sequence inside a transaction.
-func headSequenceOf(tx *sql.Tx, key RunKey) uint64 {
+// headSequenceInTx reads a run's head sequence inside a transaction.
+//
+// A read that fails is reported rather than treated as a zero head, because a
+// zero head would look like a match against the value just read.
+func headSequenceInTx(ctx context.Context, tx *sql.Tx, key RunKey) (uint64, error) {
 	var head uint64
-	if err := tx.QueryRow("SELECT head_seq FROM runs WHERE session_id = ? AND run_id = ?",
-		key.SessionID, key.RunID).Scan(&head); err != nil {
-		return 0
+	err := tx.QueryRowContext(ctx,
+		"SELECT head_seq FROM runs WHERE session_id = ? AND run_id = ?",
+		key.SessionID, key.RunID).Scan(&head)
+	if err != nil {
+		return 0, err
 	}
-	return head
+	return head, nil
 }
 
 // MarkExecutionStarted records that a tick began executing the application.
@@ -252,11 +261,21 @@ func (s *SQLiteStore) MarkExecutionStarted(ctx context.Context, ticket IntentTic
 	if err := s.verifyTicket(ticket); err != nil {
 		return err
 	}
-	_, err := s.writer.ExecContext(ctx,
+	result, err := s.writer.ExecContext(ctx,
 		"UPDATE intents SET execution_started = 1 WHERE session_id = ? AND event_uid = ? AND attempt_id = ?",
 		ticket.RunKey.SessionID, ticket.EventUID, ticket.AttemptID)
 	if err != nil {
 		return fmt.Errorf("pabtdebug: mark execution started: %w", err)
+	}
+	// A ticket whose intent is gone was already resolved. Saying so is the
+	// difference between a caller that knows its tick committed and one that
+	// believes it was abandoned.
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("pabtdebug: mark execution started: %w", err)
+	}
+	if affected == 0 {
+		return fmt.Errorf("%w: attempt %s has no open intent", ErrNotFound, ticket.AttemptID)
 	}
 	return nil
 }
@@ -350,6 +369,10 @@ func (s *SQLiteStore) Commit(ctx context.Context, ticket IntentTicket, record St
 	// Everything the store owns is stamped first, and the digests are taken over
 	// the record as it will be stored. Hashing before the store-owned fields are
 	// set would produce a digest over a record that is not the one being written.
+	if record.Revision.PlanRevision != ticket.ExpectedPlanRevision {
+		return CommitReceipt{}, fmt.Errorf("%w: the record is at plan revision %d, the attempt began at %d",
+			ErrHeadMismatch, record.Revision.PlanRevision, ticket.ExpectedPlanRevision)
+	}
 	record.PreviousRecordSHA256 = link
 	record.Format = FormatName
 	record.Version = FormatVersion
@@ -397,6 +420,7 @@ func (s *SQLiteStore) Commit(ctx context.Context, ticket IntentTicket, record St
 		pendingTree = treeBytes
 	}
 
+	record.TreeEligible = record.Tree != nil
 	// The record comes first: the representation below references it, and the head
 	// below is the run's own link to it. All are in one transaction, so they land
 	// together or not at all.
@@ -407,7 +431,7 @@ func (s *SQLiteStore) Commit(ctx context.Context, ticket IntentTicket, record St
 			"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
 		ticket.RunKey.SessionID, ticket.EventUID, ticket.RunKey.PlanID, ticket.RunKey.RunID,
 		ticket.Sequence, ticket.AttemptID, string(record.Kind), string(record.PayloadState),
-		boolToInt(record.TreeEligible), boolToInt(record.ExecutionStarted), stamp(now), recordBytes,
+		boolToInt(record.Tree != nil), boolToInt(record.ExecutionStarted), stamp(now), recordBytes,
 		mustHex(payloadDigest), mustHex(link), mustHex(recordDigest),
 	); err != nil {
 		return CommitReceipt{}, fmt.Errorf("pabtdebug: commit record: %w", err)
@@ -424,9 +448,10 @@ func (s *SQLiteStore) Commit(ctx context.Context, ticket IntentTicket, record St
 	}
 	if _, err := tx.ExecContext(ctx,
 		"UPDATE runs SET head_seq = ?, append_owner = NULL, append_attempt_id = NULL, "+
-			"head_record_sha256 = ?, record_sha256 = ? WHERE session_id = ? AND run_id = ?",
+			"head_record_sha256 = ?, record_sha256 = ?, head_plan_revision = ? "+
+			"WHERE session_id = ? AND run_id = ?",
 		ticket.Sequence, mustHex(recordDigest), mustHex(recordDigest),
-		ticket.RunKey.SessionID, ticket.RunKey.RunID,
+		record.Revision.PlanRevision, ticket.RunKey.SessionID, ticket.RunKey.RunID,
 	); err != nil {
 		return CommitReceipt{}, fmt.Errorf("pabtdebug: commit head: %w", err)
 	}
@@ -489,10 +514,14 @@ func (s *SQLiteStore) Abort(ctx context.Context, ticket IntentTicket) error {
 		return fmt.Errorf("pabtdebug: abort: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
-	if _, err := tx.ExecContext(ctx,
+	deleted, err := tx.ExecContext(ctx,
 		"DELETE FROM intents WHERE session_id = ? AND event_uid = ? AND attempt_id = ?",
-		ticket.RunKey.SessionID, ticket.EventUID, ticket.AttemptID); err != nil {
+		ticket.RunKey.SessionID, ticket.EventUID, ticket.AttemptID)
+	if err != nil {
 		return fmt.Errorf("pabtdebug: abort: %w", err)
+	}
+	if affected, err := deleted.RowsAffected(); err == nil && affected == 0 {
+		return fmt.Errorf("%w: attempt %s has no open intent", ErrNotFound, ticket.AttemptID)
 	}
 	if _, err := tx.ExecContext(ctx,
 		"UPDATE runs SET append_owner = NULL, append_attempt_id = NULL "+
@@ -514,7 +543,8 @@ func (s *SQLiteStore) PendingIntents(ctx context.Context) ([]IntentTicket, error
 	}
 	rows, err := s.readers.QueryContext(ctx,
 		"SELECT session_id, plan_id, run_id, seq, event_uid, attempt_id, "+
-			"expected_head_seq, expected_tree_seq, expected_plan_revision, expected_generation, started_at "+
+			"expected_head_seq, expected_tree_seq, expected_plan_revision, expected_generation, "+
+			"execution_started, started_at "+
 			"FROM intents ORDER BY session_id, run_id, seq")
 	if err != nil {
 		return nil, fmt.Errorf("pabtdebug: read intents: %w", err)
@@ -529,7 +559,7 @@ func (s *SQLiteStore) PendingIntents(ctx context.Context) ([]IntentTicket, error
 		)
 		if err := rows.Scan(&ticket.RunKey.SessionID, &ticket.RunKey.PlanID, &ticket.RunKey.RunID,
 			&seq, &ticket.EventUID, &ticket.AttemptID, &headSeq, &treeSeq, &revision, &gen,
-			&started); err != nil {
+			&ticket.ExecutionStarted, &started); err != nil {
 			return nil, fmt.Errorf("pabtdebug: read intents: %w", err)
 		}
 		ticket.Sequence = uint64(seq)

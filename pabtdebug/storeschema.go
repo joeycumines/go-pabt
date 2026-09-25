@@ -115,8 +115,11 @@ CREATE TABLE IF NOT EXISTS records (
     run_id             TEXT NOT NULL,
     seq                INTEGER NOT NULL CHECK (seq > 0),
     attempt_id         TEXT,
-    kind               TEXT NOT NULL,
-    payload_state      TEXT NOT NULL,
+    kind               TEXT NOT NULL
+        CHECK (kind IN ('tick', 'capture_failed', 'panicked', 'interrupted',
+                         'aborted', 'control', 'import')),
+    payload_state      TEXT NOT NULL
+        CHECK (payload_state IN ('complete', 'partial', 'none')),
     tree_eligible      INTEGER NOT NULL CHECK (tree_eligible IN (0, 1)),
     execution_started  INTEGER NOT NULL CHECK (execution_started IN (0, 1)),
     recorded_at        TEXT NOT NULL,

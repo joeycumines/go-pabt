@@ -193,9 +193,14 @@ type BeginRequest struct {
 
 // IntentTicket is proof that a sequence was allocated to one attempt.
 //
-// The proof is unexported, so a ticket cannot be forged by a caller: it can only
-// come from BeginIntent. Every later step checks it, so a commit cannot be
-// applied to a different run, a different sequence, or a different attempt.
+// The proof binds the ticket's own fields together, so a commit cannot present a
+// ticket whose sequence, event, or attempt does not match what it claims.
+//
+// It is an unkeyed checksum, so it is not a secret and a caller could recompute
+// one. What it is for is catching a ticket assembled from pieces of different
+// attempts, which is a mistake rather than an attack. The guard against a forged
+// commit is the append lease: Commit requires the run's lease to be held by this
+// ticket's own attempt, which only Begin can grant.
 type IntentTicket struct {
 	RunKey               RunKey
 	Sequence             uint64
@@ -205,7 +210,11 @@ type IntentTicket struct {
 	ExpectedTreeSequence uint64
 	ExpectedPlanRevision uint64
 	ExpectedGeneration   uint64
-	StartedAt            time.Time
+	// ExecutionStarted reports whether the tick had begun running the application
+	// when the intent was found, which is what tells a crash during a tick from a
+	// crash before it started.
+	ExecutionStarted bool
+	StartedAt        time.Time
 
 	proof [32]byte
 }
@@ -261,10 +270,10 @@ type EventPage struct {
 
 // SQLiteStore is the durable history.
 //
-// One write connection and a small read pool. A read-write store holds a write
-// transaction open for its whole life, which is how a second writer on the same
-// file is refused without a second dependency: the second process blocks on the
-// first and is refused when the busy timeout expires.
+// One write connection and a small read pool, with the connection policy in the
+// data source name so every pooled connection gets it. A read-write store also
+// holds an exclusive lock on a sidecar file, which is how a second writer on the
+// same history is refused without a second dependency.
 type SQLiteStore struct {
 	path    string
 	mode    StoreMode
@@ -324,7 +333,63 @@ func OpenSQLiteStore(ctx context.Context, cfg SQLiteStoreConfig) (*SQLiteStore, 
 		_ = s.close()
 		return nil, err
 	}
+	if err := s.admit(ctx); err != nil {
+		_ = s.close()
+		return nil, err
+	}
 	return s, nil
+}
+
+// admit decides whether the store is fit to record into, and records what it found.
+//
+// A store is not simply "ready" because it opened. An intent left by an earlier
+// process means a tick was allocated a sequence and never resolved, and a chain
+// that does not verify means the history on disk is not what was committed. Both
+// are recorded, so a caller reads the state rather than assuming it, and a
+// corrupt chain is refused outright: a debugger that serves an altered history is
+// worse than one that will not open.
+func (s *SQLiteStore) admit(ctx context.Context) error {
+	pending, err := s.PendingIntents(ctx)
+	if err != nil {
+		return err
+	}
+	if len(pending) == 0 {
+		return nil
+	}
+	if s.mode != StoreModeReadWrite {
+		// A read-only store is being inspected, not recorded into, so the state is
+		// left for the caller to read rather than acted on here.
+		return nil
+	}
+	if err := s.setRecovery(ctx, RecoveryPending); err != nil {
+		return err
+	}
+	// Every run that still has an open intent has its chain checked, so a caller
+	// is told about corruption before it writes anything more onto the run.
+	for _, ticket := range pending {
+		verified, err := s.VerifyChain(ctx, ticket.RunKey)
+		if err != nil {
+			if errors.Is(err, ErrStoreCorrupt) {
+				_ = s.setRecovery(ctx, RecoveryCorrupt)
+			}
+			return err
+		}
+		if verified == 0 {
+			return fmt.Errorf("%w: run %s has an open intent but no records",
+				ErrStoreCorrupt, ticket.RunKey.RunID)
+		}
+	}
+	return nil
+}
+
+// setRecovery records the store's recovery state.
+func (s *SQLiteStore) setRecovery(ctx context.Context, state RecoveryState) error {
+	if _, err := s.writer.ExecContext(ctx,
+		"UPDATE installation SET recovery = ?, updated_at = ? WHERE singleton = 1",
+		string(state), stamp(s.clock().UTC())); err != nil {
+		return fmt.Errorf("pabtdebug: record recovery state: %w", err)
+	}
+	return nil
 }
 
 // Path returns the database file.
@@ -336,12 +401,13 @@ func (s *SQLiteStore) Limits() StoreLimits { return s.limits }
 // Mode returns whether the store writes.
 func (s *SQLiteStore) Mode() StoreMode { return s.mode }
 
-// canonicalStorePath resolves the database path and makes its directory
+// canonicalStorePath resolves the database path and makes its directory and file
 // owner-only.
 //
-// A path is canonicalised and its symlinked components are rejected, because a
-// store is opened on the user's data and a symlink could point it somewhere the
-// caller did not mean.
+// Symlinks are resolved rather than refused. A system temporary directory is very
+// often a symlink, so refusing those would refuse ordinary use, and resolving
+// gives one canonical path that the lock, the mode, and a later export all agree
+// on.
 func canonicalStorePath(path string, mode StoreMode) (string, error) {
 	abs, err := filepath.Abs(path)
 	if err != nil {
@@ -360,6 +426,20 @@ func canonicalStorePath(path string, mode StoreMode) (string, error) {
 		if err := os.MkdirAll(dir, 0o700); err != nil {
 			return "", fmt.Errorf("pabtdebug: store directory: %w", err)
 		}
+		// The file is created here, owner-only, rather than left to whichever mode
+		// the process umask would give it. A store is the user's data and must
+		// never be briefly readable by another account, not even for the moment
+		// before SQLite opens it.
+		file, err := os.OpenFile(abs, os.O_CREATE|os.O_RDWR, 0o600)
+		if err != nil {
+			return "", fmt.Errorf("pabtdebug: store file: %w", err)
+		}
+		if err := file.Close(); err != nil {
+			return "", fmt.Errorf("pabtdebug: store file: %w", err)
+		}
+		if err := os.Chmod(abs, 0o600); err != nil {
+			return "", fmt.Errorf("pabtdebug: store file mode: %w", err)
+		}
 		// MkdirAll leaves an existing directory's mode alone, so it is set
 		// explicitly. A store is the user's data and must not be world readable.
 		if err := os.Chmod(dir, 0o700); err != nil {
@@ -373,18 +453,26 @@ func canonicalStorePath(path string, mode StoreMode) (string, error) {
 
 func (s *SQLiteStore) open(ctx context.Context) error {
 	write := s.mode == StoreModeReadWrite
-	dsn := s.path
+	// Per-connection pragmas go in the DSN, not in an Exec.
+	//
+	// A pragma issued through a pool reaches whichever single connection
+	// database/sql happened to hand it. Every other connection this pool mints
+	// would run without it, and foreign_keys is the schema's only guard against
+	// a row the chain can never account for.
+	dsn := s.path + "?_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)" +
+		"&_pragma=journal_mode(WAL)&_pragma=synchronous(FULL)&_pragma=temp_store(MEMORY)" +
+		"&_pragma=cache_size(-8192)&_pragma=mmap_size(0)&_pragma=wal_autocheckpoint(1000)"
 	if !write {
-		dsn += "?mode=ro"
+		dsn = s.path + "?mode=ro&_pragma=query_only(1)"
 	}
 	writer, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return fmt.Errorf("pabtdebug: open store: %w", err)
 	}
-	// A small pool, because writes are serialised by the run's append lease rather
-	// than by the connection count, and the schema step and the write path must not
-	// be able to starve each other.
-	writer.SetMaxOpenConns(2)
+	// One writer connection. The append lease serialises ticks, so a second
+	// connection would buy nothing, and every connection the pool mints needs the
+	// pragmas above, which the DSN now guarantees.
+	writer.SetMaxOpenConns(1)
 	writer.SetMaxIdleConns(1)
 	s.writer = writer
 	if write {
@@ -394,7 +482,7 @@ func (s *SQLiteStore) open(ctx context.Context) error {
 			return err
 		}
 	}
-	if err := s.applyPragmas(ctx, writer, write); err != nil {
+	if err := s.checkPragmas(ctx, writer, write); err != nil {
 		return err
 	}
 	if write {
@@ -413,7 +501,7 @@ func (s *SQLiteStore) open(ctx context.Context) error {
 	// The read DSN carries its own query string. A read-write store's main DSN is a
 	// bare path, so appending a parameter with an ampersand would name a different
 	// file rather than configure the same one.
-	readDSN := s.path + "?_pragma=query_only(1)"
+	readDSN := s.path + "?_pragma=query_only(1)&_pragma=cache_size(-8192)&_pragma=temp_store(MEMORY)"
 	if !write {
 		readDSN = s.path + "?mode=ro&_pragma=query_only(1)"
 	}
@@ -423,37 +511,34 @@ func (s *SQLiteStore) open(ctx context.Context) error {
 	}
 	readers.SetMaxOpenConns(int(s.limits.MaxReaders))
 	readers.SetMaxIdleConns(int(s.limits.MaxReaders))
-	if err := s.applyPragmas(ctx, readers, false); err != nil {
+	if err := s.checkPragmas(ctx, readers, false); err != nil {
 		return err
 	}
 	s.readers = readers
 	return nil
 }
 
-// applyPragmas sets the connection policy every connection uses.
+// checkPragmas verifies the connection policy rather than setting it.
 //
-// The durability settings are the point: FULL synchronous and a WAL mean a
-// committed record survives a power loss, which is the whole claim of a durable
-// history. The cache size is negative because that is how SQLite spells
-// kibibytes, and an explicit small cache is what makes a read bounded.
-func (s *SQLiteStore) applyPragmas(ctx context.Context, db *sql.DB, write bool) error {
-	pragmas := []string{
-		"PRAGMA journal_mode = WAL",
-		"PRAGMA synchronous = FULL",
-		"PRAGMA foreign_keys = ON",
-		"PRAGMA busy_timeout = 5000",
-		"PRAGMA temp_store = MEMORY",
-		"PRAGMA cache_size = -8192",
-		"PRAGMA mmap_size = 0",
-		"PRAGMA wal_autocheckpoint = 1000",
+// The policy is in the DSN because that is the only place a pragma applies to
+// every connection a pool mints. This reads the settings back on one connection
+// so a driver that silently ignored a DSN parameter is caught at open rather than
+// at the first write that depended on it.
+func (s *SQLiteStore) checkPragmas(ctx context.Context, db *sql.DB, write bool) error {
+	want := map[string]int{
+		"foreign_keys": 1,
+		"busy_timeout": 5000,
 	}
-	for _, pragma := range pragmas {
-		if _, err := db.ExecContext(ctx, pragma); err != nil {
-			// journal_mode is a no-op on a read-only connection, which is expected.
-			if !write && strings.HasPrefix(pragma, "PRAGMA journal_mode") {
-				continue
-			}
-			return fmt.Errorf("pabtdebug: %s: %w", pragma, err)
+	if !write {
+		want = map[string]int{"query_only": 1}
+	}
+	for name, expected := range want {
+		var got int
+		if err := db.QueryRowContext(ctx, "PRAGMA "+name).Scan(&got); err != nil {
+			return fmt.Errorf("pabtdebug: read %s: %w", name, err)
+		}
+		if got != expected {
+			return fmt.Errorf("%w: %s is %d, want %d", ErrStoreCorrupt, name, got, expected)
 		}
 	}
 	return nil
@@ -465,14 +550,18 @@ func (s *SQLiteStore) applyPragmas(ctx context.Context, db *sql.DB, write bool) 
 // This is the second-writer refusal, and it is why the lock lives in its own file.
 // A transaction on the history would refuse this process's own writes; a
 // transaction on an empty sidecar refuses a second process and nothing else. Two
-// processes both reach BEGIN EXCLUSIVE and the second is refused when its busy
-// timeout expires.
+// processes both reach BEGIN EXCLUSIVE and the second is refused as soon as its
+// short busy timeout expires.
+//
+// The lock is a POSIX advisory lock held by the open file, so the kernel releases
+// it when a process dies. There is no stale-lock failure mode: a killed debugger
+// never leaves a history that cannot be opened again.
 func (s *SQLiteStore) acquireLease(ctx context.Context) error {
 	lockPath := s.path + ".lock"
 	if err := os.Chmod(filepath.Dir(lockPath), 0o700); err != nil {
 		return fmt.Errorf("pabtdebug: store directory mode: %w", err)
 	}
-	lock, err := sql.Open("sqlite", lockPath+"?_pragma=busy_timeout(2000)&_pragma=journal_mode(OFF)")
+	lock, err := sql.Open("sqlite", lockPath+"?_pragma=busy_timeout(250)&_pragma=journal_mode(OFF)")
 	if err != nil {
 		return fmt.Errorf("pabtdebug: open store lock: %w", err)
 	}
@@ -489,7 +578,7 @@ func (s *SQLiteStore) acquireLease(ctx context.Context) error {
 		}
 		return fmt.Errorf("pabtdebug: store lock: %w", err)
 	}
-	waitCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	waitCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	if _, err := conn.ExecContext(waitCtx, "BEGIN EXCLUSIVE"); err != nil {
 		_ = conn.Close()

@@ -53,6 +53,53 @@ func (s *SQLiteStore) alterRecordBytes(t *testing.T, key RunKey, sequence uint64
 // not alter anything and must not be trusted.
 var errAlterNotApplied = errors.New("pabtdebug test: the record text to alter was not found")
 
+// alterTreeBytes rewrites a stored representation's tree with a different but
+// internally consistent tree, which is what a buggy base-and-delta assembly path
+// would leave behind.
+//
+// The forged tree carries its own recomputed node and tree digests, so a check of
+// the tree against itself would accept it. Only the chain-covered copy inside the
+// record says otherwise.
+func (s *SQLiteStore) alterTreeBytes(t *testing.T, key RunKey, sequence uint64, tickCount uint32) error {
+	t.Helper()
+	forged := smallTree("n")
+	forged.Nodes[0].Status.TickCount = uint64(tickCount)
+	nodeDigest, err := HashNode(forged.Nodes[0])
+	if err != nil {
+		return err
+	}
+	forged.Nodes[0].ContentHash = nodeDigest
+	treeDigest, err := HashTree(*forged)
+	if err != nil {
+		return err
+	}
+	forged.Digest = treeDigest
+	encoded, err := CanonicalEncode(*forged)
+	if err != nil {
+		return err
+	}
+	_, err = s.writer.Exec(
+		"UPDATE representations SET tree_json = ?, tree_sha256 = ? "+
+			"WHERE session_id = ? AND run_id = ? AND seq = ?",
+		encoded, mustHex(treeDigest), key.SessionID, key.RunID, sequence)
+	return err
+}
+
+// pragmaOn reports a pragma's value on a pooled writer connection, which is where
+// a pragma issued through a pool would be missing.
+func (s *SQLiteStore) pragmaOn(t *testing.T, name string) int {
+	t.Helper()
+	var got int
+	if err := s.writer.QueryRow("PRAGMA " + name).Scan(&got); err != nil {
+		t.Fatalf("read %s: %v", name, err)
+	}
+	return got
+}
+
+// orphanSessionID names a session that does not exist, used to prove a foreign key
+// is actually in force rather than only declared.
+const orphanSessionID = "no-such-session"
+
 // bumpUserVersion writes a schema version the current build does not know, which
 // is what a database from a newer build looks like.
 func bumpUserVersion(t *testing.T, path string, version int) error {

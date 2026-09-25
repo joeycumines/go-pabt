@@ -19,7 +19,6 @@ package pabtdebug
 import (
 	"context"
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -67,11 +66,18 @@ func bootstrapTestStore(t *testing.T, store *SQLiteStore) SessionIdentity {
 	return identity
 }
 
+// testPlanRevision is the plan revision every fixture uses. Begin records the
+// revision an attempt began at and Commit refuses a record that disagrees, so a
+// fixture that used two different values would be asserting a divergence rather
+// than a contract.
+const testPlanRevision = 1
+
 // makeRecord builds a record carrying a small tree, with the digests a commit
 // expects the store to fill in.
 func makeRecord(tree *StoredTree) StoredRecord {
 	record := StoredRecord{
 		Kind:          RecordTick,
+		Revision:      RevisionScope{PlanRevision: testPlanRevision},
 		PayloadState:  PayloadComplete,
 		TreeEligible:  tree != nil,
 		Tree:          tree,
@@ -168,11 +174,12 @@ func TestASecondWriterIsRefused(t *testing.T) {
 		t.Errorf("a second writer = %v, want a lock error", err)
 	}
 	// The first store still works, because the refusal cost it nothing.
-	head, err := first.Head(context.Background(), RunKey{
-		SessionID: "", PlanID: "p", RunID: "r",
-	})
-	if err == nil {
-		_ = head
+	installation, err := first.Installation(context.Background())
+	if err != nil {
+		t.Fatalf("Installation after a refused second writer: %v", err)
+	}
+	if installation.StoreID == "" {
+		t.Error("the first store lost its identity when a second writer was refused")
 	}
 }
 
@@ -185,7 +192,7 @@ func TestRecordsSurviveAProcessRestart(t *testing.T) {
 	const ticks = 25
 	written := make([]CommitReceipt, 0, ticks)
 	for i := range ticks {
-		ticket, err := first.Begin(context.Background(), BeginRequest{RunKey: key, ExpectedPlanRevision: 1})
+		ticket, err := first.Begin(context.Background(), BeginRequest{RunKey: key, ExpectedPlanRevision: testPlanRevision})
 		if err != nil {
 			t.Fatalf("Begin %d: %v", i, err)
 		}
@@ -250,7 +257,7 @@ func TestAnOpenIntentLeavesNoGapAndNoHalfRecord(t *testing.T) {
 
 	// Two committed records, then a tick that dies after taking its sequence.
 	for i := range 2 {
-		ticket, err := first.Begin(context.Background(), BeginRequest{RunKey: key, ExpectedPlanRevision: 1})
+		ticket, err := first.Begin(context.Background(), BeginRequest{RunKey: key, ExpectedPlanRevision: testPlanRevision})
 		if err != nil {
 			t.Fatalf("Begin %d: %v", i, err)
 		}
@@ -258,7 +265,7 @@ func TestAnOpenIntentLeavesNoGapAndNoHalfRecord(t *testing.T) {
 			t.Fatalf("Commit %d: %v", i, err)
 		}
 	}
-	abandoned, err := first.Begin(context.Background(), BeginRequest{RunKey: key, ExpectedPlanRevision: 1})
+	abandoned, err := first.Begin(context.Background(), BeginRequest{RunKey: key, ExpectedPlanRevision: testPlanRevision})
 	if err != nil {
 		t.Fatalf("Begin abandoned: %v", err)
 	}
@@ -298,7 +305,7 @@ func TestAnOpenIntentLeavesNoGapAndNoHalfRecord(t *testing.T) {
 	if err := second.Abort(context.Background(), pending[0]); err != nil {
 		t.Fatalf("Abort: %v", err)
 	}
-	ticket, err := second.Begin(context.Background(), BeginRequest{RunKey: key, ExpectedPlanRevision: 1})
+	ticket, err := second.Begin(context.Background(), BeginRequest{RunKey: key, ExpectedPlanRevision: testPlanRevision})
 	if err != nil {
 		t.Fatalf("Begin after an abort: %v", err)
 	}
@@ -323,20 +330,20 @@ func TestTheAppendLeaseSerialisesTicks(t *testing.T) {
 	identity := bootstrapTestStore(t, store)
 	key := RunKey{SessionID: identity.SessionID, PlanID: identity.PlanID, RunID: identity.RunID}
 
-	first, err := store.Begin(context.Background(), BeginRequest{RunKey: key, ExpectedPlanRevision: 1})
+	first, err := store.Begin(context.Background(), BeginRequest{RunKey: key, ExpectedPlanRevision: testPlanRevision})
 	if err != nil {
 		t.Fatalf("Begin: %v", err)
 	}
 	// A second tick while the first holds the lease is told, not allowed to
 	// interleave and leave two records claiming one predecessor.
-	if _, err := store.Begin(context.Background(), BeginRequest{RunKey: key, ExpectedPlanRevision: 1}); !errors.Is(err, ErrAppendBusy) {
+	if _, err := store.Begin(context.Background(), BeginRequest{RunKey: key, ExpectedPlanRevision: testPlanRevision}); !errors.Is(err, ErrAppendBusy) {
 		t.Errorf("a second Begin = %v, want the lease to be reported busy", err)
 	}
 	if _, err := store.Commit(context.Background(), first, makeRecord(nil)); err != nil {
 		t.Fatalf("Commit: %v", err)
 	}
 	// With the lease released the next tick proceeds, and the chain has no gap.
-	second, err := store.Begin(context.Background(), BeginRequest{RunKey: key, ExpectedPlanRevision: 1})
+	second, err := store.Begin(context.Background(), BeginRequest{RunKey: key, ExpectedPlanRevision: testPlanRevision})
 	if err != nil {
 		t.Fatalf("Begin after commit: %v", err)
 	}
@@ -350,7 +357,7 @@ func TestACommitIsRefusedWhenItDoesNotMatchItsTicket(t *testing.T) {
 	identity := bootstrapTestStore(t, store)
 	key := RunKey{SessionID: identity.SessionID, PlanID: identity.PlanID, RunID: identity.RunID}
 
-	ticket, err := store.Begin(context.Background(), BeginRequest{RunKey: key, ExpectedPlanRevision: 1})
+	ticket, err := store.Begin(context.Background(), BeginRequest{RunKey: key, ExpectedPlanRevision: testPlanRevision})
 	if err != nil {
 		t.Fatalf("Begin: %v", err)
 	}
@@ -366,12 +373,25 @@ func TestACommitIsRefusedWhenItDoesNotMatchItsTicket(t *testing.T) {
 	if _, err := store.Commit(context.Background(), ticket, wrong); err == nil {
 		t.Error("a record with the wrong sequence committed")
 	}
-	// A record from another run is refused.
-	elsewhere := ticket
-	elsewhere.RunKey.RunID = "other"
-	elsewhere.proof = store.proof(elsewhere.RunKey, elsewhere.Sequence, elsewhere.EventUID, elsewhere.AttemptID)
-	if _, err := store.Commit(context.Background(), elsewhere, makeRecord(nil)); err == nil {
+	// A record naming another run is refused. The record is moved rather than the
+	// ticket, because moving the ticket only reaches the lease lookup and proves
+	// nothing about the record-versus-ticket check.
+	elsewhere := makeRecord(nil)
+	elsewhere.RunKey = RunKey{SessionID: key.SessionID, PlanID: "other", RunID: "other"}
+	if _, err := store.Commit(context.Background(), ticket, elsewhere); err == nil {
 		t.Error("a record from another run committed")
+	}
+	// A record claiming a sequence the ticket does not carry is refused.
+	wrongSequence := makeRecord(nil)
+	wrongSequence.Sequence = ticket.Sequence + 5
+	if _, err := store.Commit(context.Background(), ticket, wrongSequence); err == nil {
+		t.Error("a record with an unissued sequence committed")
+	}
+	// A record at a plan revision the attempt did not begin at is refused.
+	wrongRevision := makeRecord(nil)
+	wrongRevision.Revision.PlanRevision = testPlanRevision + 7
+	if _, err := store.Commit(context.Background(), ticket, wrongRevision); err == nil {
+		t.Error("a record at a different plan revision committed")
 	}
 	// The genuine ticket still works, so the refusals cost nothing.
 	if _, err := store.Commit(context.Background(), ticket, makeRecord(nil)); err != nil {
@@ -386,7 +406,7 @@ func TestReadsAreBoundedByRowsAndBytes(t *testing.T) {
 
 	const records = 40
 	for i := range records {
-		ticket, err := store.Begin(context.Background(), BeginRequest{RunKey: key, ExpectedPlanRevision: 1})
+		ticket, err := store.Begin(context.Background(), BeginRequest{RunKey: key, ExpectedPlanRevision: testPlanRevision})
 		if err != nil {
 			t.Fatalf("Begin %d: %v", i, err)
 		}
@@ -451,7 +471,7 @@ func TestAnAlteredRecordIsCaught(t *testing.T) {
 
 	var receipt CommitReceipt
 	for i := range 3 {
-		ticket, err := store.Begin(context.Background(), BeginRequest{RunKey: key, ExpectedPlanRevision: 1})
+		ticket, err := store.Begin(context.Background(), BeginRequest{RunKey: key, ExpectedPlanRevision: testPlanRevision})
 		if err != nil {
 			t.Fatalf("Begin %d: %v", i, err)
 		}
@@ -548,7 +568,7 @@ func TestStoreLimitsAreEnforced(t *testing.T) {
 	identity := bootstrapTestStore(t, store)
 	key := RunKey{SessionID: identity.SessionID, PlanID: identity.PlanID, RunID: identity.RunID}
 
-	ticket, err := store.Begin(context.Background(), BeginRequest{RunKey: key, ExpectedPlanRevision: 1})
+	ticket, err := store.Begin(context.Background(), BeginRequest{RunKey: key, ExpectedPlanRevision: testPlanRevision})
 	if err != nil {
 		t.Fatalf("Begin: %v", err)
 	}
@@ -633,5 +653,260 @@ func TestRunStateAndRecordLookup(t *testing.T) {
 	if _, err := store.Installation(context.Background()); err != nil {
 		t.Errorf("Installation: %v", err)
 	}
-	fmt.Fprint(new(strings.Builder), "")
+}
+
+func TestTheChainCoversTheTreeAndNotOnlyTheTreeItself(t *testing.T) {
+	// The store keeps the tree twice: inside the record, where the chain covers
+	// it, and in the representation table, where a base and a delta reference it.
+	// A check of the representation against its own digest is satisfied by a
+	// rewrite that recomputes that digest, which is what a buggy assembly path
+	// would produce.
+	store := openTestStore(t, testStorePath(t))
+	identity := bootstrapTestStore(t, store)
+	key := RunKey{SessionID: identity.SessionID, PlanID: identity.PlanID, RunID: identity.RunID}
+
+	ticket, err := store.Begin(context.Background(), BeginRequest{RunKey: key, ExpectedPlanRevision: testPlanRevision})
+	if err != nil {
+		t.Fatalf("Begin: %v", err)
+	}
+	receipt, err := store.Commit(context.Background(), ticket, makeRecord(smallTree("n")))
+	if err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+	if receipt.TreeSHA256 == "" {
+		t.Fatal("a commit with a tree produced no tree digest")
+	}
+	if err := store.alterTreeBytes(t, key, 1, 9999); err != nil {
+		t.Fatalf("altering a stored tree: %v", err)
+	}
+	// The forged tree is internally consistent, so only the chain can catch it.
+	row := store.readers.QueryRow(
+		"SELECT tree_sha256 FROM representations WHERE session_id = ? AND run_id = ? AND seq = 1",
+		key.SessionID, key.RunID)
+	var stored []byte
+	if err := row.Scan(&stored); err != nil {
+		t.Fatalf("read the altered digest: %v", err)
+	}
+	if hexString(stored) == receipt.TreeSHA256 {
+		t.Skip("the alteration did not change the stored digest, so this case proves nothing")
+	}
+	if _, err := store.TreeAt(context.Background(), key, 1); !errors.Is(err, ErrStoreCorrupt) {
+		t.Errorf("TreeAt on a tree the chain does not cover = %v, want a corruption error", err)
+	}
+	// The chain itself is still intact, which is exactly why it is the arbiter.
+	if verified, err := store.VerifyChain(context.Background(), key); err != nil {
+		t.Errorf("VerifyChain on a run whose representation was rewritten: %v", err)
+	} else if verified != 1 {
+		t.Errorf("chain verified %d records, want 1", verified)
+	}
+	// A page row names the tree digest, so a reader can cross-check it.
+	page, err := store.Events(context.Background(), EventQuery{RunKey: key})
+	if err != nil {
+		t.Fatalf("Events: %v", err)
+	}
+	if len(page.Events) != 1 {
+		t.Fatalf("page rows = %d, want 1", len(page.Events))
+	}
+	if page.Events[0].TreeSHA256 == "" {
+		t.Error("a page row for a tree-eligible record names no tree digest")
+	}
+}
+
+func hexString(raw []byte) string {
+	const digits = "0123456789abcdef"
+	out := make([]byte, 0, len(raw)*2)
+	for _, b := range raw {
+		out = append(out, digits[b>>4], digits[b&0x0f])
+	}
+	return string(out)
+}
+
+func TestTheConnectionPolicyReachesEveryConnection(t *testing.T) {
+	// A pragma issued through a pool reaches one connection. The policy is in the
+	// data source name, so every connection the pool mints has it, and the
+	// foreign key is therefore in force rather than only declared.
+	store := openTestStore(t, testStorePath(t))
+	identity := bootstrapTestStore(t, store)
+
+	for range 8 {
+		conn, err := store.writer.Conn(context.Background())
+		if err != nil {
+			t.Fatalf("writer connection: %v", err)
+		}
+		var foreignKeys, busy int
+		if err := conn.QueryRowContext(context.Background(), "PRAGMA foreign_keys").Scan(&foreignKeys); err != nil {
+			t.Fatalf("read foreign_keys: %v", err)
+		}
+		if err := conn.QueryRowContext(context.Background(), "PRAGMA busy_timeout").Scan(&busy); err != nil {
+			t.Fatalf("read busy_timeout: %v", err)
+		}
+		_ = conn.Close()
+		if foreignKeys != 1 {
+			t.Errorf("a pooled writer connection has foreign_keys=%d, want 1", foreignKeys)
+		}
+		if busy != 5000 {
+			t.Errorf("a pooled writer connection has busy_timeout=%d, want 5000", busy)
+		}
+	}
+	if got := store.pragmaOn(t, "synchronous"); got != 2 {
+		t.Errorf("synchronous = %d, want 2 (FULL)", got)
+	}
+	// A row naming a session that does not exist must be refused.
+	_, err := store.writer.Exec(
+		"INSERT INTO records (session_id, event_uid, plan_id, run_id, seq, attempt_id, kind, "+
+			"payload_state, tree_eligible, execution_started, recorded_at, record_json, "+
+			"payload_sha256, previous_record_sha256, record_sha256) "+
+			"VALUES (?, 'e', 'p', 'r', 1, 'a', 'tick', 'none', 0, 0, 'now', x'00', "+
+			"zeroblob(32), zeroblob(32), zeroblob(32))", orphanSessionID)
+	if err == nil {
+		t.Error("an orphan record was inserted: the foreign key is not in force")
+	}
+	_ = identity
+}
+
+func TestAReadOnlyOpenRefusesAWorldReadableHistory(t *testing.T) {
+	path := testStorePath(t)
+	store := openTestStore(t, path)
+	bootstrapTestStore(t, store)
+	if err := store.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	// A history another account can read is a disclosure, and this process did
+	// not create it, so it is reported rather than served.
+	if err := os.Chmod(path, 0o644); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+	readOnlyMode := StoreModeReadOnly
+	if _, err := OpenSQLiteStore(context.Background(), SQLiteStoreConfig{
+		Path: path, Mode: &readOnlyMode,
+	}); !errors.Is(err, ErrStoreCorrupt) {
+		t.Errorf("opening a world-readable history read-only = %v, want a corruption error", err)
+	}
+	// A read-write open repairs it, because the store owns the file.
+	if _, err := OpenSQLiteStore(context.Background(), SQLiteStoreConfig{Path: path}); err != nil {
+		t.Fatalf("a read-write open did not repair the mode: %v", err)
+	}
+}
+
+func TestMarkExecutionStartedIsReportedAndReadBack(t *testing.T) {
+	store := openTestStore(t, testStorePath(t))
+	identity := bootstrapTestStore(t, store)
+	key := RunKey{SessionID: identity.SessionID, PlanID: identity.PlanID, RunID: identity.RunID}
+
+	ticket, err := store.Begin(context.Background(), BeginRequest{RunKey: key, ExpectedPlanRevision: testPlanRevision})
+	if err != nil {
+		t.Fatalf("Begin: %v", err)
+	}
+	// The flag is readable, which is what lets recovery tell a crash during a
+	// tick from a crash before it started.
+	pending, err := store.PendingIntents(context.Background())
+	if err != nil {
+		t.Fatalf("PendingIntents: %v", err)
+	}
+	if len(pending) != 1 || pending[0].ExecutionStarted {
+		t.Fatalf("pending intent before marking = %+v, want one not yet started", pending)
+	}
+	if err := store.MarkExecutionStarted(context.Background(), ticket); err != nil {
+		t.Fatalf("MarkExecutionStarted: %v", err)
+	}
+	pending, err = store.PendingIntents(context.Background())
+	if err != nil {
+		t.Fatalf("PendingIntents: %v", err)
+	}
+	if len(pending) != 1 || !pending[0].ExecutionStarted {
+		t.Errorf("pending intent after marking = %+v, want it started", pending)
+	}
+	if _, err := store.Commit(context.Background(), ticket, makeRecord(nil)); err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+	// Once the intent is gone there is nothing to mark, and saying so is the
+	// difference between a caller that knows its tick committed and one that
+	// believes it was abandoned.
+	if err := store.MarkExecutionStarted(context.Background(), ticket); !errors.Is(err, ErrNotFound) {
+		t.Errorf("MarkExecutionStarted after a commit = %v, want not found", err)
+	}
+	if err := store.Abort(context.Background(), ticket); !errors.Is(err, ErrNotFound) {
+		t.Errorf("Abort after a commit = %v, want not found", err)
+	}
+}
+
+func TestTheSchemaRefusesAnUnknownKindOrPayloadState(t *testing.T) {
+	store := openTestStore(t, testStorePath(t))
+	identity := bootstrapTestStore(t, store)
+	for _, statement := range []struct {
+		kind    string
+		payload string
+	}{
+		{kind: "not-a-kind", payload: "none"},
+		{kind: "tick", payload: "not-a-state"},
+	} {
+		_, err := store.writer.Exec(
+			"INSERT INTO records (session_id, event_uid, plan_id, run_id, seq, attempt_id, kind, "+
+				"payload_state, tree_eligible, execution_started, recorded_at, record_json, "+
+				"payload_sha256, previous_record_sha256, record_sha256) "+
+				"VALUES (?, 'e', 'p', 'r', 1, 'a', ?, ?, 0, 0, 'now', x'00', "+
+				"zeroblob(32), zeroblob(32), zeroblob(32))",
+			identity.SessionID, statement.kind, statement.payload)
+		if err == nil {
+			t.Errorf("a record with kind %q and payload %q was accepted", statement.kind, statement.payload)
+		}
+	}
+}
+
+func TestAnOpenIntentIsRecordedAsPendingRecovery(t *testing.T) {
+	path := testStorePath(t)
+	first := openTestStore(t, path)
+	identity := bootstrapTestStore(t, first)
+	key := RunKey{SessionID: identity.SessionID, PlanID: identity.PlanID, RunID: identity.RunID}
+	ticket, err := first.Begin(context.Background(),
+		BeginRequest{RunKey: key, ExpectedPlanRevision: testPlanRevision})
+	if err != nil {
+		t.Fatalf("Begin: %v", err)
+	}
+	if _, err := first.Commit(context.Background(), ticket, makeRecord(nil)); err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+	if _, err := first.Begin(context.Background(),
+		BeginRequest{RunKey: key, ExpectedPlanRevision: testPlanRevision}); err != nil {
+		t.Fatalf("Begin abandoned: %v", err)
+	}
+	if err := first.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	// A store that opened successfully is not necessarily ready to record into, so
+	// the state is read rather than assumed.
+	second := openTestStore(t, path)
+	installation, err := second.Installation(context.Background())
+	if err != nil {
+		t.Fatalf("Installation: %v", err)
+	}
+	if installation.Recovery != RecoveryPending {
+		t.Errorf("recovery = %q with an open intent, want %q", installation.Recovery, RecoveryPending)
+	}
+	if err := second.Abort(context.Background(), mustPending(t, second)[0]); err != nil {
+		t.Fatalf("Abort: %v", err)
+	}
+	if err := second.setRecovery(context.Background(), RecoveryReady); err != nil {
+		t.Fatalf("setRecovery: %v", err)
+	}
+	installation, err = second.Installation(context.Background())
+	if err != nil {
+		t.Fatalf("Installation: %v", err)
+	}
+	if installation.Recovery != RecoveryReady {
+		t.Errorf("recovery = %q after resolving, want ready", installation.Recovery)
+	}
+}
+
+func mustPending(t *testing.T, store *SQLiteStore) []IntentTicket {
+	t.Helper()
+	pending, err := store.PendingIntents(context.Background())
+	if err != nil {
+		t.Fatalf("PendingIntents: %v", err)
+	}
+	if len(pending) == 0 {
+		t.Fatal("no intent is pending")
+	}
+	return pending
 }

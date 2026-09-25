@@ -110,6 +110,13 @@ func (s *SQLiteStore) RecordAt(ctx context.Context, key RunKey, sequence uint64)
 }
 
 // TreeAt returns the tree a record was committed with.
+//
+// The store keeps the tree twice: once inside the record, where the chain
+// covers it, and once in the representation table, where a base and a delta can
+// reference it. A check of the representation's tree against its own digest is
+// not enough, because a rewrite that recomputed that digest would satisfy it. The
+// digest the chain already covers is therefore the one that decides, and a
+// representation that disagrees with it is reported rather than served.
 func (s *SQLiteStore) TreeAt(ctx context.Context, key RunKey, sequence uint64) (StoredTree, error) {
 	if err := s.checkUsable(false); err != nil {
 		return StoredTree{}, err
@@ -137,6 +144,24 @@ func (s *SQLiteStore) TreeAt(ctx context.Context, key RunKey, sequence uint64) (
 		return StoredTree{}, fmt.Errorf("%w: tree at %d digest is %q, recomputes to %q",
 			ErrStoreCorrupt, sequence, tree.Digest, digest)
 	}
+	// The record's own copy of the tree is covered by the chain, so it is what
+	// says which tree this sequence really committed.
+	record, err := s.RecordAt(ctx, key, sequence)
+	if err != nil {
+		return StoredTree{}, err
+	}
+	if record.Tree == nil {
+		return StoredTree{}, fmt.Errorf("%w: sequence %d has a representation but its record has no tree",
+			ErrStoreCorrupt, sequence)
+	}
+	committed, err := HashTree(*record.Tree)
+	if err != nil {
+		return StoredTree{}, err
+	}
+	if committed != digest {
+		return StoredTree{}, fmt.Errorf("%w: the tree at %d is %q, the committed record holds %q",
+			ErrStoreCorrupt, sequence, digest, committed)
+	}
 	return tree, nil
 }
 
@@ -161,32 +186,37 @@ func (s *SQLiteStore) Events(ctx context.Context, query EventQuery) (EventPage, 
 	// rather than a guess.
 	selectLimit := int(limit) + 1
 
+	// The filter columns are qualified, because the page query joins the
+	// representation table for a record's tree digest.
 	var (
-		clauses = []string{"session_id = ?", "run_id = ?"}
-		args    = []any{key.SessionID, key.RunID}
+		rclauses = []string{"r.session_id = ?", "r.run_id = ?"}
+		rargs    = []any{key.SessionID, key.RunID}
 	)
 	if query.Before != nil {
-		clauses = append(clauses, "seq < ?")
-		args = append(args, *query.Before)
+		rclauses = append(rclauses, "r.seq < ?")
+		rargs = append(rargs, *query.Before)
 	}
 	if query.After != nil {
-		clauses = append(clauses, "seq > ?")
-		args = append(args, *query.After)
+		rclauses = append(rclauses, "r.seq > ?")
+		rargs = append(rargs, *query.After)
 	}
 	if len(query.Kinds) > 0 {
 		placeholders := make([]string, 0, len(query.Kinds))
 		for _, kind := range query.Kinds {
 			placeholders = append(placeholders, "?")
-			args = append(args, string(kind))
+			rargs = append(rargs, string(kind))
 		}
-		clauses = append(clauses, "kind IN ("+strings.Join(placeholders, ",")+")")
+		rclauses = append(rclauses, "r.kind IN ("+strings.Join(placeholders, ",")+")")
 	}
-	args = append(args, selectLimit)
+	rargs = append(rargs, selectLimit)
 
 	rows, err := s.readers.QueryContext(ctx,
-		"SELECT seq, event_uid, kind, payload_state, tree_eligible, recorded_at, "+
-			"record_sha256, length(record_json) FROM records WHERE "+strings.Join(clauses, " AND ")+
-			" ORDER BY seq LIMIT ?", args...)
+		"SELECT r.seq, r.event_uid, r.kind, r.payload_state, r.tree_eligible, r.recorded_at, "+
+			"r.record_sha256, length(r.record_json), t.tree_sha256 "+
+			"FROM records AS r "+
+			"LEFT JOIN representations AS t "+
+			"  ON t.session_id = r.session_id AND t.event_uid = r.event_uid "+
+			"WHERE "+strings.Join(rclauses, " AND ")+" ORDER BY r.seq LIMIT ?", rargs...)
 	if err != nil {
 		return EventPage{}, fmt.Errorf("pabtdebug: read events: %w", err)
 	}
@@ -204,9 +234,10 @@ func (s *SQLiteStore) Events(ctx context.Context, query EventQuery) (EventPage, 
 			recordedAt string
 			recordSHA  []byte
 			contentLen int
+			treeSHA    []byte
 		)
 		if err := rows.Scan(&seq, &summary.EventUID, &kind, &payload, &eligible, &recordedAt,
-			&recordSHA, &contentLen); err != nil {
+			&recordSHA, &contentLen, &treeSHA); err != nil {
 			return EventPage{}, fmt.Errorf("pabtdebug: read events: %w", err)
 		}
 		if uint32(len(page.Events)) >= limit {
@@ -214,8 +245,10 @@ func (s *SQLiteStore) Events(ctx context.Context, query EventQuery) (EventPage, 
 			break
 		}
 		if pageBytes+uint64(contentLen) > s.limits.MaxPageBytes && len(page.Events) > 0 {
-			// The byte bound stops the page even when the row bound has not been
-			// reached, so one enormous record cannot make the page enormous.
+			// The byte bound is on the content a page names, not on the page: a
+			// summary row is small however large the record it points at, which is
+			// the actual defence. One row is always returned, so a caller with a very
+			// small byte bound still makes progress.
 			page.HasMore = true
 			break
 		}
@@ -225,6 +258,7 @@ func (s *SQLiteStore) Events(ctx context.Context, query EventQuery) (EventPage, 
 		summary.PayloadState = PayloadState(payload)
 		summary.TreeEligible = eligible == 1
 		summary.RecordSHA256 = hex.EncodeToString(recordSHA)
+		summary.TreeSHA256 = hex.EncodeToString(treeSHA)
 		summary.ContentBytes = uint64(contentLen)
 		if parsed, perr := time.Parse(time.RFC3339Nano, recordedAt); perr == nil {
 			summary.RecordedAt = parsed.UTC()
