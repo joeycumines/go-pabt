@@ -236,8 +236,12 @@ type StoredNode struct {
 }
 
 // StoredTree is a complete occurrence-keyed tree for one record.
+//
+// EventUID names the record that committed this tree, which is what lets a delta
+// name its base without a side table.
 type StoredTree struct {
 	RunKey       RunKey       `json:"runKey"`
+	EventUID     string       `json:"eventUid"`
 	Sequence     uint64       `json:"sequence"`
 	PlanRevision uint64       `json:"planRevision"`
 	RootID       string       `json:"rootId"`

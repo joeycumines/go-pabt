@@ -377,6 +377,19 @@ func (s *SQLiteStore) Commit(ctx context.Context, ticket IntentTicket, record St
 	// the eligibility flag, which is derived rather than believed: a record that
 	// claims eligibility with no tree would be a claim the store cannot honour.
 	record.TreeEligible = record.Tree != nil
+	if record.Tree != nil {
+		// A tree belongs to the record that committed it, so its envelope is the
+		// record's identity rather than whatever the caller built. The digest is
+		// re-sealed because the envelope is inside it.
+		record.Tree.RunKey = ticket.RunKey
+		record.Tree.EventUID = ticket.EventUID
+		record.Tree.Sequence = ticket.Sequence
+		digest, err := HashTree(*record.Tree)
+		if err != nil {
+			return CommitReceipt{}, err
+		}
+		record.Tree.Digest = digest
+	}
 	record.PreviousRecordSHA256 = link
 	record.Format = FormatName
 	record.Version = FormatVersion
