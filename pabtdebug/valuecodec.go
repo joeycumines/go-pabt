@@ -240,7 +240,15 @@ func (r *CodecRegistry) Encode(ctx context.Context, source string, v any) (Store
 		out.Data = data
 		// The literal is registered so a later diagnostic carrying the same text
 		// is scrubbed too. It is held in memory only and is never persisted.
-		redactor.registerLeaves(decision.Value)
+		// Every sensitive field contributes a literal, not only the first, so a
+		// value with two secrets cannot leak the second through later text.
+		redactions := decision.Redactions
+		if len(redactions) == 0 && decision.Value.IsValid() {
+			redactions = []reflect.Value{decision.Value}
+		}
+		for _, r := range redactions {
+			redactor.registerLeaves(r)
+		}
 		return finishValue(&out)
 	}
 	codec, err := r.selectCodec(reflect.TypeOf(v))
@@ -394,6 +402,12 @@ func projectedName(f reflect.StructField, taken map[string]bool) string {
 			return candidate
 		}
 	}
+}
+
+// isSensitiveField reports whether a field is a credential under either its Go
+// name or its declared wire name.
+func isSensitiveField(f reflect.StructField) bool {
+	return IsSensitiveSegment(f.Name) || IsSensitiveSegment(declaredName(f))
 }
 
 // declaredName returns the name a field is recorded under: the declared wire name
@@ -600,9 +614,9 @@ func projectRedacted(limits ValueLimits, v reflect.Value, depth, nodes uint32) (
 				continue
 			}
 			taken[name] = true
-			// The declared name decides sensitivity here too, so the projection
-			// replaces exactly what the walk decided was sensitive.
-			if IsSensitiveSegment(declaredName(field)) {
+			// The same rule the walk used, so the projection replaces exactly what
+			// the walk decided was sensitive.
+			if isSensitiveField(field) {
 				if err := putProjected(out, name, RedactedMarker); err != nil {
 					return nil, err
 				}

@@ -961,7 +961,9 @@ func TestCompoundCredentialNamesAreRedacted(t *testing.T) {
 		"auth_token", "access_token", "refresh_token", "id_token", "bearer_token",
 		"access_key", "secret_key", "session_key", "api_key", "private_key",
 		"secretKey", "authToken", "ACCESS-KEY", "Password", "cookie",
-		"user_password", "credentials", "token", "tokens",
+		"user_password", "token", "tokens", "passwords", "secrets", "cookies",
+		"passWord", "passPhrase", "seedPhrase", "mnemonic", "passwordHash",
+		"encryptionKey", "signingKey", "jwtToken",
 		// The plural compounds of every family, which the earlier snake-keyed
 		// table missed entirely.
 		"apiKeys", "secretKeys", "sessionKeys", "passWords", "authTokens",
@@ -985,9 +987,11 @@ func TestCompoundCredentialNamesAreRedacted(t *testing.T) {
 	// its value looks harmless, because the name is the signal and the value is not.
 	for _, text := range []string{
 		"tokenizer=fast", "cookiecutter=chocolate", "passworder=1",
-		"credentials_manager=ok", "my_tokenizer_count=3",
+		"my_tokenizer_count=3", "api_endpoint=https://x", "fileHash=abc",
 		// A planner variable identifier is not a credential.
 		"key=actor", "keys=3", "keypath=/usr/bin", "monkey=1", "turnkey=yes",
+		"sortKey=name", "primaryKey=id", "partitionKey=k", "cacheKey=k",
+		"idempotencyKey=req", "publicKey=pem", "objectKey=k", "rowKey=1",
 	} {
 		if got := san.Sanitize(text); got != text {
 			t.Errorf("Sanitize(%q) = %q, want it unchanged", text, got)
@@ -1217,5 +1221,113 @@ func TestARecordRefusesAContradictoryPresenceFlag(t *testing.T) {
 	}
 	if err := CanonicalDecode([]byte(encoded), &back); err != nil {
 		t.Errorf("the untampered record did not decode: %v", err)
+	}
+}
+
+func TestSensitiveNameRuleInBothDirections(t *testing.T) {
+	// A credential is recognised because the name says the purpose is private and
+	// the thing holding it is a credential, or because a credential word appears
+	// anywhere in it. That has to work in both directions: a miss leaks, and a false
+	// positive destroys ordinary state.
+	for _, name := range []string{
+		// A credential word anywhere in the name.
+		"password", "passwords", "user_password", "userPasswords", "password_hash",
+		"passwordHash", "pass_word", "passWord", "passWords", "pass_phrase",
+		"passPhrase", "passphrase", "secret", "secrets", "seed", "seedPhrase",
+		"mnemonic", "cookie", "cookies", "token", "tokens", "token_1", "credential",
+		"credentials", "authorization", "authorization", "salt", "signature",
+		// A private purpose plus a thing that holds it.
+		"apiKey", "api_key", "api-key", "x-api-key", "apiKeys", "api_key_1",
+		"accessKey", "access_token", "refreshToken", "idToken", "id_token",
+		"secretKey", "secret_key", "sessionKey", "session_key", "privateKey",
+		"private_key_phrase", "encryptionKey", "signingKey", "jwtToken",
+		"awsSecretAccessKey", "clientSecret", "apiToken", "passCode", "seed_phrase",
+	} {
+		if !IsSensitiveSegment(name) {
+			t.Errorf("IsSensitiveSegment(%q) = false, want true", name)
+		}
+	}
+	// None of these names anything private, and several are the words a planner
+	// uses for a variable identifier. Redacting them would destroy the record.
+	for _, name := range []string{
+		"key", "keys", "keyPath", "keypath", "keyword", "keyboard", "keyring",
+		"monkey", "hotkey", "turnkey", "sortKey", "sort_key", "primaryKey",
+		"partitionKey", "cacheKey", "objectKey", "rowKey", "idempotencyKey",
+		"publicKey", "pubsubKey", "foreignKey", "shardingKey", "indexKey",
+		"groupKey", "fileHash", "treeHash", "contentHash", "secretariat",
+		"api_endpoint", "apiVersion", "apiCall", "user", "userId", "userName",
+		"clientId", "clientName", "serverPort", "dataPath", "label", "value",
+		"name", "id", "type", "count", "actor", "location", "status",
+	} {
+		if IsSensitiveSegment(name) {
+			t.Errorf("IsSensitiveSegment(%q) = true, want false: ordinary state would be destroyed", name)
+		}
+	}
+}
+
+func TestAGoNameThatIsSecretIsRedactedUnderAnInnocuousTag(t *testing.T) {
+	reg := NewCodecRegistry(DefaultValueLimits())
+	// Consulting only the declared tag would record this in the clear, and the
+	// digest would then sign a credential.
+	type payload struct {
+		Password    string `json:"pw"`
+		AccessToken string `json:"t"`
+		Note        string `json:"note"`
+	}
+	got := mustEncode(t, reg, payload{
+		Password:    secretLiteralValue,
+		AccessToken: secretLiteralValue,
+		Note:        "keep",
+	})
+	if got.Visibility != ValueRedacted {
+		t.Fatalf("visibility = %q, want %q", got.Visibility, ValueRedacted)
+	}
+	encoded, err := CanonicalEncode(got)
+	if err != nil {
+		t.Fatalf("CanonicalEncode: %v", err)
+	}
+	assertNoSecret(t, "a secret Go field with an innocuous tag", encoded, got.Data, []byte(got.Display))
+	if !strings.Contains(string(got.Data), "keep") {
+		t.Errorf("the safe field was lost: %s", got.Data)
+	}
+}
+
+func TestEverySensitiveFieldContributesALiteral(t *testing.T) {
+	reg := NewCodecRegistry(DefaultValueLimits())
+	// Two secrets in one value: registering only the first would let the second
+	// reappear in later text even though the record itself is clean.
+	const second = "second-secret-value-ZZZ"
+	holder := struct {
+		Password string `json:"password"`
+		APIKey   string `json:"apiKey"`
+	}{"first-secret-value-AAA", second}
+	err := WithRedaction(context.Background(), DefaultValueLimits(),
+		func(ctx context.Context) error {
+			c, _ := redactionFor(ctx)
+			if _, encErr := reg.Encode(ctx, "record", holder); encErr != nil {
+				return encErr
+			}
+			for _, later := range []string{
+				"first-secret-value-AAA", second,
+			} {
+				got := c.scrub("upstream rejected " + later)
+				if strings.Contains(got, later) {
+					t.Errorf("a secret survived later text: %q", got)
+				}
+			}
+			return nil
+		})
+	if err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+}
+
+func TestACookieHeaderLosesEveryPair(t *testing.T) {
+	san := &textSanitizer{limits: DefaultValueLimits()}
+	got := san.Sanitize("Cookie: session=abc; csrf=def; other=ghi")
+	for _, secret := range []string{"abc", "def", "ghi"} {
+		if strings.Contains(got, secret) {
+			t.Errorf("Sanitize left %q: %q", secret, got)
+		}
 	}
 }

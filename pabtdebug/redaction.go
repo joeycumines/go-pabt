@@ -25,57 +25,111 @@ import (
 	"unicode/utf8"
 )
 
-// sensitiveNames are segments that are a credential in their own right, in lower
-// snake case. Compound names are handled by sensitiveSuffixes instead, because
-// enumerating them means missing one.
+// A segment is a credential when it is a credential word in its own right, or
+// when it combines a word that names a secret with a word that names the thing
+// holding it.
 //
-// A map key is a path segment even when the struct field holding it is not, so a
-// map keyed by an access token is redacted for the same reason a field named
-// AccessToken is.
+// Combining is what makes the rule work without enumerating compounds. A field
+// named sortKey, primaryKey, cacheKey, or idempotencyKey names a sort, a
+// primary, a cache, and an idempotency, so it is ordinary state. A field named
+// apiKey, accessKey, secretKey, encryptionKey, or awsSecretAccessKey names an
+// API, an access grant, a secret, or an encryption, and the thing holding it is
+// a key. A field named passwordHash is a credential because "password" is a
+// credential word, while fileHash and treeHash are digests of ordinary data.
 var sensitiveNames = map[string]struct{}{
-	"password": {}, "passwd": {},
-	"passphrase": {}, "pass_phrase": {}, "pass_phrases": {},
-	"secret": {}, "credential": {}, "credentials": {},
+	"password": {}, "passwords": {}, "passwd": {},
+	"passphrase": {}, "passphrases": {},
+	"secret": {}, "secrets": {},
+	"credential": {}, "credentials": {},
 	"authorization": {}, "authorisation": {},
-	"cookie": {}, "salt": {}, "signature": {},
-	// The bare token forms are credentials. A bare "key" deliberately is not: the
-	// planner uses that word for a variable identifier, and redacting it would
-	// destroy ordinary state.
+	"cookie": {}, "cookies": {},
 	"token": {}, "tokens": {},
+	"pass": {},
 }
 
-// sensitiveSuffixes are endings that make any compound segment a credential.
-//
-// The separator is required, so a benign word that merely ends in "key" is not
-// affected: monkey, hotkey, and turnkey stay ordinary data, while jwtToken,
-// client_secret, x-api-key, awsSecretAccessKey, and apiKeys are all caught
-// without anyone having to enumerate them.
-var sensitiveSuffixes = []string{
-	"_token", "_tokens",
-	"_key", "_keys",
-	"_secret", "_secrets",
-	"_password", "_passwords",
-	"_passwd", "_passphrase", "_passphrases",
-	"_word", "_words",
-	"_credential", "_credentials",
-	"_cookie", "_cookies",
-	"_authorization", "_authorisation",
-	"_signature", "_salt",
+// sensitiveExact are words that are a credential only as the whole name. They are
+// also ordinary nouns, so a compound that merely contains one is not a credential:
+// a saltiness, a signatureAlgorithm, and a barcode are ordinary data.
+var sensitiveExact = map[string]struct{}{
+	"salt": {}, "seed": {}, "seeds": {}, "mnemonic": {}, "mnemonics": {},
+	"signature": {}, "signatures": {},
+	"code": {}, "codes": {}, "pin": {}, "pins": {}, "otp": {},
+	"answer": {}, "answers": {}, "hint": {}, "hints": {},
+}
+
+// secrecyQualifiers name a purpose whose value is meant to stay private. One of
+// these alongside a credential noun is enough.
+var secrecyQualifiers = map[string]struct{}{
+	"api": {}, "access": {}, "secret": {}, "private": {},
+	"encryption": {}, "encrypt": {}, "signing": {}, "sign": {},
+	"auth": {}, "authn": {}, "authorization": {}, "master": {},
+	"refresh": {}, "bearer": {}, "jwt": {}, "sso": {}, "hmac": {},
+	"webhook": {}, "smtp": {}, "customer": {}, "tenant": {},
+	"pepper": {}, "aws": {}, "azure": {}, "gcp": {},
+	"session": {}, "service": {}, "system": {}, "app": {}, "application": {},
+	// "id" qualifies an id_token, an OIDC credential, and is harmless as a
+	// qualifier because "id" is not one of the nouns below, so a user_id or
+	// client_id stays ordinary state.
+	"id": {},
+	// "pass" qualifies a pass_word, a pass_phrase, and a passcode.
+	"pass": {},
+	"seed": {}, "mnemonic": {},
+}
+
+// credentialNouns are the things a secret is held in.
+var credentialNouns = map[string]struct{}{
+	"key": {}, "keys": {},
+	"token": {}, "tokens": {},
+	"secret": {}, "secrets": {},
+	"password": {}, "passwords": {}, "passwd": {},
+	"phrase": {}, "phrases": {},
+	"code": {}, "codes": {},
+	"pin": {}, "pins": {}, "otp": {},
+	"credential": {}, "credentials": {},
+	"hash": {}, "hashes": {},
+	"seed": {}, "seeds": {}, "mnemonic": {}, "mnemonics": {},
+	"salt": {}, "signature": {}, "signatures": {},
+	"cookie": {}, "cookies": {},
+	"authorization": {}, "authorisation": {},
+	"word": {}, "words": {},
+	"answer": {}, "answers": {}, "hint": {}, "hints": {},
 }
 
 // IsSensitiveSegment reports whether a path segment marks a secret, whatever
 // casing and separators the application used to write it.
+//
+// A map key is a path segment even when the struct field holding it is not, so a
+// map keyed by an access token is redacted for the same reason a field named
+// AccessToken is.
 func IsSensitiveSegment(segment string) bool {
 	name := normaliseSegment(segment)
-	if _, ok := sensitiveNames[name]; ok {
+	if name == "" {
+		return false
+	}
+	segments := strings.Split(name, "_")
+	if _, ok := sensitiveExact[name]; ok {
 		return true
 	}
-	for _, suffix := range sensitiveSuffixes {
-		if strings.HasSuffix(name, suffix) {
+	// A credential word anywhere in the name is enough, which is what catches
+	// user_password, password_hash, and api_keys without listing them.
+	for _, s := range segments {
+		if _, ok := sensitiveNames[s]; ok {
 			return true
 		}
 	}
-	return false
+	// A compound is a credential when one segment says the purpose is private and
+	// another says what holds it. "apiKey" and "awsSecretAccessKey" qualify; a bare
+	// "key" does not, because the planner uses that word for a variable identifier.
+	var qualifier, noun bool
+	for _, s := range segments {
+		if _, ok := secrecyQualifiers[s]; ok {
+			qualifier = true
+		}
+		if _, ok := credentialNouns[s]; ok {
+			noun = true
+		}
+	}
+	return qualifier && noun
 }
 
 // normaliseSegment rewrites a segment to lower snake case.
@@ -166,7 +220,12 @@ type redactionKey struct{}
 // maxRegisteredLeafDepth bounds how deep into a redacted value the search for
 // candidate literals goes. Reaching the bound counts as a drop rather than
 // stopping silently, so a caller can tell that a literal went unregistered.
-const maxRegisteredLeafDepth = 32
+const maxRegisteredLeafDepth = maxValueDepthLimit
+
+// maxValueDepthLimit is the deepest the leaf search will go, which is the same
+// bound the pre-codec walk enforces, so a value the walk accepted is one the
+// leaf search can reach in full.
+const maxValueDepthLimit = 32
 
 // maxRegisteredLeafBytes is the shortest leaf worth remembering.
 //
@@ -226,10 +285,11 @@ type walkDecision struct {
 	// Redacted reports that a segment of the path marked the value secret.
 	Redacted bool
 
-	// Value is the value the walk stopped at. Carrying it means the caller never
-	// has to find the value again by parsing the path, which cannot work for a
-	// segment that itself contains the separator.
-	Value reflect.Value
+	// Value is the first value the walk found sensitive. Redactions holds every one
+	// it found, because a value with two sensitive fields has two secrets and
+	// registering only the first would let the second reappear in later text.
+	Value      reflect.Value
+	Redactions []reflect.Value
 }
 
 // walk inspects a value before any codec sees it.
@@ -292,22 +352,38 @@ func (c *redactionContext) walk(path string, v reflect.Value, depth, nodes uint3
 		return walkDecision{Path: path, Value: v}, nil
 	case reflect.Struct:
 		t := v.Type()
+		// Every sensitive field in one struct is collected, because a value with two
+		// secrets has two of them and registering only the first would let the second
+		// reappear in later text.
+		var found []reflect.Value
 		for i := range t.NumField() {
 			field := t.Field(i)
 			if !field.IsExported() {
 				continue
 			}
-			// The declared wire name is the name the record will carry, so it is
-			// the name that decides sensitivity. A field tagged "password" is
-			// sensitive even when its Go name is innocuous.
-			child := joinPath(path, field.Name)
-			if IsSensitiveSegment(declaredName(field)) {
-				return walkDecision{Path: child, Redacted: true, Value: v.Field(i)}, nil
+			// A field is sensitive under either name. Consulting only the declared one
+			// would record a field named Password in the clear whenever its tag
+			// happened to be innocuous, and consulting only the Go one would record a
+			// field tagged "password" in the clear.
+			if isSensitiveField(field) {
+				found = append(found, v.Field(i))
+				continue
 			}
-			decision, err := c.walk(child, v.Field(i), depth+1, nodes)
-			if err != nil || decision.Redacted {
-				return decision, err
+			decision, err := c.walk(joinPath(path, field.Name), v.Field(i), depth+1, nodes)
+			if err != nil {
+				return walkDecision{}, err
 			}
+			if decision.Redacted {
+				return decision, nil
+			}
+		}
+		if len(found) > 0 {
+			return walkDecision{
+				Path:       path,
+				Redacted:   true,
+				Value:      found[0],
+				Redactions: found,
+			}, nil
 		}
 		return walkDecision{Path: path, Value: v}, nil
 	case reflect.String:
@@ -504,6 +580,16 @@ func redactCredentialShapes(text string) string {
 		for i < len(runes) && isSkippableRune(runes[i]) {
 			out.WriteRune(runes[i])
 			i++
+		}
+		// A cookie header is a list of pairs, every one of which is sensitive, so the
+		// whole value is discarded rather than only its first pair. The value is
+		// skipped, not copied: writing it out first would defeat the point.
+		if strings.EqualFold(string(runes[start:end]), "cookie") {
+			for i < len(runes) && runes[i] != '\n' {
+				i++
+			}
+			out.WriteString(RedactedMarker)
+			continue
 		}
 		valueStart := i
 		for i < len(runes) && !strings.ContainsRune(" \t,;\"'}", runes[i]) {
