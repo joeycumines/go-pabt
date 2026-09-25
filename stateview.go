@@ -25,9 +25,9 @@ import "fmt"
 // state view; an application that has no such notion leaves them empty, which
 // is different from claiming a revision it cannot support.
 type StateRevision struct {
-	PlanRevision  uint64
-	WorldRevision string
-	ModelRevision string
+	PlanRevision  uint64 `json:"planRevision"`
+	WorldRevision string `json:"worldRevision"`
+	ModelRevision string `json:"modelRevision"`
 }
 
 // StateCoherence says how much a state view can be trusted to represent one

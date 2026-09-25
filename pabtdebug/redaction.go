@@ -22,6 +22,7 @@ import (
 	"reflect"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 )
 
 // sensitiveSegments are the normalised path segments that mark a value secret.
@@ -88,9 +89,10 @@ type DiagnosticSanitizer interface {
 // It holds the secret literals it has seen. That is deliberate and it is why the
 // type must never be serialised: the literals exist only to be searched for.
 type redactionContext struct {
-	limits  ValueLimits
-	secrets []string
-	san     DiagnosticSanitizer
+	limits         ValueLimits
+	secrets        []string
+	droppedSecrets int
+	san            DiagnosticSanitizer
 }
 
 // redactionFor returns the scrubber for this record, creating one when the caller
@@ -116,9 +118,22 @@ func WithRedaction(ctx context.Context, limits ValueLimits, fn func(context.Cont
 
 type redactionKey struct{}
 
+// maxRegisteredSecrets bounds the per-record literal list. A record that somehow
+// needs more has a value too tangled to record safely, and the walk is told
+// rather than the excess being dropped without trace.
+const maxRegisteredSecrets = 256
+
 // registerSecret remembers a literal so later text carrying it is scrubbed.
+//
+// A literal that does not fit is not dropped silently. Redaction still happens;
+// what is lost is the ability to scrub that one literal from later free text,
+// which is a smaller loss than an unbounded list, so it is counted instead.
 func (c *redactionContext) registerSecret(literal string) {
-	if c == nil || literal == "" || len(c.secrets) >= 64 {
+	if c == nil || literal == "" {
+		return
+	}
+	if len(c.secrets) >= maxRegisteredSecrets {
+		c.droppedSecrets++
 		return
 	}
 	for _, existing := range c.secrets {
@@ -177,11 +192,14 @@ func (c *redactionContext) walk(path string, v reflect.Value, depth, nodes uint3
 		iter := v.MapRange()
 		for iter.Next() {
 			key := iter.Key()
-			if key.Kind() != reflect.String && key.Kind() != reflect.Interface {
+			// A non-string key is refused rather than rendered: the int 1 and the
+			// string "1" render identically, so projecting them would silently drop
+			// one of the entries.
+			if key.Kind() != reflect.String {
 				return walkDecision{}, fmt.Errorf("%w: map key of kind %s at %s",
 					ErrValueUnencodable, key.Kind(), path)
 			}
-			segment := fmt.Sprint(key.Interface())
+			segment := key.String()
 			child := joinPath(path, segment)
 			// A map key is a path segment even when the field holding the map is
 			// not, so a map keyed by a secret is redacted for the same reason a
@@ -276,18 +294,15 @@ func (s *textSanitizer) Sanitize(text string) string {
 	var b strings.Builder
 	b.Grow(len(text))
 	for _, r := range text {
-		if r == unicode.ReplacementChar {
-			// An already-invalid sequence is dropped rather than forwarded.
-			continue
-		}
 		if r < 0x20 && r != '\t' {
 			continue
 		}
 		b.WriteRune(r)
 	}
 	out := b.String()
-	if uint32(len(out)) > limits.MaxDisplayBytes {
-		out = out[:limits.MaxDisplayBytes] + "…"
+	if uint32(len([]rune(out))) > limits.MaxDisplayBytes {
+		// Truncating by byte could split a rune and leave invalid text behind.
+		out = string([]rune(out)[:limits.MaxDisplayBytes]) + "…"
 	}
 	return out
 }
@@ -301,7 +316,9 @@ func (s *textSanitizer) SanitizeStack(frames []string) []string {
 	out := make([]string, 0, len(frames))
 	for _, frame := range frames {
 		out = append(out, s.Sanitize(frame))
-		if uint32(len(out)) >= limits.MaxValueDepth {
+		// Bounded by a frame count, which is what this is, rather than by the
+		// nesting limit of a value.
+		if uint32(len(out)) >= limits.MaxStackFrames {
 			break
 		}
 	}
@@ -332,6 +349,10 @@ func redactCredentialShapes(text string) string {
 
 // redactAssignments replaces the value of every "marker=value" or "marker: value"
 // occurrence of one marker.
+//
+// The offsets are absolute. Treating the tail after the marker as if it were the
+// whole string would drop the message prefix and shift the tail left, which both
+// loses the text a human needed and lets a later occurrence slip past.
 func redactAssignments(text, marker string) string {
 	lower := strings.ToLower(text)
 	for from := 0; ; {
@@ -340,30 +361,64 @@ func redactAssignments(text, marker string) string {
 			return text
 		}
 		at := from + rel
-		rest := text[at:]
-		sep := strings.IndexAny(rest, "=:")
-		if sep < 0 {
-			return text
+		// The marker must be a whole word, or "tokenizer=1" would be redacted as
+		// though it were a credential.
+		if at > 0 && isWordByte(text[at-1]) {
+			from = at + len(marker)
+			continue
 		}
-		end := sep + 1
-		for end < len(rest) && (rest[end] == ' ' || rest[end] == '"' || rest[end] == '\'') {
-			end++
+		if at+len(marker) < len(text) && isWordByte(text[at+len(marker)]) {
+			from = at + len(marker)
+			continue
 		}
-		stop := end
-		for stop < len(rest) && !strings.ContainsRune(" \t,;\"'}", rune(rest[stop])) {
+		// Skip spaces and quotes, require exactly one separator, then skip the
+		// spaces and quotes that may follow it. The quotes matter for a JSON-shaped
+		// message such as {"api_key":"value"}.
+		sep := at + len(marker)
+		for sep < len(text) && isSkippable(text[sep]) {
+			sep++
+		}
+		if sep >= len(text) || (text[sep] != '=' && text[sep] != ':') {
+			from = at + len(marker)
+			continue
+		}
+		start := sep + 1
+		for start < len(text) && isSkippable(text[start]) {
+			start++
+		}
+		stop := start
+		for stop < len(text) && !strings.ContainsRune(" \t,;\"'}", rune(text[stop])) {
 			stop++
 		}
-		if stop == end {
-			return text
+		if stop == start {
+			from = at + len(marker)
+			continue
 		}
-		text = text[:end] + RedactedMarker + rest[stop:]
+		text = text[:start] + RedactedMarker + text[stop:]
 		lower = strings.ToLower(text)
-		// Continue after the rewritten region, never before it.
-		from = at + len(marker) + 1 + len(RedactedMarker)
+		from = start + len(RedactedMarker)
 		if from >= len(text) {
 			return text
 		}
 	}
+}
+
+// isSkippable reports whether a byte is whitespace or a quote that may sit
+// between a marker and its value.
+func isSkippable(b byte) bool {
+	switch b {
+	case ' ', '\t', '"', '\'':
+		return true
+	}
+	return false
+}
+
+func isWordByte(b byte) bool {
+	switch {
+	case b >= 'a' && b <= 'z', b >= 'A' && b <= 'Z', b >= '0' && b <= '9', b == '_':
+		return true
+	}
+	return false
 }
 
 // redactBearer replaces the credential in every "Bearer <token>" occurrence.
@@ -392,11 +447,6 @@ func redactBearer(text string) string {
 	}
 }
 
-func utf8Valid(s string) bool {
-	for _, r := range s {
-		if r == unicode.ReplacementChar {
-			return false
-		}
-	}
-	return true
-}
+// utf8Valid reports whether s is valid UTF-8. A replacement character that the
+// application supplied is legitimate text; only an invalid byte sequence is not.
+func utf8Valid(s string) bool { return utf8.ValidString(s) }

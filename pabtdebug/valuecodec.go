@@ -23,6 +23,7 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"time"
 )
 
 var (
@@ -124,6 +125,9 @@ type ValueLimits struct {
 
 	// MaxDisplayBytes bounds a rendered or diagnostic string.
 	MaxDisplayBytes uint32
+
+	// MaxStackFrames bounds the frame descriptions a diagnostic may carry.
+	MaxStackFrames uint32
 }
 
 // DefaultValueLimits returns limits that suit an interactive local debugger.
@@ -133,13 +137,14 @@ func DefaultValueLimits() ValueLimits {
 		MaxValueDepth:   64,
 		MaxValueNodes:   10000,
 		MaxDisplayBytes: 4096,
+		MaxStackFrames:  64,
 	}
 }
 
 // Validate reports limits that cannot bound anything.
 func (l ValueLimits) Validate() error {
 	if l.MaxValueBytes == 0 || l.MaxValueDepth == 0 ||
-		l.MaxValueNodes == 0 || l.MaxDisplayBytes == 0 {
+		l.MaxValueNodes == 0 || l.MaxDisplayBytes == 0 || l.MaxStackFrames == 0 {
 		return fmt.Errorf(`pabtdebug: incomplete value limits`)
 	}
 	return nil
@@ -207,7 +212,7 @@ func (r *CodecRegistry) Encode(ctx context.Context, source string, v any) (Store
 			return StoredValue{}, err
 		}
 		out.Visibility = ValueError
-		out.Error = san.Sanitize(err.Error())
+		out.Error = redactor.scrub(san.Sanitize(err.Error()))
 		return finishValue(&out)
 	}
 	if decision.Redacted {
@@ -242,10 +247,13 @@ func (r *CodecRegistry) Encode(ctx context.Context, source string, v any) (Store
 	if err != nil {
 		return StoredValue{}, err
 	}
-	data, err := codec.Encode(v)
+	data, err := encodeWithCodec(codec, v)
 	if err != nil {
 		out.Visibility = ValueError
-		out.Error = san.Sanitize(err.Error())
+		// The scrubber knows the literals the walk saw, so a failure that repeats
+		// one is cleaned here. Without this, an error is the one place a secret
+		// could reach the record.
+		out.Error = redactor.scrub(san.Sanitize(err.Error()))
 		return finishValue(&out)
 	}
 	out.CodecID = codec.ID()
@@ -258,6 +266,38 @@ func (r *CodecRegistry) Encode(ctx context.Context, source string, v any) (Store
 	// response carry the same text.
 	out.Display = redactor.scrub(out.Display)
 	return finishValue(&out)
+}
+
+// encodeWithCodec runs a codec, converting a panic into an error.
+//
+// A panicking codec is application-adjacent code whose panic text can carry
+// anything, including a secret. Recovering here is what keeps that text inside
+// the scrubber instead of unwinding through the caller's frame.
+func encodeWithCodec(c ValueCodec, v any) (data Bytes, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			data = nil
+			err = fmt.Errorf("%w: codec %s panicked: %v", ErrValueUnencodable, c.ID(), r)
+		}
+	}()
+	return c.Encode(v)
+}
+
+var (
+	timeType      = reflect.TypeOf(time.Time{})
+	timestampType = reflect.TypeOf(Timestamp(time.Time{}))
+)
+
+// bytesOf returns a byte slice or byte array's bytes.
+func bytesOf(v reflect.Value) []byte {
+	if v.Kind() == reflect.Slice {
+		return v.Bytes()
+	}
+	out := make([]byte, v.Len())
+	for i := range v.Len() {
+		out[i] = byte(v.Index(i).Uint())
+	}
+	return out
 }
 
 // selectCodec resolves a codec for t.
@@ -325,6 +365,55 @@ func displayOf(v any) string {
 		return s.String()
 	}
 	return fmt.Sprintf("%v", v)
+}
+
+// projectedName returns the key a field is recorded under.
+//
+// The declared wire name is preferred when there is one, because that is the name
+// the application already chose and it round trips through the canonical encoder
+// unchanged. Otherwise the field name is normalised.
+//
+// The name is made unique within its container. Two fields can normalise to the
+// same string, and letting them collide would drop one of them without trace and
+// assert a value the application never held.
+func projectedName(f reflect.StructField, taken map[string]bool) string {
+	name := f.Name
+	if tag, ok := f.Tag.Lookup("json"); ok {
+		if comma := strings.IndexByte(tag, ','); comma >= 0 {
+			tag = tag[:comma]
+		}
+		if tag == "-" {
+			return ""
+		}
+		if tag != "" {
+			name = tag
+		}
+	}
+	if !taken[name] {
+		return name
+	}
+	normalised := typeNameKey(name)
+	if !taken[normalised] {
+		return normalised
+	}
+	for i := 2; ; i++ {
+		candidate := fmt.Sprintf("%s_%d", normalised, i)
+		if !taken[candidate] {
+			return candidate
+		}
+	}
+}
+
+// putProjected stores one projected entry, refusing to overwrite another.
+func putProjected(into map[string]any, name string, value any) error {
+	if name == "" {
+		return nil
+	}
+	if _, clash := into[name]; clash {
+		return fmt.Errorf("%w: two entries project onto the name %q", ErrValueUnencodable, name)
+	}
+	into[name] = value
+	return nil
 }
 
 // typeNameKey normalises a path segment to lower snake case so that a field
@@ -395,25 +484,42 @@ func projectStructure(v reflect.Value, depth, nodes uint32) (any, error) {
 		}
 		return projectStructure(v.Elem(), depth+1, nodes)
 	case reflect.Struct:
+		// A struct whose every field is unexported is a time or a similar opaque
+		// value. Projecting it to an empty object would record total loss while
+		// reporting the value as semantic, so it is recorded by its canonical text.
+		if v.Type() == timeType {
+			return v.Interface().(time.Time).UTC().Format(time.RFC3339Nano), nil
+		}
+		if v.Type() == timestampType {
+			return time.Time(v.Interface().(Timestamp)).UTC().Format(time.RFC3339Nano), nil
+		}
 		t := v.Type()
 		out := make(map[string]any, t.NumField())
+		taken := make(map[string]bool, t.NumField())
 		for i := range t.NumField() {
 			field := t.Field(i)
 			if !field.IsExported() {
 				continue
 			}
+			name := projectedName(field, taken)
+			if name == "" {
+				continue
+			}
+			taken[name] = true
 			child, err := projectStructure(v.Field(i), depth+1, nodes)
 			if err != nil {
 				return nil, err
 			}
-			out[typeNameKey(field.Name)] = child
+			if err := putProjected(out, name, child); err != nil {
+				return nil, err
+			}
 		}
 		return out, nil
 	case reflect.Map:
 		out := make(map[string]any, v.Len())
 		iter := v.MapRange()
 		for iter.Next() {
-			if iter.Key().Kind() != reflect.String && iter.Key().Kind() != reflect.Interface {
+			if iter.Key().Kind() != reflect.String {
 				return nil, fmt.Errorf("%w: map key of kind %s",
 					ErrValueUnencodable, iter.Key().Kind())
 			}
@@ -421,12 +527,16 @@ func projectStructure(v reflect.Value, depth, nodes uint32) (any, error) {
 			if err != nil {
 				return nil, err
 			}
-			out[typeNameKey(fmt.Sprint(iter.Key().Interface()))] = child
+			if err := putProjected(out, iter.Key().String(), child); err != nil {
+				return nil, err
+			}
 		}
 		return out, nil
 	case reflect.Slice, reflect.Array:
-		if v.Kind() == reflect.Slice && v.Type().Elem().Kind() == reflect.Uint8 {
-			return string(v.Bytes()), nil
+		// A byte run is recorded as text in both projections, so an array of
+		// bytes and a string holding the same bytes agree.
+		if v.Type().Elem().Kind() == reflect.Uint8 {
+			return string(bytesOf(v)), nil
 		}
 		out := make([]any, 0, v.Len())
 		for i := range v.Len() {
@@ -469,43 +579,63 @@ func projectRedacted(limits ValueLimits, v reflect.Value, depth, nodes uint32) (
 		}
 		return projectRedacted(limits, v.Elem(), depth+1, nodes)
 	case reflect.Struct:
+		if v.Type() == timeType {
+			return v.Interface().(time.Time).UTC().Format(time.RFC3339Nano), nil
+		}
+		if v.Type() == timestampType {
+			return time.Time(v.Interface().(Timestamp)).UTC().Format(time.RFC3339Nano), nil
+		}
 		t := v.Type()
 		out := make(map[string]any, t.NumField())
+		taken := make(map[string]bool, t.NumField())
 		for i := range t.NumField() {
 			field := t.Field(i)
 			if !field.IsExported() {
 				continue
 			}
+			name := projectedName(field, taken)
+			if name == "" {
+				continue
+			}
+			taken[name] = true
 			if IsSensitiveSegment(field.Name) {
-				out[typeNameKey(field.Name)] = RedactedMarker
+				if err := putProjected(out, name, RedactedMarker); err != nil {
+					return nil, err
+				}
 				continue
 			}
 			child, err := projectRedacted(limits, v.Field(i), depth+1, nodes)
 			if err != nil {
 				return nil, err
 			}
-			out[typeNameKey(field.Name)] = child
+			if err := putProjected(out, name, child); err != nil {
+				return nil, err
+			}
 		}
 		return out, nil
 	case reflect.Map:
 		out := make(map[string]any, v.Len())
 		iter := v.MapRange()
 		for iter.Next() {
-			segment := fmt.Sprint(iter.Key().Interface())
+			segment := iter.Key().String()
 			if IsSensitiveSegment(segment) {
-				out[typeNameKey(segment)] = RedactedMarker
+				if err := putProjected(out, segment, RedactedMarker); err != nil {
+					return nil, err
+				}
 				continue
 			}
 			child, err := projectRedacted(limits, iter.Value(), depth+1, nodes)
 			if err != nil {
 				return nil, err
 			}
-			out[typeNameKey(segment)] = child
+			if err := putProjected(out, segment, child); err != nil {
+				return nil, err
+			}
 		}
 		return out, nil
 	case reflect.Slice, reflect.Array:
-		if v.Kind() == reflect.Slice && v.Type().Elem().Kind() == reflect.Uint8 {
-			return string(v.Bytes()), nil
+		if v.Type().Elem().Kind() == reflect.Uint8 {
+			return string(bytesOf(v)), nil
 		}
 		out := make([]any, 0, v.Len())
 		for i := range v.Len() {

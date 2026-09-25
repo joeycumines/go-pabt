@@ -17,7 +17,9 @@
 package pabtdebug
 
 import (
+	"encoding/json"
 	"fmt"
+	"reflect"
 
 	bt "github.com/joeycumines/go-behaviortree"
 	"github.com/joeycumines/go-pabt"
@@ -97,9 +99,62 @@ type StoredPanic struct {
 // StoredNodeStatus is a node's coherent tick accounting.
 type StoredNodeStatus struct {
 	TickCount     uint64 `json:"tickCount"`
-	LastStatus    uint8  `json:"lastStatus"`
-	StatusPresent bool   `json:"statusPresent"`
+	LastStatus    uint8  `json:"-"`
+	StatusPresent bool   `json:"-"`
 	Version       uint64 `json:"version"`
+}
+
+// MarshalJSON writes the status as text and its presence as a separate flag.
+//
+// go-behaviortree numbers its statuses 1, 2, and 3, with 0 meaning nothing. A
+// stored number would therefore carry a value that looks like a status and is
+// not, and a reader of a future record would have to know the numbering.
+func (s StoredNodeStatus) MarshalJSON() ([]byte, error) {
+	type alias StoredNodeStatus
+	return json.Marshal(struct {
+		alias
+		LastStatus    string `json:"lastStatus"`
+		StatusPresent bool   `json:"statusPresent"`
+	}{
+		alias:         alias(s),
+		LastStatus:    mustStatusText(s.LastStatus, s.StatusPresent),
+		StatusPresent: s.StatusPresent,
+	})
+}
+
+// UnmarshalJSON reads the status from text and refuses anything undefined.
+func (s *StoredNodeStatus) UnmarshalJSON(data []byte) error {
+	type alias StoredNodeStatus
+	var raw struct {
+		alias
+		LastStatus string `json:"lastStatus"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return fmt.Errorf("%w: %v", ErrCanonicalDecoding, err)
+	}
+	status, present, err := DecodeStatusText(raw.LastStatus)
+	if err != nil {
+		return err
+	}
+	*s = StoredNodeStatus(raw.alias)
+	s.StatusPresent = present
+	if present {
+		s.LastStatus = uint8(status)
+	} else {
+		s.LastStatus = 0
+	}
+	return nil
+}
+
+func mustStatusText(status uint8, present bool) string {
+	text, err := StatusText(bt.Status(status), present)
+	if err != nil {
+		// A status the dependency does not define is not written as a number
+		// either. It is written as an absent status, so the record carries the
+		// problem as a capture error rather than as a fabricated status.
+		return ""
+	}
+	return text
 }
 
 // NodeStatusOf converts a captured status, rejecting one the dependency does not
@@ -190,6 +245,7 @@ type StoredCodec struct {
 	Version     uint32 `json:"version"`
 	ReflectType string `json:"reflectType"`
 	Nilable     bool   `json:"nilable"`
+	Fallback    bool   `json:"fallback"`
 	SHA256      string `json:"sha256"`
 }
 
@@ -205,14 +261,23 @@ func HashCodec(c StoredCodec) (string, error) {
 }
 
 // CodecOf converts a registered codec into its persisted descriptor.
+//
+// A fallback codec declares no match type, which is how a registry says "this
+// codec is reached only when no exact one matched". Its descriptor records that
+// rather than dereferencing a type that is not there.
 func CodecOf(c ValueCodec) StoredCodec {
+	if c == nil {
+		return StoredCodec{}
+	}
 	t := c.MatchType()
-	nilable := t != nil && (t.Kind() == 0 || t.Kind() == 20) // invalid or interface
+	if t == nil {
+		return StoredCodec{ID: c.ID(), Version: c.Version(), Fallback: true}
+	}
 	return StoredCodec{
 		ID:          c.ID(),
 		Version:     c.Version(),
 		ReflectType: t.String(),
-		Nilable:     nilable,
+		Nilable:     t.Kind() == reflect.Interface,
 	}
 }
 
@@ -340,6 +405,53 @@ type StoredRecord struct {
 	PayloadSHA256        string            `json:"payloadSha256"`
 	PreviousRecordSHA256 string            `json:"previousRecordSha256"`
 	RecordSHA256         string            `json:"recordSha256"`
+}
+
+// MarshalJSON writes the record's status as text and omits absent optional
+// sections, so two records that differ only in a section that was never populated
+// do not differ in bytes.
+func (r StoredRecord) MarshalJSON() ([]byte, error) {
+	type alias StoredRecord
+	status, err := StatusText(bt.Status(r.Status), r.StatusPresent)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(struct {
+		alias
+		Status        string      `json:"status"`
+		StatusPresent bool        `json:"statusPresent"`
+		Tree          *StoredTree `json:"tree"`
+	}{
+		alias:         alias(r),
+		Status:        status,
+		StatusPresent: r.StatusPresent,
+		Tree:          r.Tree,
+	})
+}
+
+// UnmarshalJSON reads the record's status from text and refuses anything the
+// dependency does not define.
+func (r *StoredRecord) UnmarshalJSON(data []byte) error {
+	type alias StoredRecord
+	var raw struct {
+		alias
+		Status string `json:"status"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return fmt.Errorf("%w: %v", ErrCanonicalDecoding, err)
+	}
+	status, present, err := DecodeStatusText(raw.Status)
+	if err != nil {
+		return err
+	}
+	*r = StoredRecord(raw.alias)
+	r.StatusPresent = present
+	if present {
+		r.Status = uint8(status)
+	} else {
+		r.Status = 0
+	}
+	return nil
 }
 
 // HashRecord digests a record.

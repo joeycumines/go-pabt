@@ -27,7 +27,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"unicode/utf8"
 )
 
 var (
@@ -45,12 +44,23 @@ var (
 type Bytes []byte
 
 // MarshalJSON implements json.Marshaler.
+//
+// A nil Bytes and an empty one are different facts, and they are written
+// differently so they cannot share a digest. encoding/json would render both as
+// the empty string.
 func (b Bytes) MarshalJSON() ([]byte, error) {
+	if b == nil {
+		return []byte("null"), nil
+	}
 	return json.Marshal(base64.RawStdEncoding.EncodeToString(b))
 }
 
 // UnmarshalJSON implements json.Unmarshaler.
 func (b *Bytes) UnmarshalJSON(data []byte) error {
+	if string(data) == "null" {
+		*b = nil
+		return nil
+	}
 	var s string
 	if err := json.Unmarshal(data, &s); err != nil {
 		return fmt.Errorf("%w: byte field is not a string: %v", ErrCanonicalDecoding, err)
@@ -123,6 +133,12 @@ func CanonicalEncode(v any) ([]byte, error) {
 // where a struct is expected are all rejected, because accepting them would let
 // two different byte strings decode to the same value and break a digest.
 func CanonicalDecode(data []byte, target any) error {
+	// A duplicate key is refused before decoding. encoding/json applies members in
+	// order and lets the last one win, so two different byte strings would decode
+	// to the same fact and produce the same digest.
+	if err := rejectDuplicateKeys(data); err != nil {
+		return err
+	}
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.DisallowUnknownFields()
 	dec.UseNumber()
@@ -131,6 +147,56 @@ func CanonicalDecode(data []byte, target any) error {
 	}
 	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
 		return fmt.Errorf("%w: trailing data after the value", ErrCanonicalDecoding)
+	}
+	return nil
+}
+
+// rejectDuplicateKeys walks the raw bytes and refuses a repeated object key at any
+// depth.
+func rejectDuplicateKeys(data []byte) error {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.UseNumber()
+	return walkForDuplicateKeys(dec)
+}
+
+func walkForDuplicateKeys(dec *json.Decoder) error {
+	token, err := dec.Token()
+	if err != nil {
+		return fmt.Errorf("%w: %v", ErrCanonicalDecoding, err)
+	}
+	delim, ok := token.(json.Delim)
+	if !ok {
+		return nil
+	}
+	switch delim {
+	case '{':
+		seen := make(map[string]bool)
+		for dec.More() {
+			key, err := dec.Token()
+			if err != nil {
+				return fmt.Errorf("%w: %v", ErrCanonicalDecoding, err)
+			}
+			name, ok := key.(string)
+			if !ok {
+				return fmt.Errorf("%w: object key is not a string", ErrCanonicalDecoding)
+			}
+			if seen[name] {
+				return fmt.Errorf("%w: duplicate key %q", ErrCanonicalDecoding, name)
+			}
+			seen[name] = true
+			if err := walkForDuplicateKeys(dec); err != nil {
+				return err
+			}
+		}
+	case '[':
+		for dec.More() {
+			if err := walkForDuplicateKeys(dec); err != nil {
+				return err
+			}
+		}
+	}
+	if _, err := dec.Token(); err != nil {
+		return fmt.Errorf("%w: %v", ErrCanonicalDecoding, err)
 	}
 	return nil
 }
@@ -209,31 +275,36 @@ func writeCanonicalNumber(b *strings.Builder, n json.Number) error {
 	if _, err := strconv.ParseUint(s, 10, 64); err == nil {
 		return writeCanonicalInt(b, s)
 	}
-	f, err := strconv.ParseFloat(s, 64)
-	if err != nil {
+	// A float is written exactly as it was read. The requirement is that it
+	// round trips, not that it matches one particular spelling: encoding/json and
+	// strconv disagree on ordinary values such as 1e-5, and demanding one
+	// spelling would refuse values that are perfectly representable.
+	if _, err := strconv.ParseFloat(s, 64); err != nil {
 		return fmt.Errorf("%w: number %q: %v", ErrCanonicalEncoding, s, err)
-	}
-	// A float that cannot be represented exactly is rejected rather than rounded,
-	// because a rounded value is a different fact from the one recorded.
-	if strconv.FormatFloat(f, 'g', -1, 64) != s {
-		return fmt.Errorf("%w: float %q is not in canonical form", ErrCanonicalEncoding, s)
 	}
 	b.WriteString(s)
 	return nil
 }
 
-// writeCanonicalInt strips a redundant leading zero or plus, so that two
-// spellings of the same integer cannot produce two digests.
+// writeCanonicalInt normalises an integer's spelling so that two spellings of the
+// same integer cannot produce two digests.
+//
+// The sign is kept and the zeros are stripped only after it. Trimming zeros from
+// the whole string would leave a negative number as "-0" plus digits and write a
+// second minus in front, producing bytes that are not JSON at all.
 func writeCanonicalInt(b *strings.Builder, s string) error {
-	trimmed := strings.TrimLeft(s, "+")
-	trimmed = strings.TrimLeft(trimmed, "0")
-	if trimmed == "" {
-		trimmed = "0"
+	negative := strings.HasPrefix(s, "-")
+	digits := strings.TrimLeft(strings.TrimLeft(s, "+-"), "0")
+	if digits == "" {
+		digits = "0"
+		// A negative zero is still zero, and writing "-0" would make it a
+		// different fact from "0".
+		negative = false
 	}
-	if s[0] == '-' {
-		b.WriteString("-")
+	if negative {
+		b.WriteByte('-')
 	}
-	b.WriteString(trimmed)
+	b.WriteString(digits)
 	return nil
 }
 
@@ -241,12 +312,9 @@ func writeCanonicalInt(b *strings.Builder, s string) error {
 // In particular it leaves <, >, and & alone, so a recorded value cannot change
 // meaning when it is embedded in a page.
 func writeCanonicalString(b *strings.Builder, s string) {
-	if !utf8.ValidString(s) {
-		// Unreachable through encoding/json, which replaces invalid bytes, but
-		// a corrupt value must not become a silent replacement character.
-		b.WriteString(`"` + strings.Repeat(`�`, 1) + `"`)
-		return
-	}
+	// encoding/json has already replaced any invalid byte with U+FFFD, so the
+	// text here is valid. That replacement is written as a raw rune, which is
+	// what the decoder reads back, so the two encoders cannot disagree.
 	b.WriteByte('"')
 	for _, r := range s {
 		switch r {

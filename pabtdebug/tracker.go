@@ -134,12 +134,7 @@ func (t *Tracker) Track(status bt.Status, err error) {
 	}
 	iter := int(t.iteration.Add(1))
 
-	var durationMs float64
 	now := timeNow()
-	if !t.lastTrackTime.IsZero() {
-		durationMs = now.Sub(t.lastTrackTime).Seconds() * 1000
-	}
-	t.lastTrackTime = now
 
 	tree := t.BuildTree()
 	nodeCount := 0
@@ -148,12 +143,11 @@ func (t *Tracker) Track(status bt.Status, err error) {
 	}
 
 	event := TickEvent{
-		Iteration:  iter,
-		Status:     status,
-		Tree:       tree,
-		Timestamp:  now,
-		DurationMs: durationMs,
-		NodeCount:  nodeCount,
+		Iteration: iter,
+		Status:    status,
+		Tree:      tree,
+		Timestamp: now,
+		NodeCount: nodeCount,
 	}
 
 	if bp := t.checkBreakpoints(&event); bp != nil {
@@ -161,6 +155,11 @@ func (t *Tracker) Track(status bt.Status, err error) {
 	}
 
 	t.mu.Lock()
+	var durationMs float64
+	if !t.lastTrackTime.IsZero() {
+		durationMs = now.Sub(t.lastTrackTime).Seconds() * 1000
+	}
+	t.lastTrackTime = now
 	entry := eventEntry{
 		Iteration:     iter,
 		Status:        status,

@@ -352,15 +352,15 @@ func TestDiagnosticSanitizerBoundsAndStripsControlText(t *testing.T) {
 
 func TestSanitizeStackIsBounded(t *testing.T) {
 	limits := DefaultValueLimits()
-	limits.MaxValueDepth = 3
+	limits.MaxStackFrames = 3
 	san := &textSanitizer{limits: limits}
 	frames := make([]string, 0, 50)
 	for i := range 50 {
 		frames = append(frames, fmt.Sprintf("frame.%d token=%s", i, secretLiteralValue))
 	}
 	got := san.SanitizeStack(frames)
-	if len(got) > int(limits.MaxValueDepth) {
-		t.Errorf("SanitizeStack returned %d frames, want at most %d", len(got), limits.MaxValueDepth)
+	if len(got) > int(limits.MaxStackFrames) {
+		t.Errorf("SanitizeStack returned %d frames, want at most %d", len(got), limits.MaxStackFrames)
 	}
 	for _, frame := range got {
 		if strings.Contains(frame, secretLiteralValue) {

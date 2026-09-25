@@ -56,10 +56,10 @@ func ValidateStatus(s bt.Status) error {
 // different tick. Version increases once per recorded tick and lets a consumer
 // detect that two reads came from different ticks.
 type NodeStatusSnapshot struct {
-	TickCount     int
-	LastStatus    bt.Status
-	StatusPresent bool
-	Version       uint64
+	TickCount     int       `json:"tickCount"`
+	LastStatus    bt.Status `json:"lastStatus"`
+	StatusPresent bool      `json:"statusPresent"`
+	Version       uint64    `json:"version"`
 }
 
 // NodeStatus tracks tick counts and last status for a node.
