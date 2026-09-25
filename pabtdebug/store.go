@@ -345,9 +345,12 @@ func OpenSQLiteStore(ctx context.Context, cfg SQLiteStoreConfig) (*SQLiteStore, 
 // A store is not simply "ready" because it opened. An intent left by an earlier
 // process means a tick was allocated a sequence and never resolved, and a chain
 // that does not verify means the history on disk is not what was committed. Both
-// are recorded, so a caller reads the state rather than assuming it, and a
-// corrupt chain is refused outright: a debugger that serves an altered history is
-// worse than one that will not open.
+// are recorded, so a caller reads the state rather than assuming it, and a chain
+// that does not verify refuses a read-write open outright: a debugger that appends
+// to an altered history is worse than one that will not open.
+//
+// A read-only open is never refused. It is being used to look at a history,
+// including a damaged one, which is exactly when inspection matters most.
 func (s *SQLiteStore) admit(ctx context.Context) error {
 	pending, err := s.PendingIntents(ctx)
 	if err != nil {
@@ -365,18 +368,15 @@ func (s *SQLiteStore) admit(ctx context.Context) error {
 		return err
 	}
 	// Every run that still has an open intent has its chain checked, so a caller
-	// is told about corruption before it writes anything more onto the run.
+	// is told about corruption before it writes anything more onto the run. A run
+	// with no records at all has a valid empty chain, which is the ordinary
+	// outcome of a crash during a run's first tick, so it is not treated as damage.
 	for _, ticket := range pending {
-		verified, err := s.VerifyChain(ctx, ticket.RunKey)
-		if err != nil {
+		if _, err := s.VerifyChain(ctx, ticket.RunKey); err != nil {
 			if errors.Is(err, ErrStoreCorrupt) {
 				_ = s.setRecovery(ctx, RecoveryCorrupt)
 			}
 			return err
-		}
-		if verified == 0 {
-			return fmt.Errorf("%w: run %s has an open intent but no records",
-				ErrStoreCorrupt, ticket.RunKey.RunID)
 		}
 	}
 	return nil
@@ -414,11 +414,18 @@ func canonicalStorePath(path string, mode StoreMode) (string, error) {
 		return "", fmt.Errorf("%w: %v", ErrStoreCorrupt, err)
 	}
 	dir := filepath.Dir(abs)
-	// The path is resolved rather than refused when it contains a symlink. A
-	// system temporary directory is very often a symlink, and refusing those would
-	// refuse ordinary use; resolving gives one canonical path that every later
-	// comparison, lock, and export can agree on.
-	if resolved, err := filepath.EvalSymlinks(dir); err == nil {
+	// The whole path is resolved rather than refused when it contains a symlink. A
+	// system temporary directory is very often a symlink, so refusing those would
+	// refuse ordinary use; resolving gives one canonical path that the lock, the
+	// mode, and a later export all agree on.
+	//
+	// The final component matters as much as the directory. A symlinked file would
+	// otherwise let two processes open one history through two paths, and the
+	// second would take its own lock and never be refused.
+	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
+		abs = resolved
+		dir = filepath.Dir(resolved)
+	} else if resolved, err := filepath.EvalSymlinks(dir); err == nil {
 		dir = resolved
 		abs = filepath.Join(resolved, filepath.Base(abs))
 	}
@@ -501,7 +508,8 @@ func (s *SQLiteStore) open(ctx context.Context) error {
 	// The read DSN carries its own query string. A read-write store's main DSN is a
 	// bare path, so appending a parameter with an ampersand would name a different
 	// file rather than configure the same one.
-	readDSN := s.path + "?_pragma=query_only(1)&_pragma=cache_size(-8192)&_pragma=temp_store(MEMORY)"
+	readDSN := s.path + "?_pragma=query_only(1)&_pragma=busy_timeout(5000)" +
+		"&_pragma=cache_size(-8192)&_pragma=temp_store(MEMORY)"
 	if !write {
 		readDSN = s.path + "?mode=ro&_pragma=query_only(1)"
 	}

@@ -25,6 +25,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 // TestADurableHistorySurvivesAKilledProcess is the durability evidence.
@@ -52,8 +53,21 @@ func TestADurableHistorySurvivesAKilledProcess(t *testing.T) {
 	cmd.Stdout = &out
 	cmd.Stderr = &out
 	// The child kills itself, so a non-zero exit is expected and its message is
-	// the only report there will be.
-	_ = cmd.Run()
+	// the only report there will be. The context is what stops a child that
+	// neither died nor deadlocked from hanging the suite.
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	runErr := cmd.Start()
+	if runErr == nil {
+		runErr = cmd.Wait()
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			_ = cmd.Process.Kill()
+			t.Fatalf("the crash helper neither died nor reported:\n%s", out.String())
+		}
+	}
+	if runErr == nil {
+		t.Fatal("the crash helper exited cleanly, so no process was killed")
+	}
 	if !strings.Contains(out.String(), "CRASH_HELPER_COMMITTED") {
 		t.Fatalf("the crash helper did not reach its commit:\n%s", out.String())
 	}

@@ -373,6 +373,10 @@ func (s *SQLiteStore) Commit(ctx context.Context, ticket IntentTicket, record St
 		return CommitReceipt{}, fmt.Errorf("%w: the record is at plan revision %d, the attempt began at %d",
 			ErrHeadMismatch, record.Revision.PlanRevision, ticket.ExpectedPlanRevision)
 	}
+	// Everything the store owns is stamped before the digests are taken, including
+	// the eligibility flag, which is derived rather than believed: a record that
+	// claims eligibility with no tree would be a claim the store cannot honour.
+	record.TreeEligible = record.Tree != nil
 	record.PreviousRecordSHA256 = link
 	record.Format = FormatName
 	record.Version = FormatVersion
@@ -420,7 +424,6 @@ func (s *SQLiteStore) Commit(ctx context.Context, ticket IntentTicket, record St
 		pendingTree = treeBytes
 	}
 
-	record.TreeEligible = record.Tree != nil
 	// The record comes first: the representation below references it, and the head
 	// below is the run's own link to it. All are in one transaction, so they land
 	// together or not at all.

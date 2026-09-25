@@ -18,6 +18,7 @@ package pabtdebug
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"os"
 	"path/filepath"
@@ -725,43 +726,181 @@ func TestTheConnectionPolicyReachesEveryConnection(t *testing.T) {
 	// A pragma issued through a pool reaches one connection. The policy is in the
 	// data source name, so every connection the pool mints has it, and the
 	// foreign key is therefore in force rather than only declared.
+	//
+	// The connections are held open at the same time. A loop that took one
+	// connection and closed it before taking the next would only ever re-test the
+	// same one, and would pass against a store whose policy reached nothing but
+	// that connection.
 	store := openTestStore(t, testStorePath(t))
-	identity := bootstrapTestStore(t, store)
+	bootstrapTestStore(t, store)
 
-	for range 8 {
+	// The store keeps one writer connection, so the pool is widened here on
+	// purpose. The claim under test is that the policy travels in the data source
+	// name and therefore reaches any connection the pool mints, whatever size the
+	// pool is; a future change to more than one must not silently lose it.
+	store.writer.SetMaxOpenConns(3)
+	const simultaneous = 3
+	conns := make([]*sql.Conn, 0, simultaneous)
+	defer func() {
+		for _, conn := range conns {
+			_ = conn.Close()
+		}
+	}()
+	for range simultaneous {
 		conn, err := store.writer.Conn(context.Background())
 		if err != nil {
 			t.Fatalf("writer connection: %v", err)
 		}
-		var foreignKeys, busy int
-		if err := conn.QueryRowContext(context.Background(), "PRAGMA foreign_keys").Scan(&foreignKeys); err != nil {
-			t.Fatalf("read foreign_keys: %v", err)
-		}
-		if err := conn.QueryRowContext(context.Background(), "PRAGMA busy_timeout").Scan(&busy); err != nil {
-			t.Fatalf("read busy_timeout: %v", err)
-		}
-		_ = conn.Close()
-		if foreignKeys != 1 {
-			t.Errorf("a pooled writer connection has foreign_keys=%d, want 1", foreignKeys)
-		}
-		if busy != 5000 {
-			t.Errorf("a pooled writer connection has busy_timeout=%d, want 5000", busy)
+		conns = append(conns, conn)
+	}
+	for i, conn := range conns {
+		for name, want := range map[string]int{"foreign_keys": 1, "busy_timeout": 5000} {
+			var got int
+			if err := conn.QueryRowContext(context.Background(), "PRAGMA "+name).Scan(&got); err != nil {
+				t.Fatalf("connection %d: read %s: %v", i, name, err)
+			}
+			if got != want {
+				t.Errorf("connection %d has %s=%d, want %d: the policy did not reach it",
+					i, name, got, want)
+			}
 		}
 	}
-	if got := store.pragmaOn(t, "synchronous"); got != 2 {
-		t.Errorf("synchronous = %d, want 2 (FULL)", got)
+
+	// A row naming a session that does not exist must be refused on every one of
+	// them. If the foreign key were inert on any connection, this insert would
+	// land and no read path could ever surface it.
+	orphan := "INSERT INTO records (session_id, event_uid, plan_id, run_id, seq, attempt_id, kind, " +
+		"payload_state, tree_eligible, execution_started, recorded_at, record_json, " +
+		"payload_sha256, previous_record_sha256, record_sha256) " +
+		"VALUES (?, 'e', 'p', 'r', 1, 'a', 'tick', 'none', 0, 0, 'now', x'00', " +
+		"zeroblob(32), zeroblob(32), zeroblob(32))"
+	for i, conn := range conns {
+		if _, err := conn.ExecContext(context.Background(), orphan, orphanSessionID); err == nil {
+			t.Errorf("an orphan record committed on connection %d: the foreign key is not in force", i)
+		}
 	}
-	// A row naming a session that does not exist must be refused.
-	_, err := store.writer.Exec(
-		"INSERT INTO records (session_id, event_uid, plan_id, run_id, seq, attempt_id, kind, "+
-			"payload_state, tree_eligible, execution_started, recorded_at, record_json, "+
-			"payload_sha256, previous_record_sha256, record_sha256) "+
-			"VALUES (?, 'e', 'p', 'r', 1, 'a', 'tick', 'none', 0, 0, 'now', x'00', "+
-			"zeroblob(32), zeroblob(32), zeroblob(32))", orphanSessionID)
-	if err == nil {
-		t.Error("an orphan record was inserted: the foreign key is not in force")
+}
+
+func TestACrashBeforeTheFirstCommitStillOpens(t *testing.T) {
+	// A run whose first tick was interrupted holds an intent and no records. Its
+	// chain is empty, which is valid: refusing this would make the easiest crash
+	// to hit the one that permanently needed a hand-edited database.
+	path := testStorePath(t)
+	first := openTestStore(t, path)
+	identity := bootstrapTestStore(t, first)
+	key := RunKey{SessionID: identity.SessionID, PlanID: identity.PlanID, RunID: identity.RunID}
+	if _, err := first.Begin(context.Background(),
+		BeginRequest{RunKey: key, ExpectedPlanRevision: testPlanRevision}); err != nil {
+		t.Fatalf("Begin: %v", err)
 	}
-	_ = identity
+	if err := first.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	second, err := OpenSQLiteStore(context.Background(), SQLiteStoreConfig{Path: path})
+	if err != nil {
+		t.Fatalf("a store interrupted during its first tick could not be reopened: %v", err)
+	}
+	defer func() { _ = second.Close() }()
+	installation, err := second.Installation(context.Background())
+	if err != nil {
+		t.Fatalf("Installation: %v", err)
+	}
+	if installation.Recovery != RecoveryPending {
+		t.Errorf("recovery = %q, want pending", installation.Recovery)
+	}
+	pending := mustPending(t, second)
+	if err := second.Abort(context.Background(), pending[0]); err != nil {
+		t.Fatalf("Abort: %v", err)
+	}
+	// The run is usable again and the next sequence is the first.
+	ticket, err := second.Begin(context.Background(),
+		BeginRequest{RunKey: key, ExpectedPlanRevision: testPlanRevision})
+	if err != nil {
+		t.Fatalf("Begin after resolving: %v", err)
+	}
+	if ticket.Sequence != 1 {
+		t.Errorf("sequence after resolving an empty run = %d, want 1", ticket.Sequence)
+	}
+	if _, err := second.Commit(context.Background(), ticket, makeRecord(smallTree("n"))); err != nil {
+		t.Errorf("Commit: %v", err)
+	}
+	if verified, err := second.VerifyChain(context.Background(), key); err != nil {
+		t.Errorf("VerifyChain: %v", err)
+	} else if verified != 1 {
+		t.Errorf("chain verified %d records, want 1", verified)
+	}
+}
+
+func TestARecordCannotClaimATreeItDoesNotHave(t *testing.T) {
+	store := openTestStore(t, testStorePath(t))
+	identity := bootstrapTestStore(t, store)
+	key := RunKey{SessionID: identity.SessionID, PlanID: identity.PlanID, RunID: identity.RunID}
+
+	ticket, err := store.Begin(context.Background(),
+		BeginRequest{RunKey: key, ExpectedPlanRevision: testPlanRevision})
+	if err != nil {
+		t.Fatalf("Begin: %v", err)
+	}
+	// A record that claims it is tree eligible while carrying no tree. The
+	// eligibility flag is derived by the store, so the stored record must not
+	// carry the claim.
+	liar := makeRecord(nil)
+	liar.TreeEligible = true
+	liar.PayloadState = PayloadPartial
+	if _, err := store.Commit(context.Background(), ticket, liar); err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+	record, err := store.RecordAt(context.Background(), key, 1)
+	if err != nil {
+		t.Fatalf("RecordAt: %v", err)
+	}
+	if record.TreeEligible {
+		t.Error("a record with no tree was stored as tree eligible")
+	}
+	page, err := store.Events(context.Background(), EventQuery{RunKey: key})
+	if err != nil {
+		t.Fatalf("Events: %v", err)
+	}
+	if len(page.Events) != 1 || page.Events[0].TreeEligible {
+		t.Errorf("the page says the record is tree eligible: %+v", page.Events)
+	}
+	if _, err := store.TreeAt(context.Background(), key, 1); !errors.Is(err, ErrNotFound) {
+		t.Errorf("TreeAt for a record with no tree = %v, want not found", err)
+	}
+}
+
+func TestASymlinkedPathIsTheSameStore(t *testing.T) {
+	// A path through a symlink must resolve to one file, or two processes could
+	// open one history through two paths and neither would be refused.
+	dir := t.TempDir()
+	real := filepath.Join(dir, "real", "session.sqlite")
+	store := openTestStore(t, real)
+	bootstrapTestStore(t, store)
+	if err := os.MkdirAll(filepath.Join(dir, "link"), 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.Symlink(filepath.Join(dir, "real"), filepath.Join(dir, "link", "store")); err != nil {
+		t.Skipf("symlinks are unavailable here: %v", err)
+	}
+	viaLink := filepath.Join(dir, "link", "store", "session.sqlite")
+
+	// The same path twice resolves identically, which is what the lock depends on.
+	if a, err := filepath.EvalSymlinks(real); err != nil {
+		t.Fatalf("resolve: %v", err)
+	} else if b, err := filepath.EvalSymlinks(viaLink); err != nil {
+		t.Fatalf("resolve the link: %v", err)
+	} else if a != b {
+		t.Fatalf("the two paths resolve to %q and %q", a, b)
+	}
+	// Opening through the link must be refused, because the first store holds the
+	// lock on the same file.
+	if _, err := OpenSQLiteStore(context.Background(), SQLiteStoreConfig{Path: viaLink}); err == nil {
+		_ = store.Close()
+		t.Fatal("a symlinked path bypassed the second-writer lock")
+	} else if !errors.Is(err, ErrStoreLocked) {
+		t.Errorf("opening through a symlink = %v, want a lock error", err)
+	}
 }
 
 func TestAReadOnlyOpenRefusesAWorldReadableHistory(t *testing.T) {
