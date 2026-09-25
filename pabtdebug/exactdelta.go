@@ -874,6 +874,9 @@ func (s *SQLiteStore) verifyDeltaReconstructs(
 	delta ExactTreeDelta,
 	targetDigest string,
 ) error {
+	if err := s.checkUsable(false); err != nil {
+		return err
+	}
 	baseRaw, err := s.readRepresentation(ctx, key, delta.BaseEventUID)
 	if err != nil {
 		return err
@@ -940,11 +943,15 @@ func VerifyChain(ctx context.Context, readers *sql.DB, key RunKey, delta *ExactT
 // DeltaBase returns the representation a delta for targetSequence may be computed
 // from, or found=false when the target must be stored as a keyframe.
 //
-// A base is eligible only when it is a complete tree and no record between it
-// and the target is one a delta cannot be computed across: a failure, an
-// interruption, an abort, or a record with no tree. A delta spanning such a
-// record would claim a continuity the history does not have, so the target falls
-// back to a keyframe instead.
+// A base is eligible only when it is a complete tree and no committed record
+// between it and the target is one a delta cannot be computed across: a
+// failure, an interruption, an abort, or a record with no tree.
+//
+// An attempt that was released without a record leaves no row to exclude. That is
+// deliberate: an aborted attempt recorded nothing, so a delta across it is still
+// an exact change between the two trees that exist, and the chain is by digest
+// rather than by position, so nothing is claimed that is not true. What the rule
+// does not do is pretend a released attempt left a mark on the history.
 func (s *SQLiteStore) DeltaBase(
 	ctx context.Context,
 	key RunKey,

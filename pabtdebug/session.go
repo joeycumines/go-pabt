@@ -19,7 +19,6 @@ package pabtdebug
 import (
 	"context"
 	"fmt"
-	"strings"
 	"sync"
 	"time"
 
@@ -67,8 +66,15 @@ type TickResult struct {
 	// Receipt proves the commit. Its zero proof means nothing was committed.
 	Receipt CommitReceipt
 
-	// Kind is the terminal record's kind.
+	// Kind is the kind the attempt would commit. It describes a record that does
+	// not exist when Sequence is zero or Err is set, so a caller must check those
+	// before reading it as a committed kind.
 	Kind RecordKind
+
+	// DeltaSkipped explains why the record was stored as a keyframe when a delta
+	// was expected. It is empty when a delta was stored, when no base was
+	// eligible, or when the record carries no tree.
+	DeltaSkipped string
 
 	// Status is the planner's status, when the tick produced one.
 	Status uint8
@@ -137,8 +143,8 @@ func (s *Session) PlannerRevision() uint64 { return s.planner.PlannerRevision() 
 // Every path out of here either commits exactly one terminal record or returns an
 // error with the sequence released, so a caller can never be left believing a tick
 // was recorded when it was not, nor that a sequence was used when it was not.
-func (s *Session) Tick(ctx context.Context) TickResult {
-	out := TickResult{StartedAt: time.Now()}
+func (s *Session) Tick(ctx context.Context) (out TickResult) {
+	out.StartedAt = time.Now()
 	if !s.gate.TryLock() {
 		out.Err = fmt.Errorf(`pabtdebug: a tick is already in progress`)
 		out.CompletedAt = time.Now()
@@ -146,8 +152,26 @@ func (s *Session) Tick(ctx context.Context) TickResult {
 	}
 	defer s.gate.Unlock()
 
-	head, err := s.store.Head(ctx, s.key)
-	if err != nil {
+	// A panic anywhere in the tick is contained here, not only in the planner call,
+	// so a failure while building the record cannot unwind with the run's lease and
+	// its intent still held and nothing written.
+	var ticket IntentTicket
+	var began bool
+	defer func() {
+		if r := recover(); r != nil {
+			cause := fmt.Errorf("pabtdebug: the tick panicked: %v", r)
+			out = TickResult{
+				StartedAt:   out.StartedAt,
+				CompletedAt: time.Now(),
+				Err:         cause,
+			}
+			if began {
+				out.Err = joinErrors(cause, s.store.Abort(ctx, ticket))
+			}
+		}
+	}()
+
+	if _, err := s.store.Head(ctx, s.key); err != nil {
 		out.Err = err
 		out.CompletedAt = time.Now()
 		return out
@@ -165,8 +189,6 @@ func (s *Session) Tick(ctx context.Context) TickResult {
 		out.CompletedAt = time.Now()
 		return out
 	}
-	_ = head
-
 	if err := s.store.MarkExecutionStarted(ctx, ticket); err != nil {
 		// The attempt is open but execution never began, so it is released rather
 		// than recorded: a record claiming a tick that never ran would be a claim
@@ -175,8 +197,9 @@ func (s *Session) Tick(ctx context.Context) TickResult {
 		out.CompletedAt = time.Now()
 		return out
 	}
+	began = true
 
-	outcome := s.runPlanner(ctx, ticket)
+	outcome := s.runPlanner(ctx, ticket, out.StartedAt)
 	return s.finalize(ctx, ticket, outcome)
 }
 
@@ -196,15 +219,27 @@ type tickOutcome struct {
 // session and leave the attempt open with no record, which is the one state the
 // terminalization rules exist to prevent. It is converted into a panicked record
 // with a scrubbed message.
-func (s *Session) runPlanner(ctx context.Context, ticket IntentTicket) (out tickOutcome) {
+func (s *Session) runPlanner(ctx context.Context, ticket IntentTicket, started time.Time) (out tickOutcome) {
 	defer func() {
 		if r := recover(); r != nil {
-			out = tickOutcome{kind: RecordPanicked, err: fmt.Errorf("pabtdebug: the planner panicked: %v", r)}
+			// The recovered outcome has to be committable. Leaving the execution
+			// zero would give the record a plan revision of zero, which the store
+			// refuses against an attempt that began at the planner's current
+			// revision, and the tick would silently vanish from the history.
+			out = tickOutcome{
+				kind: RecordPanicked,
+				exec: pabt.TickExecution{
+					PlanRevision: s.planner.PlannerRevision(),
+					StartedAt:    started,
+					CompletedAt:  time.Now(),
+				},
+				err: fmt.Errorf("pabtdebug: the planner panicked: %v", r),
+			}
 		}
 	}()
 	exec := s.planner.TickCaptured(pabt.TickEnvironment{AttemptID: ticket.AttemptID})
 	switch {
-	case exec.CaptureError != nil && outcomeIsPanic(exec.CaptureError):
+	case exec.CaptureError != nil:
 		// The capture boundary could not produce a complete record. The failure is
 		// recorded, because the fact that a tick ran and could not be captured is
 		// itself part of the history.
@@ -246,17 +281,30 @@ func (s *Session) finalize(ctx context.Context, ticket IntentTicket, outcome tic
 	record, tree, err := s.buildRecord(ctx, ticket, outcome)
 	if err != nil {
 		// The record could not be built, so the attempt becomes a capture failure
-		// rather than a success the store cannot represent.
+		// rather than a success the store cannot represent. A capture failure has
+		// no status, so the one the tick reported is dropped with it.
 		record = s.terminalRecord(ctx, ticket, RecordCaptureFailed, outcome.exec, err)
 		tree = nil
 		out.Kind = RecordCaptureFailed
+		out.Status = 0
+		out.StatusPresent = false
 	}
 	var delta *ExactTreeDelta
 	if tree != nil {
-		if base, found, baseErr := s.store.DeltaBase(ctx, s.key, ticket.Sequence); baseErr == nil && found {
-			if computed, deltaErr := ComputeExactDelta(base, *tree); deltaErr == nil {
-				delta = computed
+		base, found, baseErr := s.store.DeltaBase(ctx, s.key, ticket.Sequence)
+		switch {
+		case baseErr != nil:
+			// The base could not be read, so the record is a keyframe. The reason
+			// travels with the result rather than being swallowed, because a silently
+			// keyframed history looks like a delta store that never found a base.
+			out.DeltaSkipped = baseErr.Error()
+		case found:
+			computed, deltaErr := ComputeExactDelta(base, *tree)
+			if deltaErr != nil {
+				out.DeltaSkipped = deltaErr.Error()
+				break
 			}
+			delta = computed
 		}
 	}
 	receipt, err := s.store.CommitWithDelta(ctx, ticket, record, delta)
@@ -283,6 +331,14 @@ func (s *Session) buildRecord(
 ) (StoredRecord, *StoredTree, error) {
 	exec := outcome.exec
 	snapshot := exec.Snapshot
+	// The snapshot's revision is the most precise answer, but a recovered panic has
+	// no snapshot at all. Taking the higher of the two keeps the record at or above
+	// the revision the attempt began at, which is what the store requires, rather
+	// than zero, which it refuses.
+	planRevision := snapshot.PlanRevision
+	if planRevision < exec.PlanRevision {
+		planRevision = exec.PlanRevision
+	}
 	record := StoredRecord{
 		Kind:             outcome.kind,
 		PayloadState:     PayloadComplete,
@@ -294,7 +350,7 @@ func (s *Session) buildRecord(
 		Revision: RevisionScope{
 			RunKey:       s.key,
 			Sequence:     ticket.Sequence,
-			PlanRevision: snapshot.PlanRevision,
+			PlanRevision: planRevision,
 			State:        snapshot.StateRevision,
 			Coherence:    snapshot.Coherence,
 		},
@@ -304,7 +360,8 @@ func (s *Session) buildRecord(
 	}
 	if outcome.kind != RecordTick {
 		// A failure has no tree to claim, so it is not tree eligible and its
-		// payload says so rather than carrying a partial one.
+		// payload says so rather than carrying a partial one. Its conditions and
+		// relations are still recorded, so the reason a tick failed is visible.
 		record.PayloadState = PayloadNone
 	}
 	if exec.PlannerError != nil {
@@ -319,7 +376,6 @@ func (s *Session) buildRecord(
 			Type:    "panic",
 			Message: s.sanitize(outcome.err),
 		}
-		record.PayloadState = PayloadNone
 	}
 
 	conditions, err := s.storedConditions(ctx, snapshot)
@@ -329,6 +385,7 @@ func (s *Session) buildRecord(
 	record.Conditions = conditions
 	relations := s.storedRelations(ctx, snapshot)
 
+	record.Relations = relations
 	if outcome.kind == RecordTick && len(snapshot.Nodes) > 0 {
 		tree, err := s.storedTree(snapshot)
 		if err != nil {
@@ -336,12 +393,6 @@ func (s *Session) buildRecord(
 		}
 		record.Tree = tree
 		record.TreeEligible = true
-		record.Relations = relations
-	} else {
-		// A failure still records what the capture boundary managed to report, so
-		// the reason a tick failed is visible even when the tree is not.
-		record.Conditions = conditions
-		record.Relations = relations
 	}
 	return record, record.Tree, nil
 }
@@ -363,7 +414,7 @@ func (s *Session) terminalRecord(
 		Revision: RevisionScope{
 			RunKey:       s.key,
 			Sequence:     ticket.Sequence,
-			PlanRevision: exec.PlanRevision,
+			PlanRevision: max64(exec.PlanRevision, 0),
 		},
 		CaptureError: &StoredError{
 			Code:    ErrorCodeCapture,
@@ -383,6 +434,11 @@ func (s *Session) storedTree(snapshot pabt.TickSnapshot) (*StoredTree, error) {
 		return nil, fmt.Errorf(`pabtdebug: the capture reported no nodes`)
 	}
 	tree := &StoredTree{
+		// The run is named here so a delta can be computed against a base; the store
+		// stamps the event and sequence when it commits. A tree that did not name
+		// its run could not be compared with any base, so no delta would ever be
+		// stored from this path.
+		RunKey:       s.key,
 		RootID:       string(snapshot.RootID),
 		Nodes:        make([]StoredNode, 0, len(snapshot.Nodes)),
 		NodeCount:    uint32(len(snapshot.Nodes)),
@@ -433,7 +489,8 @@ func (s *Session) storedConditions(
 	ctx context.Context,
 	snapshot pabt.TickSnapshot,
 ) ([]StoredCondition, error) {
-	observed, uncertainties := observedByCondition(ctx, s, snapshot)
+	observed, uncertainties := s.observedByCondition(ctx, snapshot)
+	currentByCondition := currentValuesByCondition(ctx, s, snapshot)
 	out := make([]StoredCondition, 0, len(snapshot.Conditions))
 	for _, occurrence := range snapshot.Conditions {
 		source := "condition." + string(occurrence.ID)
@@ -464,14 +521,16 @@ func (s *Session) storedConditions(
 				Message: "the application declares no expected value for this condition",
 			}
 		}
-		// The current value is the one the planner read and matched. A condition the
-		// planner never evaluated has none, which is not the same as having none.
+		// The current value is the one the planner actually read and matched, taken
+		// from the variable read recorded for this condition. A condition the
+		// planner never evaluated has none, and claiming it is exact while carrying
+		// nothing would tell a reader the value is available when it is not.
 		current := StoredValue{
 			Visibility: ValueUnknown,
 			Source:     source + ".current",
 		}
-		if occurrence.TruthKnown {
-			current.Visibility = ValueExact
+		if read, ok := currentByCondition[string(occurrence.ID)]; ok {
+			current = read
 		}
 		condition.Current = current
 		if occurrence.TruthKnown {
@@ -494,53 +553,90 @@ func (s *Session) storedConditions(
 	return out, nil
 }
 
-// observedByCondition collects the post-action values an observer reported, keyed
-// by the condition whose post-condition node they were read at.
-func observedByCondition(
+// observedByCondition attaches the post-action values an observer reported to the
+// condition each one explains.
+//
+// The bridge is through the action, not through a node. An observation names the
+// effect it read, an effect belongs to an action, and an action's postcondition is
+// the condition whose re-evaluation the action was there to make. Looking a
+// post-condition *node* id up in a map keyed by *effect* ids finds nothing, because
+// the two are minted from one counter but are different identities, and that
+// mistake left every condition with no observed value at all.
+func (s *Session) observedByCondition(
 	ctx context.Context,
-	s *Session,
 	snapshot pabt.TickSnapshot,
 ) (map[string]StoredValue, map[string]StoredUncertainty) {
 	values := map[string]StoredValue{}
 	unknown := map[string]StoredUncertainty{}
-	postOf := map[string]string{}
-	for _, occurrence := range snapshot.Conditions {
-		if occurrence.PostNodeID != "" {
-			postOf[string(occurrence.PostNodeID)] = string(occurrence.ID)
+
+	postOfAction := make(map[string]string, len(snapshot.Actions))
+	for _, action := range snapshot.Actions {
+		if action.PostconditionID != "" {
+			postOfAction[string(action.ID)] = string(action.PostconditionID)
 		}
 	}
 	for _, evidence := range snapshot.Executions {
-		// An action's evidence is attached to the post-condition it re-evaluates,
-		// which is how an observed value reaches the condition it explains.
+		conditionID, ok := postOfAction[string(evidence.Execution.ActionID)]
+		if !ok {
+			continue
+		}
 		for _, observation := range evidence.Observation.EffectValues {
-			if observation.Err != nil {
-				unknown[string(observation.EffectID)] = StoredUncertainty{
+			source := "observed." + conditionID + "." + string(observation.EffectID)
+			switch {
+			case observation.Err != nil:
+				unknown[conditionID] = StoredUncertainty{
 					State:   UncertaintyError,
 					Code:    "observer_error",
-					Message: s.codecs.sanitizeText(errorText(observation.Err)),
+					Message: s.codecs.sanitizeText(observation.Err.Message),
 				}
-				continue
-			}
-			if !observation.Known {
-				continue
-			}
-			encoded, err := s.codecs.Encode(ctx, "observed."+string(observation.EffectID), observation.Value)
-			if err != nil {
-				continue
-			}
-			values[string(observation.EffectID)] = encoded
-		}
-	}
-	// The values a post-condition node reported attach to the condition that node
-	// re-evaluates, which is what a reader of a precondition wants to see.
-	if len(postOf) > 0 {
-		for postNode, conditionID := range postOf {
-			if seen, ok := values[postNode]; ok {
-				values[conditionID] = seen
+			case !observation.Known:
+				if _, already := unknown[conditionID]; !already {
+					unknown[conditionID] = StoredUncertainty{
+						State:   UncertaintyUnavailable,
+						Code:    "not_observed",
+						Message: "the observer did not read this value",
+					}
+				}
+			default:
+				encoded, err := s.codecs.Encode(ctx, source, observation.Value)
+				if err != nil {
+					unknown[conditionID] = StoredUncertainty{
+						State:   UncertaintyError,
+						Code:    "encoding_failed",
+						Message: s.codecs.sanitizeText(err.Error()),
+					}
+					continue
+				}
+				values[conditionID] = encoded
 			}
 		}
 	}
 	return values, unknown
+}
+
+// currentValuesByCondition collects the variable each condition was matched
+// against.
+//
+// The capture boundary records the read that fed the matcher, so the value is the
+// one the planner saw rather than one looked up again afterwards, which could
+// have moved.
+func currentValuesByCondition(
+	ctx context.Context,
+	s *Session,
+	snapshot pabt.TickSnapshot,
+) map[string]StoredValue {
+	out := map[string]StoredValue{}
+	for _, callback := range snapshot.Callbacks {
+		if callback.Kind != pabt.CallbackVariableRead || callback.SubjectID == "" {
+			continue
+		}
+		encoded, err := s.codecs.Encode(ctx, "current."+string(callback.SubjectID), callback.Result)
+		if err != nil {
+			continue
+		}
+		out[string(callback.SubjectID)] = encoded
+	}
+	return out
 }
 
 // storedRelations turns the capture boundary's verdicts into stored relations,
@@ -606,21 +702,20 @@ func (s *Session) sanitize(err error) string {
 	return s.codecs.sanitizeText(err.Error())
 }
 
-// outcomeIsPanic reports a capture failure that was really a panic.
-//
-// The capture boundary reports a panic through its capture error, because a panic
-// is a failure to capture rather than a capture of a failure. The two are told
-// apart by the error type the boundary records, which is what makes a panicked
-// record distinguishable from a failed one.
-func outcomeIsPanic(recorded *pabt.RecordedError) bool {
-	return recorded != nil && strings.Contains(recorded.Type, "panic")
-}
-
 func errorText(recorded *pabt.RecordedError) string {
 	if recorded == nil {
 		return ""
 	}
 	return recorded.Message
+}
+
+// max64 returns the higher of two revisions, so a record is never stamped below
+// the revision its attempt began at.
+func max64(a, b uint64) uint64 {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 func joinErrors(a, b error) error {

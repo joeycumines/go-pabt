@@ -270,40 +270,53 @@ func TestSessionRecordsATickThatSettles(t *testing.T) {
 	}
 }
 
-func TestAPlannerPanicNeverSettlesAndLeavesTheRunIntact(t *testing.T) {
-	// An action that panics must never be reported as a settled goal, and whatever
-	// the tick does become, the run has to stay verifiable.
+func TestAPlannerPanicIsRecordedAsATerminalRecord(t *testing.T) {
+	// The contract is that a panic is contained AND recorded. The earlier version
+	// of this test asserted only containment, and passed while every panicking
+	// tick committed nothing at all, because the recovered outcome carried no plan
+	// revision and the store refused the record it built.
 	f := newSessionFixture(t)
 	session, store, key := newSession(t, f)
 	f.state.panics = true
 	ctx := context.Background()
 
-	committed := uint64(0)
+	var panicked uint64
 	for range 4 {
 		result := session.Tick(ctx)
-		if result.Err != nil {
-			// A reported failure is acceptable; a settled success is not.
-			continue
-		}
-		if result.StatusPresent && bt.Status(result.Status) == bt.Success {
+		if result.Kind == RecordTick && result.StatusPresent &&
+			bt.Status(result.Status) == bt.Success {
 			t.Fatal("a panicking action was reported as a settled goal")
 		}
-		if result.Sequence > committed {
-			committed = result.Sequence
+		if result.Kind != RecordPanicked {
+			continue
 		}
-		if result.Kind == RecordPanicked && result.Sequence > 0 {
-			record, err := store.RecordAt(ctx, key, result.Sequence)
-			if err != nil {
-				t.Fatalf("the panicked record is not there: %v", err)
-			}
-			if record.Kind != RecordPanicked {
-				t.Errorf("the stored kind = %q, want panicked", record.Kind)
-			}
-			if record.StatusPresent {
-				t.Error("a panicked record claims a status")
-			}
+		if result.Sequence == 0 {
+			t.Fatalf("a panicked tick committed nothing: %v", result.Err)
 		}
+		record, err := store.RecordAt(ctx, key, result.Sequence)
+		if err != nil {
+			t.Fatalf("the panicked record is not readable: %v", err)
+		}
+		if record.Kind != RecordPanicked {
+			t.Errorf("the stored kind = %q, want panicked", record.Kind)
+		}
+		if record.Panic == nil || record.Panic.Message == "" {
+			t.Error("a panicked record carries no panic detail")
+		}
+		if record.StatusPresent {
+			t.Error("a panicked record claims a status")
+		}
+		if record.StartedAt.Time().Year() < 2020 {
+			t.Errorf("a panicked record is stamped %v, which is not a real time",
+				record.StartedAt.Time())
+		}
+		panicked++
 	}
+	if panicked == 0 {
+		t.Fatal("no tick produced a panicked record")
+	}
+	// Every panicking tick is a record, so the run is a complete account rather
+	// than a silent gap where the panics were.
 	if _, err := store.VerifyChain(ctx, key); err != nil {
 		t.Errorf("the chain does not verify after a panic: %v", err)
 	}
@@ -313,6 +326,100 @@ func TestAPlannerPanicNeverSettlesAndLeavesTheRunIntact(t *testing.T) {
 	}
 	if len(pending) > 0 {
 		t.Errorf("%d attempts are still open after a panicking run", len(pending))
+	}
+}
+
+func TestTheSessionStoresDeltasAndKeyframes(t *testing.T) {
+	// The delta path is part of the contract, and the earlier suite never observed
+	// it: a session that stored only keyframes passed every test here.
+	f := newSessionFixture(t)
+	session, store, key := newSession(t, f)
+	ctx := context.Background()
+
+	var withDelta, keyframes int
+	for range 5 {
+		result := session.Tick(ctx)
+		if result.Err != nil {
+			t.Fatalf("Tick: %v", result.Err)
+		}
+		if result.Sequence == 0 {
+			continue
+		}
+		_, base, delta, err := store.Representation(ctx, key, result.Sequence)
+		if err != nil {
+			t.Fatalf("Representation: %v", err)
+		}
+		switch {
+		case delta != nil:
+			withDelta++
+			if base == nil {
+				t.Error("a stored delta names no base")
+			}
+		default:
+			keyframes++
+		}
+	}
+	if withDelta == 0 {
+		t.Errorf("no tick stored a delta; the run is %d keyframes and no delta path is exercised", keyframes)
+	}
+	if keyframes == 0 {
+		t.Error("no tick stored a keyframe, so the first record's fallback is not exercised")
+	}
+	if withDelta+keyframes == 0 {
+		t.Fatal("nothing was stored")
+	}
+}
+
+func TestAConditionCarriesTheValueThePlannerActuallyRead(t *testing.T) {
+	// Expected is a declaration, current is what the planner read and matched, and
+	// observed is what an observer saw afterwards. Recording "exact" for a value
+	// that is not there tells a reader it can be seen when it cannot.
+	f := newSessionFixture(t)
+	session, store, key := newSession(t, f)
+	ctx := context.Background()
+
+	var last uint64
+	for range 4 {
+		result := session.Tick(ctx)
+		if result.Err != nil {
+			t.Fatalf("Tick: %v", result.Err)
+		}
+		if result.Sequence > 0 {
+			last = result.Sequence
+		}
+	}
+	if last == 0 {
+		t.Fatal("nothing was committed")
+	}
+	record, err := store.RecordAt(ctx, key, last)
+	if err != nil {
+		t.Fatalf("RecordAt: %v", err)
+	}
+	if len(record.Conditions) == 0 {
+		t.Fatal("no condition was recorded")
+	}
+	evaluated := false
+	for _, condition := range record.Conditions {
+		if condition.Expected.Visibility == ValueExact {
+			evaluated = true
+			if condition.Expected.Data == nil {
+				t.Error("a condition claims an exact expected value and carries none")
+			}
+		}
+		if condition.Current.Visibility == ValueExact && condition.Current.Data == nil {
+			t.Error("a condition claims an exact current value and carries none")
+		}
+		if condition.Current.Visibility == ValueUnknown &&
+			condition.Expected.Visibility == ValueUnknown {
+			continue
+		}
+		// An observed value is a post-action read and says so.
+		if condition.Observed != nil && condition.Observed.Display == "" {
+			t.Error("an observed value carries no display")
+		}
+	}
+	if !evaluated {
+		t.Error("no condition records the planner's read, so the explanation is empty")
 	}
 }
 

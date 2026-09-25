@@ -93,8 +93,14 @@ func TestADeltaIsStoredBesideTheTreeItDescribes(t *testing.T) {
 	if delta == nil {
 		t.Fatal("the second representation carries no delta")
 	}
-	if base == nil || *base != tree.EventUID && *base == "" {
-		t.Errorf("the delta names base %v", base)
+	// The delta must name the base it was computed from, which is the record
+	// before this one. The earlier assertion here was a tautology that reduced to
+	// "base is nil" and could not fail for a delta pointed at the wrong record.
+	if base == nil {
+		t.Fatal("a stored delta names no base")
+	}
+	if *base == tree.EventUID {
+		t.Error("the delta names itself as its base")
 	}
 	// The delta reconstructs the stored tree, which is what makes the pair useful.
 	rebuilt, err := ApplyExactDelta(*mustTree(t, store, key, 1), *delta)
