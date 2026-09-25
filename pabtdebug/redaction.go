@@ -21,7 +21,6 @@ import (
 	"fmt"
 	"reflect"
 	"strings"
-	"unicode"
 	"unicode/utf8"
 )
 
@@ -30,44 +29,71 @@ import (
 // A map key is a path segment even when the struct field holding it is not, so a
 // map keyed by an access token is redacted for the same reason a field named
 // AccessToken is.
-// The keys are segments with every separator removed, so one entry covers
-// Password, passWord, pass_word, and PASS-WORD alike. Splitting camel case first
-// would have made passWord compare as pass_word and miss.
+// sensitiveSegments is keyed by a segment normalised to lower snake case, so one
+// entry covers Password, passWord, pass_word, and PASS-WORD alike. Compound names
+// are listed explicitly, because dropping the separator would make auth_token and
+// authtoken the same key while neither spelling is a word anyone writes.
 var sensitiveSegments = map[string]struct{}{
-	"password": {}, "passwords": {},
-	"passwd": {},
-	"secret": {}, "secrets": {},
+	"password": {}, "passwords": {}, "pass_word": {},
+	"passwd": {}, "pass_word_phrase": {},
+	"secret": {}, "secrets": {}, "secret_key": {},
 	"token": {}, "tokens": {},
-	"apikey": {}, "apikeys": {},
+	"auth_token": {}, "access_token": {}, "refresh_token": {},
+	"id_token": {}, "bearer_token": {},
+	"api_key": {}, "apikeys": {}, "api_secret": {},
 	"authorization": {}, "authorisation": {},
-	"cookie": {}, "cookies": {},
-	"privatekey": {}, "privatekeys": {},
+	"cookie": {}, "cookies": {}, "set_cookie": {},
+	"private_key": {}, "private_keys": {}, "private_key_phrase": {},
 	"credential": {}, "credentials": {},
-	"sessionkey": {}, "sessionkeys": {},
-	"accesskey": {}, "accesskeys": {},
-	"secretkey": {}, "secretkeys": {},
+	"session_key": {}, "session_token": {},
+	"access_key": {}, "access_keys": {},
+	"user_password": {},
 }
 
 // IsSensitiveSegment reports whether a path segment marks a secret, whatever
 // casing and separators the application used to write it.
 func IsSensitiveSegment(segment string) bool {
-	_, ok := sensitiveSegments[compactSegment(segment)]
+	_, ok := sensitiveSegments[normaliseSegment(segment)]
 	return ok
 }
 
-// compactSegment lowercases a segment and keeps only its letters and digits.
-func compactSegment(segment string) string {
+// normaliseSegment rewrites a segment to lower snake case.
+//
+// A lower to upper boundary starts a word, as does the last capital of a run
+// followed by a lower case letter, so HTTPServer becomes http_server rather than
+// hTTPServer. Separators of every kind collapse to a single underscore, and a
+// repeated underscore is folded, so a name is recognised however it was spelled.
+func normaliseSegment(segment string) string {
+	runes := []rune(segment)
 	var b strings.Builder
-	b.Grow(len(segment))
-	for _, r := range segment {
+	b.Grow(len(segment) + 4)
+	prevUnderscore := true
+	for i, r := range runes {
 		switch {
 		case r >= 'A' && r <= 'Z':
+			// A boundary before a capital, unless one was just written.
+			if i > 0 && !prevUnderscore {
+				lowerBefore := runes[i-1] >= 'a' && runes[i-1] <= 'z' ||
+					(runes[i-1] >= 'A' && runes[i-1] <= 'Z' && i+1 < len(runes) &&
+						runes[i+1] >= 'a' && runes[i+1] <= 'z')
+				if lowerBefore {
+					b.WriteByte('_')
+				}
+			}
 			b.WriteRune(r - 'A' + 'a')
+			prevUnderscore = false
 		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
 			b.WriteRune(r)
+			prevUnderscore = false
+		default:
+			// Every separator kind collapses to one underscore.
+			if !prevUnderscore {
+				b.WriteByte('_')
+				prevUnderscore = true
+			}
 		}
 	}
-	return b.String()
+	return strings.TrimRight(b.String(), "_")
 }
 
 // DiagnosticSanitizer scrubs text that came from the application.
@@ -159,11 +185,17 @@ func (c *redactionContext) scrub(text string) string {
 
 // walkDecision is the outcome of the pre-codec walk for one value.
 type walkDecision struct {
-	// Path is the normalised path the value was found at.
+	// Path is the path the value was found at, relative to the value the walk
+	// started from.
 	Path string
 
 	// Redacted reports that a segment of the path marked the value secret.
 	Redacted bool
+
+	// Value is the value the walk stopped at. Carrying it means the caller never
+	// has to find the value again by parsing the path, which cannot work for a
+	// segment that itself contains the separator.
+	Value reflect.Value
 }
 
 // walk inspects a value before any codec sees it.
@@ -185,7 +217,7 @@ func (c *redactionContext) walk(path string, v reflect.Value, depth, nodes uint3
 	switch v.Kind() {
 	case reflect.Pointer, reflect.Interface:
 		if v.IsNil() {
-			return walkDecision{Path: path}, nil
+			return walkDecision{Path: path, Value: v}, nil
 		}
 		return c.walk(path, v.Elem(), depth+1, nodes)
 	case reflect.Map:
@@ -205,7 +237,7 @@ func (c *redactionContext) walk(path string, v reflect.Value, depth, nodes uint3
 			// not, so a map keyed by a secret is redacted for the same reason a
 			// field named for one is.
 			if IsSensitiveSegment(segment) {
-				return walkDecision{Path: child, Redacted: true}, nil
+				return walkDecision{Path: child, Redacted: true, Value: iter.Value()}, nil
 			}
 			decision, err := c.walk(child, iter.Value(), depth+1, nodes)
 			if err != nil || decision.Redacted {
@@ -223,7 +255,7 @@ func (c *redactionContext) walk(path string, v reflect.Value, depth, nodes uint3
 				return decision, err
 			}
 		}
-		return walkDecision{Path: path}, nil
+		return walkDecision{Path: path, Value: v}, nil
 	case reflect.Struct:
 		t := v.Type()
 		for i := range t.NumField() {
@@ -233,14 +265,14 @@ func (c *redactionContext) walk(path string, v reflect.Value, depth, nodes uint3
 			}
 			child := joinPath(path, field.Name)
 			if IsSensitiveSegment(field.Name) {
-				return walkDecision{Path: child, Redacted: true}, nil
+				return walkDecision{Path: child, Redacted: true, Value: v.Field(i)}, nil
 			}
 			decision, err := c.walk(child, v.Field(i), depth+1, nodes)
 			if err != nil || decision.Redacted {
 				return decision, err
 			}
 		}
-		return walkDecision{Path: path}, nil
+		return walkDecision{Path: path, Value: v}, nil
 	case reflect.String:
 		if !utf8Valid(v.String()) {
 			return walkDecision{}, fmt.Errorf("%w: string at %s is not valid UTF-8", ErrValueUnencodable, path)
@@ -262,6 +294,53 @@ func joinPath(parent, segment string) string {
 		return segment
 	}
 	return parent + "." + segment
+}
+
+// registerLeaves remembers the text of every scalar leaf under a redacted value.
+//
+// A redacted value is often a whole struct or map rather than a single string.
+// Registering only its top would leave its leaves able to reappear in a later
+// diagnostic, so every leaf is registered.
+func (c *redactionContext) registerLeaves(v reflect.Value) {
+	c.registerValueLeaves(v, 0)
+}
+
+func (c *redactionContext) registerValueLeaves(v reflect.Value, depth uint32) {
+	if c == nil || !v.IsValid() || depth > 16 || c.droppedSecrets > 0 {
+		return
+	}
+	switch v.Kind() {
+	case reflect.Pointer, reflect.Interface:
+		if v.IsNil() {
+			return
+		}
+		c.registerValueLeaves(v.Elem(), depth+1)
+	case reflect.String:
+		c.registerSecret(v.String())
+	case reflect.Slice:
+		if v.Type().Elem().Kind() == reflect.Uint8 {
+			c.registerSecret(string(v.Bytes()))
+			return
+		}
+		for i := range v.Len() {
+			c.registerValueLeaves(v.Index(i), depth+1)
+		}
+	case reflect.Array:
+		for i := range v.Len() {
+			c.registerValueLeaves(v.Index(i), depth+1)
+		}
+	case reflect.Map:
+		iter := v.MapRange()
+		for iter.Next() {
+			c.registerValueLeaves(iter.Value(), depth+1)
+		}
+	case reflect.Struct:
+		for i := range v.NumField() {
+			if v.Type().Field(i).IsExported() {
+				c.registerValueLeaves(v.Field(i), depth+1)
+			}
+		}
+	}
 }
 
 // secretLiteral returns the text of a value that is about to be redacted, so it
@@ -326,113 +405,101 @@ func (s *textSanitizer) SanitizeStack(frames []string) []string {
 }
 
 // redactCredentialShapes removes the forms that carry a secret in text the walk
-// never saw, such as an error message: an explicit assignment and a bearer
-// credential.
+// never saw, such as an error message.
 //
-// The scan advances past each region it rewrites. Re-scanning from the start
-// would find the marker it had just inserted and loop forever, because the marker
-// follows the very marker being searched for.
+// The decision is made on the identifier immediately before an assignment
+// separator, compacted the same way a path segment is. That covers auth_token,
+// access_key, secretKey, and api-key without a list of every spelling, and it
+// leaves a word that merely contains a marker alone, because tokeniser
+// compacts to something that is not a credential name.
 func redactCredentialShapes(text string) string {
-	markers := []string{
-		"password", "passwd", "secret", "token", "apikey", "api_key", "api-key",
-		"authorization", "cookie", "private_key", "privatekey", "credential",
-	}
-	// The bearer form is handled first. "Authorization: Bearer x" also looks like
-	// an assignment, and an assignment scrub would replace the word "Bearer" and
-	// leave the credential behind it.
+	// The bearer form is handled first. "Authorization: Bearer x" also looks like an
+	// assignment, and an assignment pass would replace the word "Bearer" and leave
+	// the credential behind it.
 	text = redactBearer(text)
-	for _, marker := range markers {
-		text = redactAssignments(text, marker)
+
+	runes := []rune(text)
+	var out strings.Builder
+	out.Grow(len(text))
+	for i := 0; i < len(runes); {
+		if runes[i] != '=' && runes[i] != ':' {
+			out.WriteRune(runes[i])
+			i++
+			continue
+		}
+		// Walk back over any closing quote and then over the identifier, so that a
+		// JSON-shaped message such as {"api_key":"value"} is recognised.
+		end := i
+		for end > 0 && (runes[end-1] == '"' || runes[end-1] == '\'') {
+			end--
+		}
+		start := end
+		for start > 0 && isIdentifierRune(runes[start-1]) {
+			start--
+		}
+		if start == end {
+			out.WriteRune(runes[i])
+			i++
+			continue
+		}
+		// The identifier is passed as written, because the segment normaliser needs
+		// to see the camel-case boundary in "secretKey".
+		if !IsSensitiveSegment(string(runes[start:end])) {
+			out.WriteRune(runes[i])
+			i++
+			continue
+		}
+		// The separator and the spaces or quotes around the value are kept, so the
+		// message still reads correctly and the redaction is visible in place.
+		out.WriteRune(runes[i])
+		i++
+		for i < len(runes) && isSkippableRune(runes[i]) {
+			out.WriteRune(runes[i])
+			i++
+		}
+		valueStart := i
+		for i < len(runes) && !strings.ContainsRune(" \t,;\"'}", runes[i]) {
+			i++
+		}
+		if i == valueStart {
+			continue
+		}
+		out.WriteString(RedactedMarker)
 	}
-	return text
+	return out.String()
 }
 
-// redactAssignments replaces the value of every "marker=value" or "marker: value"
-// occurrence of one marker.
-//
-// The offsets are absolute. Treating the tail after the marker as if it were the
-// whole string would drop the message prefix and shift the tail left, which both
-// loses the text a human needed and lets a later occurrence slip past.
-func redactAssignments(text, marker string) string {
-	lower := strings.ToLower(text)
-	for from := 0; ; {
-		rel := strings.Index(lower[from:], marker)
-		if rel < 0 {
-			return text
-		}
-		at := from + rel
-		// The marker must be a whole word, or "tokenizer=1" would be redacted as
-		// though it were a credential.
-		if at > 0 && isWordByte(text[at-1]) {
-			from = at + len(marker)
-			continue
-		}
-		if at+len(marker) < len(text) && isWordByte(text[at+len(marker)]) {
-			from = at + len(marker)
-			continue
-		}
-		// Skip spaces and quotes, require exactly one separator, then skip the
-		// spaces and quotes that may follow it. The quotes matter for a JSON-shaped
-		// message such as {"api_key":"value"}.
-		sep := at + len(marker)
-		for sep < len(text) && isSkippable(text[sep]) {
-			sep++
-		}
-		if sep >= len(text) || (text[sep] != '=' && text[sep] != ':') {
-			from = at + len(marker)
-			continue
-		}
-		start := sep + 1
-		for start < len(text) && isSkippable(text[start]) {
-			start++
-		}
-		stop := start
-		for stop < len(text) && !strings.ContainsRune(" \t,;\"'}", rune(text[stop])) {
-			stop++
-		}
-		if stop == start {
-			from = at + len(marker)
-			continue
-		}
-		text = text[:start] + RedactedMarker + text[stop:]
-		lower = strings.ToLower(text)
-		from = start + len(RedactedMarker)
-		if from >= len(text) {
-			return text
-		}
+// isIdentifierRune reports whether a rune can be part of an assignment target.
+func isIdentifierRune(r rune) bool {
+	switch {
+	case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+		return true
+	case r == '_', r == '-', r == '.':
+		return true
 	}
+	return false
 }
 
-// isSkippable reports whether a byte is whitespace or a quote that may sit
-// between a marker and its value.
-func isSkippable(b byte) bool {
-	switch b {
+func isSkippableRune(r rune) bool {
+	switch r {
 	case ' ', '\t', '"', '\'':
 		return true
 	}
 	return false
 }
 
-func isWordByte(b byte) bool {
-	switch {
-	case b >= 'a' && b <= 'z', b >= 'A' && b <= 'Z', b >= '0' && b <= '9', b == '_':
-		return true
-	}
-	return false
-}
-
-// redactBearer replaces the credential in every "Bearer <token>" occurrence.
+// redactBearer replaces the credential in every "Bearer <token>" occurrence,
+// wherever it appears in the line.
 func redactBearer(text string) string {
-	const bearer = "bearer "
 	lower := strings.ToLower(text)
 	for from := 0; ; {
-		rel := strings.Index(lower[from:], bearer)
+		rel := strings.Index(lower[from:], "bearer ")
 		if rel < 0 {
 			return text
 		}
-		start := from + rel + len(bearer)
+		start := from + rel + len("bearer ")
 		stop := start
-		for stop < len(text) && !unicode.IsSpace(rune(text[stop])) {
+		for stop < len(text) && !isSkippableRuneAt(text[stop]) {
 			stop++
 		}
 		if stop == start {
@@ -447,6 +514,13 @@ func redactBearer(text string) string {
 	}
 }
 
-// utf8Valid reports whether s is valid UTF-8. A replacement character that the
-// application supplied is legitimate text; only an invalid byte sequence is not.
+// isSkippableRuneAt reports whether the byte at i is whitespace.
+func isSkippableRuneAt(b byte) bool {
+	switch b {
+	case ' ', '\t', '\n', '\r':
+		return true
+	}
+	return false
+}
+
 func utf8Valid(s string) bool { return utf8.ValidString(s) }

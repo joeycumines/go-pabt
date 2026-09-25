@@ -240,7 +240,7 @@ func (r *CodecRegistry) Encode(ctx context.Context, source string, v any) (Store
 		out.Data = data
 		// The literal is registered so a later diagnostic carrying the same text
 		// is scrubbed too. It is held in memory only and is never persisted.
-		redactor.registerSecret(secretLiteralAt(reflect.ValueOf(v), decision.Path))
+		redactor.registerLeaves(decision.Value)
 		return finishValue(&out)
 	}
 	codec, err := r.selectCodec(reflect.TypeOf(v))
@@ -451,18 +451,6 @@ func finishValue(out *StoredValue) (StoredValue, error) {
 	return *out, nil
 }
 
-// --- built-in codecs ---
-
-const (
-	structureCodecID = "structure/v1"
-	stringCodecID    = "string/v1"
-	bytesCodecID     = "bytes/v1"
-	boolCodecID      = "bool/v1"
-	intCodecID       = "int/v1"
-	floatCodecID     = "float/v1"
-	displayCodecID   = "display/v1"
-)
-
 // projectStructure rebuilds a value as plain maps, slices, and scalars, so that
 // canonical JSON can carry it.
 func projectStructure(v reflect.Value, depth, nodes uint32) (any, error) {
@@ -533,10 +521,11 @@ func projectStructure(v reflect.Value, depth, nodes uint32) (any, error) {
 		}
 		return out, nil
 	case reflect.Slice, reflect.Array:
-		// A byte run is recorded as text in both projections, so an array of
-		// bytes and a string holding the same bytes agree.
+		// A byte run is recorded as bytes, not as text. Converting it to a string
+		// would be lossy for any sequence that is not valid UTF-8, and two
+		// different sequences would then share a digest.
 		if v.Type().Elem().Kind() == reflect.Uint8 {
-			return string(bytesOf(v)), nil
+			return Bytes(bytesOf(v)), nil
 		}
 		out := make([]any, 0, v.Len())
 		for i := range v.Len() {
@@ -635,7 +624,7 @@ func projectRedacted(limits ValueLimits, v reflect.Value, depth, nodes uint32) (
 		return out, nil
 	case reflect.Slice, reflect.Array:
 		if v.Type().Elem().Kind() == reflect.Uint8 {
-			return string(bytesOf(v)), nil
+			return Bytes(bytesOf(v)), nil
 		}
 		out := make([]any, 0, v.Len())
 		for i := range v.Len() {
@@ -651,60 +640,16 @@ func projectRedacted(limits ValueLimits, v reflect.Value, depth, nodes uint32) (
 	}
 }
 
-// secretLiteralAt returns the text at a dotted path, so it can be registered for
-// scrubbing without ever being persisted.
-func secretLiteralAt(v reflect.Value, path string) string {
-	current := v
-	for _, segment := range strings.Split(path, ".") {
-		if !current.IsValid() {
-			return ""
-		}
-		for current.Kind() == reflect.Pointer || current.Kind() == reflect.Interface {
-			if current.IsNil() {
-				return ""
-			}
-			current = current.Elem()
-		}
-		// The path carries the field name as written, so both sides are compacted
-		// before comparison rather than normalising only the field.
-		switch current.Kind() {
-		case reflect.Struct:
-			found := false
-			for i := range current.NumField() {
-				if compactSegment(current.Type().Field(i).Name) == compactSegment(segment) {
-					current = current.Field(i)
-					found = true
-					break
-				}
-			}
-			if !found {
-				return ""
-			}
-		case reflect.Map:
-			iter := current.MapRange()
-			var found bool
-			for iter.Next() {
-				if compactSegment(fmt.Sprint(iter.Key().Interface())) == compactSegment(segment) {
-					current = iter.Value()
-					found = true
-					break
-				}
-			}
-			if !found {
-				return ""
-			}
-		case reflect.Slice, reflect.Array:
-			index, err := strconv.Atoi(segment)
-			if err != nil || index >= current.Len() {
-				return ""
-			}
-			current = current.Index(index)
-		default:
-			return ""
-		}
-	}
-	return secretLiteral(current.Interface())
-}
+// --- built-in codecs ---
+
+const (
+	structureCodecID = "structure/v1"
+	stringCodecID    = "string/v1"
+	bytesCodecID     = "bytes/v1"
+	boolCodecID      = "bool/v1"
+	intCodecID       = "int/v1"
+	floatCodecID     = "float/v1"
+)
 
 type stringCodec struct{}
 
@@ -770,7 +715,7 @@ func (intCodec) Encode(v any) (Bytes, error) {
 func (intCodec) Decode(b Bytes) (any, error) {
 	n, err := strconv.ParseInt(string(b), 10, 64)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: int codec: %v", ErrValueUnencodable, err)
 	}
 	return n, nil
 }

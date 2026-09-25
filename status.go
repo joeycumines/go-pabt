@@ -57,7 +57,7 @@ func ValidateStatus(s bt.Status) error {
 // detect that two reads came from different ticks.
 type NodeStatusSnapshot struct {
 	TickCount     int       `json:"tickCount"`
-	LastStatus    bt.Status `json:"lastStatus"`
+	LastStatus    bt.Status `json:"-"`
 	StatusPresent bool      `json:"statusPresent"`
 	Version       uint64    `json:"version"`
 }

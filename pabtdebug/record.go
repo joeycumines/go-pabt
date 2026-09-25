@@ -17,8 +17,11 @@
 package pabtdebug
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"reflect"
 
 	bt "github.com/joeycumines/go-behaviortree"
@@ -111,14 +114,15 @@ type StoredNodeStatus struct {
 // not, and a reader of a future record would have to know the numbering.
 func (s StoredNodeStatus) MarshalJSON() ([]byte, error) {
 	type alias StoredNodeStatus
+	text, present := statusFields(s.LastStatus, s.StatusPresent)
 	return json.Marshal(struct {
 		alias
 		LastStatus    string `json:"lastStatus"`
 		StatusPresent bool   `json:"statusPresent"`
 	}{
 		alias:         alias(s),
-		LastStatus:    mustStatusText(s.LastStatus, s.StatusPresent),
-		StatusPresent: s.StatusPresent,
+		LastStatus:    text,
+		StatusPresent: present,
 	})
 }
 
@@ -127,14 +131,23 @@ func (s *StoredNodeStatus) UnmarshalJSON(data []byte) error {
 	type alias StoredNodeStatus
 	var raw struct {
 		alias
-		LastStatus string `json:"lastStatus"`
+		LastStatus    string `json:"lastStatus"`
+		StatusPresent *bool  `json:"statusPresent"`
 	}
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return fmt.Errorf("%w: %v", ErrCanonicalDecoding, err)
+	// A nested decoder is used rather than json.Unmarshal because the caller's
+	// DisallowUnknownFields does not reach inside a custom unmarshaller. Without
+	// this, an injected member would decode cleanly and the record's digest would
+	// still verify, which is exactly the tampering the digest exists to catch.
+	if err := decodeStrict(data, &raw); err != nil {
+		return err
 	}
 	status, present, err := DecodeStatusText(raw.LastStatus)
 	if err != nil {
 		return err
+	}
+	if raw.StatusPresent != nil && *raw.StatusPresent != present {
+		return fmt.Errorf("%w: status %q is present=%v but the flag says %v",
+			ErrCanonicalDecoding, raw.LastStatus, present, *raw.StatusPresent)
 	}
 	*s = StoredNodeStatus(raw.alias)
 	s.StatusPresent = present
@@ -146,15 +159,33 @@ func (s *StoredNodeStatus) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-func mustStatusText(status uint8, present bool) string {
+// decodeStrict decodes one value, refusing an unknown member and a trailing
+// value. It exists because a type with its own unmarshaller loses the caller's
+// strictness otherwise.
+func decodeStrict(data []byte, target any) error {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(target); err != nil {
+		return fmt.Errorf("%w: %v", ErrCanonicalDecoding, err)
+	}
+	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
+		return fmt.Errorf("%w: trailing data after the value", ErrCanonicalDecoding)
+	}
+	return nil
+}
+
+// statusFields returns the wire text for a status and the presence flag that goes
+// with it.
+//
+// A status the dependency does not define is written as absent, not as an empty
+// text with the flag still set. Writing the pair "empty but present" is a
+// statement no reader could act on, and it decodes back as an absence anyway.
+func statusFields(status uint8, present bool) (string, bool) {
 	text, err := StatusText(bt.Status(status), present)
 	if err != nil {
-		// A status the dependency does not define is not written as a number
-		// either. It is written as an absent status, so the record carries the
-		// problem as a capture error rather than as a fabricated status.
-		return ""
+		return "", false
 	}
-	return text
+	return text, present
 }
 
 // NodeStatusOf converts a captured status, rejecting one the dependency does not
@@ -437,8 +468,8 @@ func (r *StoredRecord) UnmarshalJSON(data []byte) error {
 		alias
 		Status string `json:"status"`
 	}
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return fmt.Errorf("%w: %v", ErrCanonicalDecoding, err)
+	if err := decodeStrict(data, &raw); err != nil {
+		return err
 	}
 	status, present, err := DecodeStatusText(raw.Status)
 	if err != nil {

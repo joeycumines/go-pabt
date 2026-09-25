@@ -948,3 +948,175 @@ func (f failingCodec) Encode(any) (Bytes, error) {
 	return nil, fmt.Errorf("%s", f.message)
 }
 func (failingCodec) Decode(Bytes) (any, error) { return nil, nil }
+
+// --- Regression coverage for the findings of the second review pass. ---
+
+func TestCompoundCredentialNamesAreRedacted(t *testing.T) {
+	// A whole-word rule that treats an underscore as part of a word skipped every
+	// compound name, which is the common case for a real credential. The decision
+	// is made on the identifier before the separator, compacted, so every spelling
+	// of the same name is covered.
+	san := &textSanitizer{limits: DefaultValueLimits()}
+	for _, name := range []string{
+		"auth_token", "access_token", "refresh_token", "id_token", "bearer_token",
+		"access_key", "secret_key", "session_key", "api_key", "private_key",
+		"secretKey", "authToken", "ACCESS-KEY", "Password", "cookie",
+		"user_password", "credentials",
+	} {
+		text := "config " + name + "=hunter2 trailing"
+		got := san.Sanitize(text)
+		if strings.Contains(got, "hunter2") {
+			t.Errorf("Sanitize(%q) = %q, still contains the credential", text, got)
+		}
+		if !strings.Contains(got, "config ") {
+			t.Errorf("Sanitize(%q) = %q, lost the prefix", text, got)
+		}
+		if !strings.Contains(got, RedactedMarker) {
+			t.Errorf("Sanitize(%q) = %q, redaction is not visible in place", text, got)
+		}
+	}
+	// A word that merely resembles one must not be redacted, or ordinary data
+	// would disappear. A field whose own name is a credential is redacted even when
+	// its value looks harmless, because the name is the signal and the value is not.
+	for _, text := range []string{
+		"tokenizer=fast", "cookiecutter=chocolate", "passworder=1",
+		"credentials_manager=ok", "my_tokenizer_count=3",
+	} {
+		if got := san.Sanitize(text); got != text {
+			t.Errorf("Sanitize(%q) = %q, want it unchanged", text, got)
+		}
+	}
+}
+
+func TestAStructValuedSensitivePathRegistersEveryLeaf(t *testing.T) {
+	reg := NewCodecRegistry(DefaultValueLimits())
+	// The redacted value is a whole struct, so registering only its top would
+	// leave its leaves free to reappear in a later diagnostic.
+	holder := map[string]struct {
+		Owner string
+		Inner struct {
+			Label string
+			Deep  struct{ Note string }
+		}
+	}{
+		"password": {
+			Owner: "alice",
+			Inner: struct {
+				Label string
+				Deep  struct{ Note string }
+			}{Label: "top", Deep: struct{ Note string }{Note: "leaf-" + secretLiteralValue}},
+		},
+	}
+	err := WithRedaction(context.Background(), DefaultValueLimits(),
+		func(ctx context.Context) error {
+			c, _ := redactionFor(ctx)
+			if _, encErr := reg.Encode(ctx, "record", holder); encErr != nil {
+				return encErr
+			}
+			// The leaf literal must now be scrubbed from free text.
+			scrubbed := c.scrub("saw leaf-" + secretLiteralValue + " in a message")
+			if strings.Contains(scrubbed, secretLiteralValue) {
+				t.Errorf("a struct leaf literal was not registered: %q", scrubbed)
+			}
+			return nil
+		})
+	if err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+}
+
+func TestASegmentContainingThePathSeparatorStillRegisters(t *testing.T) {
+	reg := NewCodecRegistry(DefaultValueLimits())
+	// The walk reports the value it stopped at rather than a path to be re-parsed,
+	// so a segment containing the separator cannot break the lookup.
+	holder := map[string]map[string]string{
+		"pass.word": {"inner": "deep-" + secretLiteralValue},
+	}
+	err := WithRedaction(context.Background(), DefaultValueLimits(),
+		func(ctx context.Context) error {
+			c, _ := redactionFor(ctx)
+			out, encErr := reg.Encode(ctx, "record", holder)
+			if encErr != nil {
+				return encErr
+			}
+			if out.Visibility != ValueRedacted {
+				t.Fatalf("visibility = %q, want redacted", out.Visibility)
+			}
+			encoded, encErr := CanonicalEncode(out)
+			if encErr != nil {
+				return encErr
+			}
+			assertNoSecret(t, "a dotted sensitive key", encoded, out.Data)
+			if strings.Contains(c.scrub("saw deep-"+secretLiteralValue), secretLiteralValue) {
+				t.Error("a dotted key's leaf literal was not registered")
+			}
+			return nil
+		})
+	if err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+}
+
+func TestAnInjectedMemberIsRefusedByEveryCustomDecoder(t *testing.T) {
+	// A type with its own unmarshaller loses the caller's DisallowUnknownFields.
+	// An injected member would decode cleanly and the digest would still verify,
+	// which is the tampering a digest exists to catch.
+	rec := goldenRecord()
+	rec.Status = uint8(bt.Success)
+	rec.StatusPresent = true
+	encoded := string(mustCanonical(t, rec))
+	var back StoredRecord
+	if err := CanonicalDecode([]byte(encoded), &back); err != nil {
+		t.Fatalf("the untampered record did not decode: %v", err)
+	}
+	for _, injected := range []string{`{"injected":"payload",`, `{"injected":"payload","`} {
+		tampered := injected + encoded[1:]
+		if err := CanonicalDecode([]byte(tampered), &back); err == nil {
+			t.Errorf("CanonicalDecode accepted an injected member: %s", injected)
+		}
+	}
+	ns := string(mustCanonical(t, StoredNodeStatus{
+		TickCount: 1, LastStatus: uint8(bt.Running), StatusPresent: true, Version: 1,
+	}))
+	var status StoredNodeStatus
+	if err := CanonicalDecode([]byte(`{"injected":1,`+ns[1:]), &status); err == nil {
+		t.Error("StoredNodeStatus accepted an injected member")
+	}
+	if err := CanonicalDecode([]byte(ns), &status); err != nil {
+		t.Fatalf("the untampered node status did not decode: %v", err)
+	}
+	// A contradictory presence flag is refused rather than resolved.
+	contradictory := strings.Replace(ns, `"statusPresent":true`, `"statusPresent":false`, 1)
+	if err := CanonicalDecode([]byte(contradictory), &status); err == nil {
+		t.Error("a status present with an empty text and an absent flag was accepted")
+	}
+}
+
+func TestByteRunsAreRecordedLosslessly(t *testing.T) {
+	reg := NewCodecRegistry(DefaultValueLimits())
+	// Two byte sequences that differ must not share a digest. Converting them to
+	// text would lose any sequence that is not valid UTF-8.
+	first := mustEncode(t, reg, []byte{0xfe, 0xfd, 0x01})
+	second := mustEncode(t, reg, []byte{0xfe, 0xfd, 0x02})
+	if first.SHA256 == second.SHA256 {
+		t.Error("two different byte sequences share a digest")
+	}
+	// A long run differing in one byte, beyond the display bound, must still differ.
+	base := make([]byte, 6000)
+	for i := range base {
+		base[i] = byte(i % 251)
+	}
+	altered := append([]byte(nil), base...)
+	altered[5999] ^= 0xff
+	longFirst := mustEncode(t, reg, base)
+	longSecond := mustEncode(t, reg, altered)
+	if longFirst.SHA256 == longSecond.SHA256 {
+		t.Error("two long byte runs differing in one byte share a digest")
+	}
+	// A byte run is not a string, so the two must not collide either.
+	asString := mustEncode(t, reg, "abc")
+	asBytes := mustEncode(t, reg, []byte("abc"))
+	if asString.SHA256 == asBytes.SHA256 {
+		t.Error("a string and the bytes holding it share a digest")
+	}
+}
