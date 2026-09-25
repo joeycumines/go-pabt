@@ -240,13 +240,9 @@ func (r *CodecRegistry) Encode(ctx context.Context, source string, v any) (Store
 		out.Data = data
 		// The literal is registered so a later diagnostic carrying the same text
 		// is scrubbed too. It is held in memory only and is never persisted.
-		// Every sensitive field contributes a literal, not only the first, so a
-		// value with two secrets cannot leak the second through later text.
-		redactions := decision.Redactions
-		if len(redactions) == 0 && decision.Value.IsValid() {
-			redactions = []reflect.Value{decision.Value}
-		}
-		for _, r := range redactions {
+		// Every sensitive value the walk found contributes a literal, at any depth,
+		// so a value with two secrets cannot leak the second through later text.
+		for _, r := range decision.Redactions {
 			redactor.registerLeaves(r)
 		}
 		return finishValue(&out)

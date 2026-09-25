@@ -1331,3 +1331,97 @@ func TestACookieHeaderLosesEveryPair(t *testing.T) {
 		}
 	}
 }
+
+// TestEveryRedactionContributesALiteralInEveryShape covers the three shapes the
+// earlier walk missed, because it returned on the first sensitive field it found:
+// a direct field beside a nested one, a second element of a slice, and two keys of
+// a map. Map order made the survivor vary between runs, so the map case is
+// checked repeatedly.
+func TestEveryRedactionContributesALiteralInEveryShape(t *testing.T) {
+	reg := NewCodecRegistry(DefaultValueLimits())
+	const (
+		direct = "DIRECT-secret-value-bbbb"
+		nested = "NESTED-secret-value-aaaa"
+		first  = "FIRST-element-value-cccc"
+		second = "SECOND-element-value-dddd"
+		keyOne = "FIRST-key-value-eeee"
+		keyTwo = "SECOND-key-value-ffff"
+	)
+	type inner struct{ Secret string }
+	type payload struct {
+		Password string
+		Inner    inner
+		Tokens   []string
+	}
+	check := func(secrets ...string) {
+		t.Helper()
+		err := WithRedaction(context.Background(), DefaultValueLimits(),
+			func(ctx context.Context) error {
+				c, _ := redactionFor(ctx)
+				if _, encErr := reg.Encode(ctx, "record", payload{
+					Password: direct,
+					Inner:    inner{Secret: nested},
+					Tokens:   []string{first, second},
+				}); encErr != nil {
+					return encErr
+				}
+				if _, encErr := reg.Encode(ctx, "record",
+					map[string]string{"password": keyOne, "apiKey": keyTwo}); encErr != nil {
+					return encErr
+				}
+				for _, secret := range secrets {
+					if got := c.scrub("upstream rejected " + secret); strings.Contains(got, secret) {
+						t.Errorf("a secret declared redacted reappeared in later text: %q", got)
+					}
+				}
+				return nil
+			})
+		if err != nil {
+			t.Fatalf("Encode: %v", err)
+		}
+	}
+	// Repeated, because the map case previously leaked in some runs and not others.
+	for range 20 {
+		check(direct, nested, first, second, keyOne, keyTwo)
+	}
+}
+
+func TestDigitSuffixedAndGluedCredentialsAreRedacted(t *testing.T) {
+	// A trailing index is how rotation fields and old/new forms are written, and
+	// a run of capitals is how env-style names arrive. Both made real names
+	// invisible before.
+	for _, name := range []string{
+		"password1", "Password1", "userPassword1", "secret1", "token1", "apiKey1",
+		"apiKey2", "accessToken1", "passphrase1", "cookie1", "credential1",
+		"mnemonic1", "signature1", "apikey", "apikeys", "apisecret", "clientsecret",
+		"accesstoken", "bearertoken", "refreshtoken", "privatekey", "sessiontoken",
+		"authtoken", "secretkey", "signingkey", "encryptionkey", "masterkey",
+		"apitoken", "idtoken", "ssotoken", "hmacsecret", "xapikey", "userpassword",
+		"dbpassword", "peppervalue", "saltvalue", "sshKey", "gpgKey", "kmsKey",
+		"deployKey", "licenseKey", "clientKey", "backupKey", "aesKey", "ed25519PrivateKey",
+		"x25519PrivateKey", "serviceAccountKey", "csrfToken", "xsrfToken",
+		"recoveryCode", "mfaSecret", "vaultToken", "keystorePassword", "appSecret",
+	} {
+		if !IsSensitiveSegment(name) {
+			t.Errorf("IsSensitiveSegment(%q) = false, want true", name)
+		}
+	}
+	// A name containing a credential word is redacted even where the compound reads
+	// as ordinary English: secretPlant, tokenRing, and seedValue are all lost, and
+	// losing them cannot leak anything. A seed value and a salt value are both
+	// worth protecting, so they go. The names below are ones where no credential
+	// word appears at all.
+	for _, name := range []string{
+		"sortKey", "primaryKey", "partitionKey", "cacheKey", "objectKey", "rowKey",
+		"idempotencyKey", "pubsubKey", "foreignKey", "shardingKey", "indexKey",
+		"groupKey", "publicKey", "answerKey", "fieldKey", "columnKey", "configKey",
+		"settingKey", "mapKey", "registryKey", "compositeKey", "alternateKey",
+		"seedCount", "seedType", "mnemonicCount",
+		"masterDiamond", "saltRock",
+		"fileHash", "treeHash", "contentHash", "sha256Hash",
+	} {
+		if IsSensitiveSegment(name) {
+			t.Errorf("IsSensitiveSegment(%q) = true, want false: ordinary state would be destroyed", name)
+		}
+	}
+}

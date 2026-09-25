@@ -25,17 +25,21 @@ import (
 	"unicode/utf8"
 )
 
-// A segment is a credential when it is a credential word in its own right, or
-// when it combines a word that names a secret with a word that names the thing
-// holding it.
+// The sensitivity rule, in one place.
 //
-// Combining is what makes the rule work without enumerating compounds. A field
-// named sortKey, primaryKey, cacheKey, or idempotencyKey names a sort, a
-// primary, a cache, and an idempotency, so it is ordinary state. A field named
-// apiKey, accessKey, secretKey, encryptionKey, or awsSecretAccessKey names an
-// API, an access grant, a secret, or an encryption, and the thing holding it is
-// a key. A field named passwordHash is a credential because "password" is a
-// credential word, while fileHash and treeHash are digests of ordinary data.
+// A segment is a credential when a credential word appears in the name, when the
+// name combines something that says the purpose is private with something that
+// says what holds it, or when it is a credential noun qualified by a purpose that
+// is not on the ordinary list.
+//
+// Deciding this from one hand-written list of compounds does not work. The first
+// four attempts at this rule each fixed one class of name and lost another, so it
+// is now two conservative rules plus a short list of the ordinary words that would
+// otherwise be swallowed.
+
+// sensitiveNames are words that are a credential wherever they appear in a name.
+// Matching them in any position is what covers user_password, password_hash, and
+// api_keys without listing those.
 var sensitiveNames = map[string]struct{}{
 	"password": {}, "passwords": {}, "passwd": {},
 	"passphrase": {}, "passphrases": {},
@@ -44,12 +48,12 @@ var sensitiveNames = map[string]struct{}{
 	"authorization": {}, "authorisation": {},
 	"cookie": {}, "cookies": {},
 	"token": {}, "tokens": {},
-	"pass": {},
+	"pepper": {}, "pass": {},
 }
 
-// sensitiveExact are words that are a credential only as the whole name. They are
-// also ordinary nouns, so a compound that merely contains one is not a credential:
-// a saltiness, a signatureAlgorithm, and a barcode are ordinary data.
+// sensitiveExact are words that are a credential only as the whole name, because
+// they are also ordinary nouns: a saltiness, a signatureAlgorithm, and a barcode
+// are ordinary data.
 var sensitiveExact = map[string]struct{}{
 	"salt": {}, "seed": {}, "seeds": {}, "mnemonic": {}, "mnemonics": {},
 	"signature": {}, "signatures": {},
@@ -57,7 +61,7 @@ var sensitiveExact = map[string]struct{}{
 	"answer": {}, "answers": {}, "hint": {}, "hints": {},
 }
 
-// secrecyQualifiers name a purpose whose value is meant to stay private. One of
+// secrecyQualifiers say a purpose whose value is meant to stay private. One of
 // these alongside a credential noun is enough.
 var secrecyQualifiers = map[string]struct{}{
 	"api": {}, "access": {}, "secret": {}, "private": {},
@@ -67,13 +71,12 @@ var secrecyQualifiers = map[string]struct{}{
 	"webhook": {}, "smtp": {}, "customer": {}, "tenant": {},
 	"pepper": {}, "aws": {}, "azure": {}, "gcp": {},
 	"session": {}, "service": {}, "system": {}, "app": {}, "application": {},
-	// "id" qualifies an id_token, an OIDC credential, and is harmless as a
-	// qualifier because "id" is not one of the nouns below, so a user_id or
-	// client_id stays ordinary state.
-	"id": {},
-	// "pass" qualifies a pass_word, a pass_phrase, and a passcode.
-	"pass": {},
-	"seed": {}, "mnemonic": {},
+	"ssh": {}, "gpg": {}, "kms": {}, "pgp": {}, "deploy": {}, "deployment": {},
+	"license": {}, "client": {}, "user": {}, "backup": {}, "wrapped": {},
+	"aes": {}, "rsa": {}, "ecdsa": {}, "ed25519": {}, "x25519": {},
+	"id": {}, "pass": {}, "seed": {}, "mnemonic": {}, "vault": {}, "keystore": {},
+	"csrf": {}, "xsrf": {}, "mfa": {}, "recovery": {}, "magic": {},
+	"db": {}, "salt": {}, "root": {}, "admin": {}, "ops": {}, "ci": {}, "env": {},
 }
 
 // credentialNouns are the things a secret is held in.
@@ -93,10 +96,22 @@ var credentialNouns = map[string]struct{}{
 	"authorization": {}, "authorisation": {},
 	"word": {}, "words": {},
 	"answer": {}, "answers": {}, "hint": {}, "hints": {},
+	"nonce": {}, "material": {}, "value": {},
+}
+
+// ordinaryKeyQualifiers are purposes that end in "key" without being private. A
+// sort key, a primary key, and a cache key are ordinary state, and redacting them
+// would destroy the record a debugger exists to produce.
+var ordinaryKeyQualifiers = map[string]struct{}{
+	"sort": {}, "primary": {}, "partition": {}, "cache": {}, "object": {},
+	"row": {}, "idempotency": {}, "pubsub": {}, "foreign": {}, "sharding": {},
+	"index": {}, "group": {}, "public": {}, "answer": {}, "field": {},
+	"column": {}, "config": {}, "setting": {}, "map": {}, "registry": {},
+	"alternate": {}, "surrogate": {}, "composite": {}, "cluster": {},
 }
 
 // IsSensitiveSegment reports whether a path segment marks a secret, whatever
-// casing and separators the application used to write it.
+// casing, separators, or trailing digits the application used to write it.
 //
 // A map key is a path segment even when the struct field holding it is not, so a
 // map keyed by an access token is redacted for the same reason a field named
@@ -106,30 +121,117 @@ func IsSensitiveSegment(segment string) bool {
 	if name == "" {
 		return false
 	}
-	segments := strings.Split(name, "_")
+	// A trailing index is not part of a whole name either, so mnemonic1 is still a
+	// mnemonic while seedCount is not a seed.
 	if _, ok := sensitiveExact[name]; ok {
 		return true
 	}
-	// A credential word anywhere in the name is enough, which is what catches
-	// user_password, password_hash, and api_keys without listing them.
-	for _, s := range segments {
-		if _, ok := sensitiveNames[s]; ok {
+	// The same applies to a whole name that is only an index away from one.
+	if trimmed := strings.TrimRight(lastSegment(name), "0123456789"); trimmed != "" {
+		if _, ok := sensitiveExact[trimmed]; ok {
 			return true
 		}
 	}
-	// A compound is a credential when one segment says the purpose is private and
-	// another says what holds it. "apiKey" and "awsSecretAccessKey" qualify; a bare
-	// "key" does not, because the planner uses that word for a variable identifier.
-	var qualifier, noun bool
-	for _, s := range segments {
-		if _, ok := secrecyQualifiers[s]; ok {
-			qualifier = true
-		}
-		if _, ok := credentialNouns[s]; ok {
-			noun = true
+	// A holder in the last position is nearly always private; the ordinary
+	// exceptions are the qualifiers that do not make it so.
+	if strings.HasSuffix(name, "_key") || strings.HasSuffix(name, "_keys") {
+		head := strings.TrimSuffix(strings.TrimSuffix(name, "_keys"), "_key")
+		if _, ordinary := ordinaryKeyQualifiers[lastSegment(head)]; !ordinary {
+			return true
 		}
 	}
-	return qualifier && noun
+	words := segmentWords(name)
+	for _, w := range words {
+		if _, ok := sensitiveNames[w]; ok {
+			return true
+		}
+	}
+	// The purpose and the holder must be two different words. Letting one word fill
+	// both roles would make seedCount and secretPlant credentials, and would miss
+	// seed_phrase, where "seed" is both a purpose and a holder.
+	qualifierAt := -1
+	for i, w := range words {
+		if _, ok := secrecyQualifiers[w]; ok {
+			qualifierAt = i
+			break
+		}
+	}
+	if qualifierAt < 0 {
+		return false
+	}
+	for i, w := range words {
+		if i == qualifierAt {
+			continue
+		}
+		if _, ok := credentialNouns[w]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+func lastSegment(name string) string {
+	if i := strings.LastIndexByte(name, '_'); i >= 0 {
+		return name[i+1:]
+	}
+	return name
+}
+
+// segmentWords breaks a normalised name into the words to look up.
+//
+// Three things are handled here rather than in the rule, because each of them made
+// a real name invisible: a trailing index, as in password1 or apiKey2; a run of
+// capitals, which normaliseSegment already splits; and a qualifier glued to a
+// holder with no separator at all, as in apikey.
+func segmentWords(name string) []string {
+	parts := strings.Split(name, "_")
+	out := make([]string, 0, len(parts)*2)
+	for _, part := range parts {
+		if part == "" {
+			continue
+		}
+		// A trailing index is not part of the word: password1 is a password.
+		trimmed := strings.TrimRight(part, "0123456789")
+		if trimmed == "" {
+			trimmed = part
+		}
+		out = append(out, trimmed)
+		out = append(out, splitQualifierFromNoun(trimmed)...)
+	}
+	return out
+}
+
+// splitQualifierFromNoun separates a glued pair such as "apikey" into its two
+// words, so a name written without any separator is still recognised.
+//
+// The purpose may itself carry a prefix, which is how an env-style xapikey is
+// read: the split is taken where the remainder is a credential noun, and the
+// purpose is whatever the head ends with.
+func splitQualifierFromNoun(word string) []string {
+	for i := 1; i < len(word); i++ {
+		head, tail := word[:i], word[i:]
+		if !isCredentialNoun(tail) {
+			continue
+		}
+		if _, ok := secrecyQualifiers[head]; ok {
+			return []string{head, tail}
+		}
+		for qualifier := range secrecyQualifiers {
+			if strings.HasSuffix(head, qualifier) {
+				return []string{qualifier, tail}
+			}
+		}
+	}
+	return nil
+}
+
+// isCredentialNoun reports whether a word is something a secret is held in,
+// allowing for a plural that the noun table does not list.
+func isCredentialNoun(word string) bool {
+	if _, ok := credentialNouns[word]; ok {
+		return true
+	}
+	return strings.HasSuffix(word, "s") && isCredentialNoun(strings.TrimSuffix(word, "s"))
 }
 
 // normaliseSegment rewrites a segment to lower snake case.
@@ -217,15 +319,12 @@ func WithRedaction(ctx context.Context, limits ValueLimits, fn func(context.Cont
 
 type redactionKey struct{}
 
-// maxRegisteredLeafDepth bounds how deep into a redacted value the search for
-// candidate literals goes. Reaching the bound counts as a drop rather than
-// stopping silently, so a caller can tell that a literal went unregistered.
-const maxRegisteredLeafDepth = maxValueDepthLimit
-
-// maxValueDepthLimit is the deepest the leaf search will go, which is the same
-// bound the pre-codec walk enforces, so a value the walk accepted is one the
-// leaf search can reach in full.
-const maxValueDepthLimit = 32
+// maxLeafSearchDepth bounds how deep into a redacted value the search for
+// candidate literals goes. It matches the default the pre-codec walk enforces, so
+// a value the walk accepted is one the leaf search reaches in full; a caller that
+// raises the walk's limit above this accepts a value whose deepest leaves are not
+// registered, which is stated rather than hidden.
+const maxLeafSearchDepth = 32
 
 // maxRegisteredLeafBytes is the shortest leaf worth remembering.
 //
@@ -282,14 +381,25 @@ type walkDecision struct {
 	// started from.
 	Path string
 
-	// Redacted reports that a segment of the path marked the value secret.
+	// Redacted reports that some part of the value was found sensitive.
 	Redacted bool
 
-	// Value is the first value the walk found sensitive. Redactions holds every one
-	// it found, because a value with two sensitive fields has two secrets and
-	// registering only the first would let the second reappear in later text.
-	Value      reflect.Value
+	// Redactions holds every sensitive value the walk found, at any depth, in any
+	// order.
+	//
+	// The walk does not stop at the first one. A value with a direct Password and a
+	// nested secret has two of them, and returning early discarded the outer one,
+	// which then reappeared verbatim in a later diagnostic and was signed by that
+	// record's digest. Map iteration made the survivor vary per run.
 	Redactions []reflect.Value
+}
+
+// first returns the first sensitive value, or an invalid value when there is none.
+func (d walkDecision) first() reflect.Value {
+	if len(d.Redactions) == 0 {
+		return reflect.Value{}
+	}
+	return d.Redactions[0]
 }
 
 // walk inspects a value before any codec sees it.
@@ -311,10 +421,13 @@ func (c *redactionContext) walk(path string, v reflect.Value, depth, nodes uint3
 	switch v.Kind() {
 	case reflect.Pointer, reflect.Interface:
 		if v.IsNil() {
-			return walkDecision{Path: path, Value: v}, nil
+			return walkDecision{Path: path}, nil
 		}
 		return c.walk(path, v.Elem(), depth+1, nodes)
 	case reflect.Map:
+		// Every key is examined, so two sensitive keys both contribute. Returning
+		// on the first made the survivor depend on Go's map iteration order.
+		var found []reflect.Value
 		iter := v.MapRange()
 		for iter.Next() {
 			key := iter.Key()
@@ -331,25 +444,31 @@ func (c *redactionContext) walk(path string, v reflect.Value, depth, nodes uint3
 			// not, so a map keyed by a secret is redacted for the same reason a
 			// field named for one is.
 			if IsSensitiveSegment(segment) {
-				return walkDecision{Path: child, Redacted: true, Value: iter.Value()}, nil
+				found = append(found, iter.Value())
+				continue
 			}
 			decision, err := c.walk(child, iter.Value(), depth+1, nodes)
-			if err != nil || decision.Redacted {
-				return decision, err
+			if err != nil {
+				return walkDecision{}, err
 			}
+			found = append(found, decision.Redactions...)
 		}
-		return walkDecision{Path: path}, nil
+		return walkDecision{Path: path, Redacted: len(found) > 0, Redactions: found}, nil
 	case reflect.Slice, reflect.Array:
 		if v.Kind() == reflect.Slice && v.Type().Elem().Kind() == reflect.Uint8 {
 			return walkDecision{Path: path}, nil
 		}
+		// Every element is visited, so a second secret in a slice is found even
+		// though the first one already made the value sensitive.
+		var found []reflect.Value
 		for i := range v.Len() {
 			decision, err := c.walk(joinPath(path, fmt.Sprint(i)), v.Index(i), depth+1, nodes)
-			if err != nil || decision.Redacted {
-				return decision, err
+			if err != nil {
+				return walkDecision{}, err
 			}
+			found = append(found, decision.Redactions...)
 		}
-		return walkDecision{Path: path, Value: v}, nil
+		return walkDecision{Path: path, Redacted: len(found) > 0, Redactions: found}, nil
 	case reflect.Struct:
 		t := v.Type()
 		// Every sensitive field in one struct is collected, because a value with two
@@ -373,19 +492,15 @@ func (c *redactionContext) walk(path string, v reflect.Value, depth, nodes uint3
 			if err != nil {
 				return walkDecision{}, err
 			}
-			if decision.Redacted {
-				return decision, nil
-			}
+			// A nested secret is kept alongside the outer ones. Returning it on its
+			// own discarded whatever had already been found, so a value with a
+			// direct Password and a nested secret registered only the nested one.
+			found = append(found, decision.Redactions...)
 		}
 		if len(found) > 0 {
-			return walkDecision{
-				Path:       path,
-				Redacted:   true,
-				Value:      found[0],
-				Redactions: found,
-			}, nil
+			return walkDecision{Path: path, Redacted: true, Redactions: found}, nil
 		}
-		return walkDecision{Path: path, Value: v}, nil
+		return walkDecision{Path: path}, nil
 	case reflect.String:
 		if !utf8Valid(v.String()) {
 			return walkDecision{}, fmt.Errorf("%w: string at %s is not valid UTF-8", ErrValueUnencodable, path)
@@ -419,7 +534,16 @@ func (c *redactionContext) registerLeaves(v reflect.Value) {
 }
 
 func (c *redactionContext) registerValueLeaves(v reflect.Value, depth uint32) {
-	if c == nil || !v.IsValid() || depth > 16 || c.droppedSecrets > 0 {
+	if c == nil || !v.IsValid() {
+		return
+	}
+	if depth > maxLeafSearchDepth {
+		// Crossing the bound is counted rather than stopping silently, and the count
+		// is readable, so a caller can tell a literal went unregistered.
+		c.droppedSecrets++
+		return
+	}
+	if c.droppedSecrets >= maxRegisteredSecrets {
 		return
 	}
 	switch v.Kind() {
