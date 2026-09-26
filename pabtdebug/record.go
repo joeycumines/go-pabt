@@ -219,6 +219,14 @@ func (k RunKey) IsZero() bool {
 }
 
 // StoredNode is one behavior-tree node in a recorded tree.
+//
+// The four link fields say what this occurrence is, not where it sits. A
+// condition node names the condition it evaluates; a post-condition node names
+// the condition's original node through PostNodeID; an action node names the
+// action instance and the effects that instance declares. A nil link means the
+// node is none of those things, which is a statement rather than a gap, so a
+// consumer never has to guess whether an absent link was recorded as empty or
+// never recorded at all.
 type StoredNode struct {
 	ID          string           `json:"id"`
 	Lineage     string           `json:"lineage"`
@@ -357,15 +365,60 @@ type RevisionScope struct {
 // observer saw. Uncertainty explains whichever is missing. None of them is
 // derived from another: a consumer that shows an expected value which was
 // really inferred from a key is stating something false.
+//
+// Key is the variable the condition reads, carried as a value rather than as
+// text so it is scrubbed and redacted like every other piece of application
+// data. It is the subject of the condition, never its requirement: a consumer
+// that displays it under the expected value's heading is making the key-only
+// guess this whole type exists to prevent.
+//
+// NodeID and PostNodeID are the two nodes that evaluate it. A condition is
+// reachable from more than one node, and a consumer asked "which preconditions
+// govern this occurrence" cannot answer without being told which occurrences
+// carry which conditions.
 type StoredCondition struct {
 	ConditionID string            `json:"conditionId"`
 	Kind        string            `json:"kind"`
+	Key         StoredValue       `json:"key"`
+	NodeID      *string           `json:"nodeId"`
+	PostNodeID  *string           `json:"postNodeId"`
 	Expected    StoredValue       `json:"expected"`
 	Current     StoredValue       `json:"current"`
 	Observed    *StoredValue      `json:"observed"`
 	Uncertainty StoredUncertainty `json:"uncertainty"`
 	Truth       string            `json:"truth"`
 	Revision    RevisionScope     `json:"revision"`
+}
+
+// StoredAction is one action instance the planner expanded.
+//
+// It carries the relation that actually exists between an effect and a
+// condition: an action's postcondition is the condition the action was there to
+// make, so a consumer can say what governed an action without inferring it
+// from a shared variable key (DD-19). ConditionIDs are the conditions the
+// action's own alternative branches are guarded by, which is a different
+// relation from the postcondition and is kept separate.
+type StoredAction struct {
+	ActionID        string   `json:"actionId"`
+	NodeID          *string  `json:"nodeId"`
+	Name            string   `json:"name"`
+	PostconditionID *string  `json:"postconditionId"`
+	ConditionIDs    []string `json:"conditionIds"`
+	EffectIDs       []string `json:"effectIds"`
+}
+
+// StoredEffect is one effect an action declares, with the value the application
+// gave it.
+//
+// A declared effect with no readable value says so through Uncertainty rather
+// than through an absent section, because "the action declares this effect" and
+// "the action declares no effect" are different facts about an action.
+type StoredEffect struct {
+	EffectID    string            `json:"effectId"`
+	ActionID    string            `json:"actionId"`
+	Key         StoredValue       `json:"key"`
+	Value       StoredValue       `json:"value"`
+	Uncertainty StoredUncertainty `json:"uncertainty"`
 }
 
 // StoredRelation is one verifier conclusion about an effect's contribution to a
@@ -405,9 +458,16 @@ const (
 )
 
 // FormatName and FormatVersion identify a record's on-disk shape.
+//
+// Version 2 added the action and effect sections and the condition's own node
+// links, because a consumer could not otherwise say which preconditions govern
+// a selected occurrence. A version 1 record decodes into this shape with those
+// sections absent, which reads as "not recorded" rather than as "none": a record
+// written before the linkage existed did not say the tree had no actions, it
+// said nothing about them.
 const (
 	FormatName    = "pabtdebug.record"
-	FormatVersion = uint32(1)
+	FormatVersion = uint32(2)
 )
 
 // StoredRecord is one recorded tick, and the unit the history is made of.
@@ -436,6 +496,8 @@ type StoredRecord struct {
 	CaptureError         *StoredError      `json:"captureError"`
 	Conditions           []StoredCondition `json:"conditions"`
 	Relations            []StoredRelation  `json:"relations"`
+	Actions              []StoredAction    `json:"actions"`
+	Effects              []StoredEffect    `json:"effects"`
 	Tree                 *StoredTree       `json:"tree"`
 	PayloadSHA256        string            `json:"payloadSha256"`
 	PreviousRecordSHA256 string            `json:"previousRecordSha256"`

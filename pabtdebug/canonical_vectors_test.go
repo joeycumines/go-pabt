@@ -202,9 +202,9 @@ const (
 	treeVectorBytes  = `{"digest":"","eventUid":"","nodeCount":0,"nodes":null,"planRevision":7,"rootId":"n1","runKey":{"planId":"p","runId":"r","sessionId":"s"},"sequence":1}`
 	treeVectorDigest = "2e2206274a5ee6abf498587cd4a21703292cfbe95f1e66e17a61540695a183c7"
 
-	recordVectorBytes   = `{"attemptId":"","captureError":null,"completedAt":"2026-09-25T00:00:00.000000001Z","conditions":null,"eventUid":"e1","executionStarted":false,"format":"pabtdebug.record","kind":"tick","panic":null,"payloadSha256":"","payloadState":"complete","plannerError":null,"previousRecordSha256":"0000000000000000000000000000000000000000000000000000000000000000","recordSha256":"","relations":null,"revision":{"coherence":"","planRevision":0,"runKey":{"planId":"","runId":"","sessionId":""},"sequence":0,"state":{"modelRevision":"","planRevision":0,"worldRevision":""}},"runKey":{"planId":"p","runId":"r","sessionId":"s"},"sequence":1,"startedAt":"2026-09-25T00:00:00Z","status":"","statusPresent":false,"tree":null,"treeEligible":false,"version":1}`
-	recordVectorDigest  = "e27dd8579107cf44f2a62c50faa2952358364ed1669d4c441edc9a671ed53b22"
-	payloadVectorDigest = "5dd385c755480f05ac26bf9d9c410f57418e3abac8b8d369f156bb6179d717d8"
+	recordVectorBytes   = `{"actions":null,"attemptId":"","captureError":null,"completedAt":"2026-09-25T00:00:00.000000001Z","conditions":null,"effects":null,"eventUid":"e1","executionStarted":false,"format":"pabtdebug.record","kind":"tick","panic":null,"payloadSha256":"","payloadState":"complete","plannerError":null,"previousRecordSha256":"0000000000000000000000000000000000000000000000000000000000000000","recordSha256":"","relations":null,"revision":{"coherence":"","planRevision":0,"runKey":{"planId":"","runId":"","sessionId":""},"sequence":0,"state":{"modelRevision":"","planRevision":0,"worldRevision":""}},"runKey":{"planId":"p","runId":"r","sessionId":"s"},"sequence":1,"startedAt":"2026-09-25T00:00:00Z","status":"","statusPresent":false,"tree":null,"treeEligible":false,"version":2}`
+	recordVectorDigest  = "ede97a38bf00e4604ea1a8c4e3a08b68f9655b1d059f86f2694759f914df1f17"
+	payloadVectorDigest = "7582347d63cece72874d3720b42d12f907be41babaf4afbac99d90529e5661d6"
 )
 
 // goldenValue, goldenTree, and goldenRecord build the frozen inputs. They are

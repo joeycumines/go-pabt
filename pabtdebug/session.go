@@ -420,6 +420,17 @@ func (s *Session) buildRecord(
 	relations := s.storedRelations(ctx, snapshot)
 
 	record.Relations = relations
+	// The actions and the effects are recorded as sections of their own, because the
+	// relation between an effect and the condition it was meant to make is carried
+	// by the action and not by anything a consumer could join on. Without them a
+	// reader can see that an effect exists and that a condition exists and has to
+	// guess that they are the same fact.
+	record.Actions = storedActions(snapshot)
+	effects, err := s.storedEffects(ctx, snapshot)
+	if err != nil {
+		return StoredRecord{}, nil, err
+	}
+	record.Effects = effects
 	if outcome.kind == RecordTick && len(snapshot.Nodes) > 0 {
 		tree, err := s.storedTree(snapshot)
 		if err != nil {
@@ -463,6 +474,11 @@ func (s *Session) terminalRecord(
 // The nodes are already in preorder with their parents, so the tree is the same
 // sequence with each node's content digest sealed. A node's ordinal follows from
 // its position, which is what makes a later delta able to express a move.
+//
+// Each node is also told what it is, because a tree whose nodes carry only
+// shape cannot answer which preconditions govern a selected occurrence. The
+// links are filled in one pass before any node is digested, so a node's content
+// hash covers the links and a delta that changes one reports it.
 func (s *Session) storedTree(snapshot pabt.TickSnapshot) (*StoredTree, error) {
 	if len(snapshot.Nodes) == 0 {
 		return nil, fmt.Errorf(`pabtdebug: the capture reported no nodes`)
@@ -477,6 +493,25 @@ func (s *Session) storedTree(snapshot pabt.TickSnapshot) (*StoredTree, error) {
 		Nodes:        make([]StoredNode, 0, len(snapshot.Nodes)),
 		NodeCount:    uint32(len(snapshot.Nodes)),
 		PlanRevision: snapshot.PlanRevision,
+	}
+	// A condition is evaluated by two nodes: the leaf that first read it and the
+	// post-condition node expansion created to re-evaluate it. Indexing both
+	// before the walk is what lets a node say which of the two it is.
+	conditionNode := make(map[string]string, len(snapshot.Conditions))
+	postNode := make(map[string]string, len(snapshot.Conditions))
+	for _, condition := range snapshot.Conditions {
+		if condition.NodeID != "" {
+			conditionNode[string(condition.NodeID)] = string(condition.ID)
+		}
+		if condition.PostNodeID != "" {
+			postNode[string(condition.PostNodeID)] = string(condition.NodeID)
+		}
+	}
+	actionNode := make(map[string]pabt.ActionOccurrence, len(snapshot.Actions))
+	for _, action := range snapshot.Actions {
+		if action.NodeID != "" {
+			actionNode[string(action.NodeID)] = action
+		}
 	}
 	for _, occurrence := range snapshot.Nodes {
 		status, err := NodeStatusOf(occurrence.Status)
@@ -497,6 +532,21 @@ func (s *Session) storedTree(snapshot pabt.TickSnapshot) (*StoredTree, error) {
 			parent := string(occurrence.Parent)
 			node.ParentID = &parent
 		}
+		if id, ok := conditionNode[node.ID]; ok {
+			condition := id
+			node.ConditionID = &condition
+		}
+		if id, ok := postNode[node.ID]; ok {
+			post := id
+			node.PostNodeID = &post
+		}
+		if action, ok := actionNode[node.ID]; ok {
+			id := string(action.ID)
+			node.ActionID = &id
+			for _, effectID := range action.EffectIDs {
+				node.EffectIDs = append(node.EffectIDs, string(effectID))
+			}
+		}
 		digest, err := HashNode(node)
 		if err != nil {
 			return nil, err
@@ -510,6 +560,97 @@ func (s *Session) storedTree(snapshot pabt.TickSnapshot) (*StoredTree, error) {
 	}
 	tree.Digest = digest
 	return tree, nil
+}
+
+// storedActions turns the capture boundary's actions into the store's own list.
+//
+// The action is the relation that connects an effect to the condition the
+// action was there to make, so it is recorded as a section rather than left to
+// be inferred from an effect and a node that happen to share a variable key.
+func storedActions(snapshot pabt.TickSnapshot) []StoredAction {
+	out := make([]StoredAction, 0, len(snapshot.Actions))
+	for _, action := range snapshot.Actions {
+		stored := StoredAction{
+			ActionID: string(action.ID),
+			Name:     action.Name,
+			// The slices are made rather than aliased: a nil and an empty list are
+			// different facts in a canonical record, and the snapshot's own nil must
+			// not become this record's spelling.
+			ConditionIDs: make([]string, 0, len(action.ConditionIDs)),
+			EffectIDs:    make([]string, 0, len(action.EffectIDs)),
+		}
+		if action.NodeID != "" {
+			node := string(action.NodeID)
+			stored.NodeID = &node
+		}
+		if action.PostconditionID != "" {
+			post := string(action.PostconditionID)
+			stored.PostconditionID = &post
+		}
+		for _, id := range action.ConditionIDs {
+			stored.ConditionIDs = append(stored.ConditionIDs, string(id))
+		}
+		for _, id := range action.EffectIDs {
+			stored.EffectIDs = append(stored.EffectIDs, string(id))
+		}
+		out = append(out, stored)
+	}
+	return out
+}
+
+// storedEffects turns the capture boundary's effects into the store's own list,
+// encoding each declared value so a redacted secret is redacted on this path
+// too rather than only on the conditions that read it back.
+func (s *Session) storedEffects(
+	ctx context.Context,
+	snapshot pabt.TickSnapshot,
+) ([]StoredEffect, error) {
+	out := make([]StoredEffect, 0, len(snapshot.Effects))
+	for _, effect := range snapshot.Effects {
+		stored := StoredEffect{
+			EffectID: string(effect.ID),
+			ActionID: string(effect.ActionID),
+			Uncertainty: StoredUncertainty{
+				State: UncertaintyNone,
+			},
+		}
+		key, err := s.codecs.Encode(ctx, "effect."+stored.EffectID+".key", effect.Key)
+		if err != nil {
+			return nil, err
+		}
+		stored.Key = key
+		switch {
+		case effect.ValueKnown:
+			encoded, err := s.codecs.Encode(ctx, "effect."+stored.EffectID+".value", effect.Value)
+			if err != nil {
+				return nil, err
+			}
+			if encoded.Visibility == ValueError {
+				// A codec that fails returns the reason as a value, so the reason is
+				// read here or it is lost, exactly as it is on a condition.
+				stored.Value = encoded
+				stored.Uncertainty = StoredUncertainty{
+					State:   UncertaintyError,
+					Code:    "codec_failed",
+					Message: s.codecs.sanitizeText(encoded.Error),
+				}
+			} else {
+				stored.Value = encoded
+			}
+		default:
+			stored.Value = StoredValue{
+				Visibility: ValueUnknown,
+				Source:     "effect." + stored.EffectID + ".value",
+			}
+			stored.Uncertainty = StoredUncertainty{
+				State:   UncertaintyUnavailable,
+				Code:    "no_value",
+				Message: "the action declared this effect without a value",
+			}
+		}
+		out = append(out, stored)
+	}
+	return out, nil
 }
 
 // storedConditions turns the capture boundary's conditions into the store's
@@ -536,6 +677,23 @@ func (s *Session) storedConditions(
 				State:        snapshot.StateRevision,
 				Coherence:    snapshot.Coherence,
 			},
+		}
+		// The key names the variable this condition reads. It goes through the codec
+		// like every other piece of application data, because it is application text
+		// that will be rendered in a browser: an unscrubbed string field would be the
+		// one place a recorded secret could reach a response unmediated.
+		key, err := s.codecs.Encode(ctx, source+".key", occurrence.Key)
+		if err != nil {
+			return nil, err
+		}
+		condition.Key = key
+		if occurrence.NodeID != "" {
+			node := string(occurrence.NodeID)
+			condition.NodeID = &node
+		}
+		if occurrence.PostNodeID != "" {
+			post := string(occurrence.PostNodeID)
+			condition.PostNodeID = &post
 		}
 		if occurrence.ExpectedKnown {
 			encoded, err := s.codecs.Encode(ctx, source+".expected", occurrence.Expected)
