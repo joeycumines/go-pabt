@@ -191,15 +191,33 @@ func (d *durable) writeReady(addr string) error {
 // can be guessed a byte at a time is not a token.
 func (s *Server) requireCapability(next *http.ServeMux) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		presented := r.Header.Get(capabilityHeader)
-		want := s.durable.capability
-		if presented == "" || subtle.ConstantTimeCompare([]byte(presented), []byte(want)) != 1 {
+		if !s.authenticated(r) {
 			w.Header().Set("WWW-Authenticate", `Bearer realm="pabtdebug"`)
 			http.Error(w, "unauthenticated", http.StatusUnauthorized)
 			return
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// requireCapabilityHandler wraps one handler in the check, for a route registered
+// outside the durable subtree where the guard does not reach.
+func (s *Server) requireCapabilityHandler(next http.HandlerFunc) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !s.authenticated(r) {
+			w.Header().Set("WWW-Authenticate", `Bearer realm="pabtdebug"`)
+			http.Error(w, "unauthenticated", http.StatusUnauthorized)
+			return
+		}
+		next(w, r)
+	})
+}
+
+// authenticated reports whether the request presented the token.
+func (s *Server) authenticated(r *http.Request) bool {
+	presented := r.Header.Get(capabilityHeader)
+	want := s.durable.capability
+	return presented != "" && subtle.ConstantTimeCompare([]byte(presented), []byte(want)) == 1
 }
 
 // capabilityHeader is where the token is presented.
@@ -659,22 +677,17 @@ func (s *Server) Announce(ctx context.Context, receipt CommitReceipt, record Sto
 	if err != nil {
 		return err
 	}
+	if record.RunKey != key {
+		// A session recording into a run the store no longer serves would otherwise put
+		// that run's records on the current run's stream, under the current generation.
+		return fmt.Errorf("%w: the record names run %s, the store serves %s",
+			ErrCursorStale, record.RunKey.RunID, key.RunID)
+	}
 	hub := s.durable.hubOf(ctx, key, installation.Generation)
 	if hub == nil {
 		return fmt.Errorf(`pabtdebug: the stream has no hub`)
 	}
 	return hub.Publish(ctx, receipt, record)
-}
-
-// invalidateHub drops the hub, so a resumed stream announces the run that is active
-// now rather than the one that was active when the hub was made.
-func (d *durable) invalidateHub() {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	if d.hub != nil {
-		d.hub.Close()
-		d.hub = nil
-	}
 }
 
 // close ends the server's own state.

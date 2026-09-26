@@ -356,14 +356,93 @@ func commitInBackground(t *testing.T, f *hubFixture, n int) <-chan error {
 }
 
 func TestAReaderThatReportsWhatItTookIsNeverDropped(t *testing.T) {
-	// A queue of two against many more records than that, with the reader running at the
-	// same time as the writer. A reader that reports what it took is never behind, and
-	// one that does not is behind almost at once. Without the report the accounting
-	// only ever grows, so a reader at full speed is eventually dropped for a queue that
-	// is empty.
-	tight := DefaultDurableHubLimits()
-	tight.MaxQueuedEvents = 2
-	reporting := newHubFixture(t, tight)
+	// Each bound on its own, with the reader running at the same time as the writer. A
+	// reader that reports what it took is never behind, and one that does not is behind
+	// almost at once. Without the report the accounting only ever grows, so a reader at
+	// full speed is dropped for a queue that is empty; and without the byte half of the
+	// report it is dropped for bytes it no longer holds.
+	for _, bound := range []struct {
+		name  string
+		tight func(DurableHubLimits) DurableHubLimits
+	}{
+		{"an event bound", func(l DurableHubLimits) DurableHubLimits {
+			l.MaxQueuedEvents = 2
+			return l
+		}},
+	} {
+		t.Run(bound.name, func(t *testing.T) {
+			reporting := newHubFixture(t, bound.tight(DefaultDurableHubLimits()))
+			sub, err := reporting.hub.Subscribe()
+			if err != nil {
+				t.Fatalf("Subscribe: %v", err)
+			}
+			done := commitInBackground(t, reporting, 12)
+			drained := 0
+			for drained < 12 {
+				select {
+				case message := <-sub.Client.Messages():
+					sub.Client.Took(message)
+					drained++
+				case err := <-done:
+					if err != nil {
+						t.Fatalf("commit: %v", err)
+					}
+					done = nil
+				case <-time.After(5 * time.Second):
+					t.Fatalf("a reader that reported what it took only received %d of 12", drained)
+				}
+			}
+			if sub.Client.Behind() {
+				t.Error("a reader that reported what it took was dropped for being behind")
+			}
+			if reporting.hub.Overflowed() != 0 {
+				t.Errorf("the hub counted %d disconnects for a reader that kept up",
+					reporting.hub.Overflowed())
+			}
+
+			// The same shape with a reader that takes without reporting. This is what the
+			// report is for, so it is the half that fails if the accounting measures the
+			// history rather than the queue.
+			silent := newHubFixture(t, bound.tight(DefaultDurableHubLimits()))
+			quiet, err := silent.hub.Subscribe()
+			if err != nil {
+				t.Fatalf("Subscribe: %v", err)
+			}
+			if err := <-commitInBackground(t, silent, 6); err != nil {
+				t.Fatalf("commit: %v", err)
+			}
+			if !quiet.Client.Behind() {
+				t.Error("a reader that took records without reporting was never told it was behind")
+			}
+			if silent.hub.Overflowed() == 0 {
+				t.Error("the hub did not count a reader it had to disconnect")
+			}
+		})
+	}
+}
+
+func TestAReaderThatReportsWhatItTookIsNeverDroppedOnBytes(t *testing.T) {
+	// The byte bound on its own, sized from a real record so that it holds a couple of
+	// them and not twelve. A bound too small to hold anything would mark every client
+	// behind immediately and prove nothing about the accounting.
+	probe := newHubFixture(t, DefaultDurableHubLimits())
+	probe.commit(t, 1)
+	record, err := probe.store.RecordAt(context.Background(), probe.key, 1)
+	if err != nil {
+		t.Fatalf("RecordAt: %v", err)
+	}
+	encoded, err := CanonicalEncode(record)
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	// Room for most of the burst but not all of it, so a reader whose reports leave
+	// the byte tally standing is dropped partway through while a reader that reports
+	// both halves never is.
+	limits := DefaultDurableHubLimits()
+	limits.MaxQueuedEvents = 1000
+	limits.MaxQueuedBytes = uint64(8 * len(encoded))
+
+	reporting := newHubFixture(t, limits)
 	sub, err := reporting.hub.Subscribe()
 	if err != nil {
 		t.Fatalf("Subscribe: %v", err)
@@ -373,6 +452,9 @@ func TestAReaderThatReportsWhatItTookIsNeverDropped(t *testing.T) {
 	for drained < 12 {
 		select {
 		case message := <-sub.Client.Messages():
+			// The report has to carry the bytes as well as the count: a reader whose
+			// reports leave the byte tally standing is eventually dropped for bytes it
+			// is no longer holding.
 			sub.Client.Took(message)
 			drained++
 		case err := <-done:
@@ -390,23 +472,19 @@ func TestAReaderThatReportsWhatItTookIsNeverDropped(t *testing.T) {
 	if reporting.hub.Overflowed() != 0 {
 		t.Errorf("the hub counted %d disconnects for a reader that kept up", reporting.hub.Overflowed())
 	}
-
-	// The same shape with a reader that takes without reporting. This is what the report
-	// is for, so it is the half that fails if the accounting measures the history rather
-	// than the queue.
-	silent := newHubFixture(t, tight)
+	silent := newHubFixture(t, limits)
 	quiet, err := silent.hub.Subscribe()
 	if err != nil {
 		t.Fatalf("Subscribe: %v", err)
 	}
-	if err := <-commitInBackground(t, silent, 6); err != nil {
+	// The same burst with a reader that never reports. It has to be the same length as
+	// the reporting one, because a burst that fits inside the bound would leave it behind
+	// for no reason and prove nothing.
+	if err := <-commitInBackground(t, silent, 12); err != nil {
 		t.Fatalf("commit: %v", err)
 	}
 	if !quiet.Client.Behind() {
 		t.Error("a reader that took records without reporting was never told it was behind")
-	}
-	if silent.hub.Overflowed() == 0 {
-		t.Error("the hub did not count a reader it had to disconnect")
 	}
 }
 

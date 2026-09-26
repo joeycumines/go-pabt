@@ -21,6 +21,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -32,17 +33,40 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/joeycumines/go-pabt"
 )
 
 // durableFixture is a running durable server over a store with a committed run, plus
 // the identity a request needs to be authenticated at all.
 type durableFixture struct {
-	server *Server
-	store  *SQLiteStore
-	key    RunKey
-	plan   *sessionFixture
-	client *http.Client
-	ticks  int
+	server  *Server
+	store   *SQLiteStore
+	key     RunKey
+	plan    *sessionFixture
+	client  *http.Client
+	ticks   int
+	started bool
+}
+
+// identity returns the run identity as the store knows it.
+func (f *durableFixture) identity() SessionIdentity {
+	return SessionIdentity{SessionID: f.key.SessionID, PlanID: f.key.PlanID, RunID: f.key.RunID}
+}
+
+// panickingPlan is a planner whose action panics, so the ticks that record it commit a
+// record with no tree: the state the store produces when a tick does not finish.
+func panickingPlan(t *testing.T) *pabt.Plan[*fixtureCondition] {
+	t.Helper()
+	fixture := &sessionFixture{
+		condition: &fixtureCondition{key: "x", expected: "done"},
+		state:     &fixtureState{variables: map[string]any{"x": "start"}, panics: true},
+	}
+	plan, err := pabt.NewCaptured(fixture.state, []pabt.Conditions[*fixtureCondition]{{fixture.condition}})
+	if err != nil {
+		t.Fatalf("NewCaptured: %v", err)
+	}
+	return plan
 }
 
 func newDurableFixture(t *testing.T, records int) *durableFixture {
@@ -1041,5 +1065,175 @@ func TestACustomRouteUnderTheDurableSetIsStillBehindTheCapability(t *testing.T) 
 	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Errorf("a custom route answered without the capability: %d %s", resp.StatusCode, body)
+	}
+}
+
+func TestARecordWithNoTreeIsAbsentRatherThanCorrupt(t *testing.T) {
+	// A panicked or capture-failed record commits with no tree and no representation
+	// row. That is a normal state this package's own writer produces, and both the read
+	// routes and the export have to say it is absent rather than calling the store
+	// corrupt, which would make the whole history untransferable.
+	f := newDurableFixture(t, 0)
+	f.waitReady(t)
+	ctx := context.Background()
+	session, err := OpenSession(ctx, f.store, panickingPlan(t), SessionConfig{
+		Identity:    f.identity(),
+		Codecs:      NewCodecRegistry(DefaultValueLimits()),
+		ValueLimits: DefaultValueLimits(),
+		Announce:    f.server.Announce,
+	})
+	if err != nil {
+		t.Fatalf("OpenSession: %v", err)
+	}
+	var treeless uint64
+	for range 3 {
+		result := session.Tick(ctx)
+		if result.Err != nil {
+			t.Fatalf("Tick: %v", result.Err)
+		}
+		if result.Kind == RecordPanicked && result.Sequence != 0 {
+			treeless = result.Sequence
+		}
+	}
+	if treeless == 0 {
+		t.Skip("the fixture committed no tree-less record, so this case does not apply")
+	}
+	record, err := f.store.RecordAt(ctx, f.key, treeless)
+	if err != nil {
+		t.Fatalf("RecordAt: %v", err)
+	}
+	if record.Tree != nil {
+		t.Fatalf("the record at %d holds a tree, so the fixture is wrong", treeless)
+	}
+	// Both routes and the store's own read agree: absent.
+	if _, err := f.store.TreeAt(ctx, f.key, treeless); !errors.Is(err, ErrNotFound) {
+		t.Errorf("TreeAt = %v, want not found", err)
+	}
+	if _, _, _, err := f.store.Representation(ctx, f.key, treeless); !errors.Is(err, ErrNotFound) {
+		t.Errorf("Representation = %v, want not found", err)
+	}
+	for _, path := range []string{
+		fmt.Sprintf("/debug/pabt/v2/trees/%d", treeless),
+		fmt.Sprintf("/debug/pabt/v2/representations/%d", treeless),
+	} {
+		resp, body := f.get(t, path)
+		if resp.StatusCode != http.StatusNotFound {
+			t.Errorf("%s = %d, want 404: %s", path, resp.StatusCode, firstLine(body))
+		}
+	}
+	// And a run holding one is still exportable, which is how a history leaves the
+	// process.
+	resp, body := f.get(t, "/debug/pabt/v2/export")
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("export = %d, want 200: %s", resp.StatusCode, firstLine(body))
+	}
+}
+
+func TestAnAnnouncementForAnotherRunIsRefused(t *testing.T) {
+	f := newDurableFixture(t, 2)
+	f.waitReady(t)
+	ctx := context.Background()
+	// A session recording into a run the store no longer serves would otherwise put that
+	// run's records on the current run's stream, under the current generation, where a
+	// cursor would claim them.
+	record, err := f.store.RecordAt(ctx, f.key, 1)
+	if err != nil {
+		t.Fatalf("RecordAt: %v", err)
+	}
+	elsewhere := record
+	elsewhere.RunKey = RunKey{SessionID: "another", PlanID: f.key.PlanID, RunID: "another-run"}
+	err = f.server.Announce(ctx, CommitReceipt{
+		Sequence: record.Sequence, EventUID: record.EventUID, RecordSHA256: record.RecordSHA256,
+	}, elsewhere)
+	if !errors.Is(err, ErrCursorStale) {
+		t.Errorf("announcing another run's record = %v, want a refusal", err)
+	}
+	// The record the store does serve is accepted, so the check is about the run and
+	// not about refusing everything. A second server over the same store has its own
+	// hub, which has announced nothing, so the same record is not a repeat there.
+	head, err := f.store.Head(ctx, f.key)
+	if err != nil {
+		t.Fatalf("Head: %v", err)
+	}
+	latest, err := f.store.RecordAt(ctx, f.key, head.HeadSequence)
+	if err != nil {
+		t.Fatalf("RecordAt: %v", err)
+	}
+	other, err := NewDurableServer(f.store, DurableServerConfig{Addr: "127.0.0.1:0"})
+	if err != nil {
+		t.Fatalf("NewDurableServer: %v", err)
+	}
+	defer func() { _ = other.Close() }()
+	if err := other.Announce(ctx, CommitReceipt{
+		Sequence: latest.Sequence, EventUID: latest.EventUID, RecordSHA256: latest.RecordSHA256,
+	}, latest); err != nil {
+		t.Errorf("announcing the served run's record = %v", err)
+	}
+}
+
+func TestARepresentationWhoseOwnDigestIsWrongIsRefused(t *testing.T) {
+	f := newDurableFixture(t, 2)
+	f.waitReady(t)
+	// The tree's own digest is wrong, so the row does not even agree with itself. That
+	// is a different corruption from disagreeing with the record, and each is checked
+	// by its own statement.
+	original, err := f.store.TreeAt(context.Background(), f.key, 1)
+	if err != nil {
+		t.Fatalf("TreeAt: %v", err)
+	}
+	altered := original
+	altered.Nodes = append([]StoredNode(nil), original.Nodes...)
+	altered.Nodes[0].Name = "PlantedRoot"
+	encoded, err := CanonicalEncode(altered)
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	if _, err := f.store.writer.ExecContext(context.Background(),
+		"UPDATE representations SET tree_json = ? WHERE session_id = ? AND run_id = ? AND seq = 1",
+		encoded, f.key.SessionID, f.key.RunID); err != nil {
+		t.Fatalf("rewrite: %v", err)
+	}
+	if _, _, _, err := f.store.Representation(context.Background(), f.key, 1); !errors.Is(err, ErrStoreCorrupt) {
+		t.Errorf("a representation whose own digest is wrong = %v, want a corruption report", err)
+	}
+}
+
+func TestADeltaWhoseBaseIsNotWhatItNamesIsRefused(t *testing.T) {
+	f := newDurableFixture(t, 4)
+	f.waitReady(t)
+	ctx := context.Background()
+	// A delta that names a base sequence whose tree has a different digest. The delta
+	// still verifies against itself, and the row is untouched, so only the comparison
+	// with the base the store actually holds can refuse it.
+	_, _, delta, err := f.store.Representation(ctx, f.key, 3)
+	if err != nil {
+		t.Fatalf("Representation: %v", err)
+	}
+	if delta == nil {
+		t.Skip("the fixture stored no delta at 3, so this case does not apply")
+	}
+	forged := *delta
+	forged.BaseSequence = delta.BaseSequence - 1
+	if forged.BaseSequence == delta.BaseSequence {
+		t.Skip("the delta's base is the first sequence, so there is nothing to point it at")
+	}
+	forged.SHA256 = ""
+	digest, err := HashDelta(forged)
+	if err != nil {
+		t.Fatalf("re-seal: %v", err)
+	}
+	forged.SHA256 = digest
+	encoded, err := CanonicalEncode(forged)
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	if _, err := f.store.writer.ExecContext(ctx,
+		"UPDATE representations SET delta_json = ?, delta_sha256 = ? "+
+			"WHERE session_id = ? AND run_id = ? AND seq = 3",
+		encoded, mustHex(digest), f.key.SessionID, f.key.RunID); err != nil {
+		t.Fatalf("rewrite: %v", err)
+	}
+	if _, _, _, err := f.store.Representation(ctx, f.key, 3); err == nil {
+		t.Error("a delta naming a base the store does not hold was served")
 	}
 }

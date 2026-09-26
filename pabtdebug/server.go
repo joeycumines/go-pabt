@@ -112,11 +112,21 @@ func NewServer(tracker *Tracker, addr string) *Server {
 // without the check, because a named pattern wins over the subtree guard, and a
 // one-line mistake here would be a silent unauthenticated route.
 func (s *Server) HandleFunc(pattern string, handler http.HandlerFunc) {
-	if s.v2 != nil && strings.HasPrefix(pattern, "/debug/pabt/v2/") {
-		s.v2.HandleFunc(pattern, handler)
+	mux, ok := s.server.Handler.(*http.ServeMux)
+	if !ok {
 		return
 	}
-	if mux, ok := s.server.Handler.(*http.ServeMux); ok {
+	switch {
+	case s.v2 != nil && strings.HasPrefix(pattern, "/debug/pabt/v2/"):
+		// Inside the subtree the guarded mux owns it, so the check cannot be bypassed.
+		s.v2.HandleFunc(pattern, handler)
+	case s.v2 != nil && strings.HasPrefix(pattern, "/debug/pabt/v2"):
+		// The bare prefix and anything beside it are exact paths on the outer mux, which
+		// the subtree guard does not cover. They are registered wrapped in the check
+		// rather than left to the reader's judgement about which side of the namespace
+		// a string is on.
+		mux.Handle(pattern, s.requireCapabilityHandler(handler))
+	default:
 		mux.HandleFunc(pattern, handler)
 	}
 }
@@ -184,6 +194,10 @@ func (s *Server) resolveTracker(r *http.Request) (*Tracker, bool) {
 //
 // A durable server already owns its listener, so Start serves on it rather than
 // binding a second time, and the address a caller was told is the one being served.
+// A second Start is refused rather than serving the same listener twice, which would
+// make Close report a closed connection. That applies to a tracker-backed server too:
+// ListenAndServe on a fixed address is not usually transient, and a caller that wants
+// to retry after a transient failure can construct another server.
 func (s *Server) Start() error {
 	s.mu.Lock()
 	if s.started {

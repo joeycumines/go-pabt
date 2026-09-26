@@ -1017,17 +1017,6 @@ func (s *SQLiteStore) Representation(
 	if err := s.checkUsable(false); err != nil {
 		return StoredTree{}, nil, nil, err
 	}
-	// The record's own copy of the tree is the one the chain covers, so it is what
-	// says which tree this sequence committed.
-	record, err := s.RecordAt(ctx, key, sequence)
-	if err != nil {
-		return StoredTree{}, nil, nil, err
-	}
-	if record.Tree == nil {
-		return StoredTree{}, nil, nil, fmt.Errorf(
-			"%w: sequence %d holds a representation and its record has no tree",
-			ErrStoreCorrupt, sequence)
-	}
 	var (
 		raw      []byte
 		baseUID  sql.NullString
@@ -1047,6 +1036,18 @@ func (s *SQLiteStore) Representation(
 	}
 	if err := CanonicalDecode(raw, &tree); err != nil {
 		return StoredTree{}, nil, nil, fmt.Errorf("%w: a representation tree: %v", ErrStoreCorrupt, err)
+	}
+	// From here the sequence has a representation, so a record without a tree is a
+	// contradiction rather than an absence. The order matters: a record that committed
+	// no tree has no representation row either, and was already answered as not found.
+	record, err := s.RecordAt(ctx, key, sequence)
+	if err != nil {
+		return StoredTree{}, nil, nil, err
+	}
+	if record.Tree == nil {
+		return StoredTree{}, nil, nil, fmt.Errorf(
+			"%w: sequence %d holds a representation and its record has no tree",
+			ErrStoreCorrupt, sequence)
 	}
 	if baseUID.Valid {
 		uid := baseUID.String
