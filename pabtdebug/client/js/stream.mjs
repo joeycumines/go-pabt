@@ -19,6 +19,7 @@
 */
 
 import { parseJSON } from "./lossless.mjs";
+import { compareSeq } from "./model.mjs";
 
 /**
  * EventStream follows one run's committed records.
@@ -146,7 +147,15 @@ export class EventStream {
           this.handlers.onError(new Error(`the stream numbered ${id} a record whose sequence is ${record.sequence}`));
           return;
         }
-        if (record.sequence <= this.position) return; // Already held: a duplicate, not a gap.
+        if (compareSeq(record.sequence, this.position) <= 0) {
+          // Already held: a duplicate, not a gap. Compared as decimals, because
+          // both sides are decimal strings by construction and "<=" on two strings
+          // is lexicographic - which drops every record the moment a sequence
+          // crosses a digit boundary, from 9 to 10, with no error and no
+          // reconnect. The connection would stay open and the page would sit at
+          // tick 9 while the store moved on.
+          return;
+        }
         this.handlers.onRecord(record);
         this.position = record.sequence;
         return;

@@ -435,7 +435,11 @@ func (s *Session) storedRelations(
 	_ context.Context,
 	snapshot pabt.TickSnapshot,
 ) []StoredRelation {
-	var out []StoredRelation
+	// Made rather than nil, like every other section. Within one record, null and
+	// [] meaning different things for different sections is a distinction a reader
+	// has to know about and cannot infer, and this one carried no information: a
+	// tick with no verdicts has an empty set of them, not an absent set.
+	out := make([]StoredRelation, 0, len(snapshot.Executions))
 	for _, evidence := range snapshot.Executions {
 		for _, verdict := range evidence.Relations {
 			relation := StoredRelation{

@@ -180,8 +180,15 @@ const NODE_FIELDS = [
   "actionId",
   "effectIds",
   "frame",
-  "contentHash",
   "lineage",
+  // contentHash is deliberately absent. It is a digest the store computes over the
+  // whole node including its position, so a node that merely moved carries a
+  // different hash in the target than in the base - and the client cannot
+  // recompute either one, since that would mean reimplementing the store's
+  // canonical encoder here. Comparing it would report a disagreement on every
+  // move, which is the false alarm this function exists to avoid. A field a
+  // reader cannot recompute is not evidence about a tree; it is a label the
+  // store wrote, and the store's own applier has already checked it.
 ];
 
 /**

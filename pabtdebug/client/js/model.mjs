@@ -23,8 +23,6 @@ export class Model {
     this.records = new Map();
     /** @type {Map<string, any>} trees by sequence */
     this.trees = new Map();
-    /** @type {Map<string, string>} the digest each sequence's tree was verified against */
-    this.verified = new Map();
     this.storeId = "";
     this.generation = "";
     this.runKey = null;
@@ -65,7 +63,6 @@ export class Model {
     this.records.set(record.sequence, record);
     if (record.tree) {
       this.trees.set(record.sequence, record.tree);
-      this.verified.set(record.sequence, record.tree.digest);
     }
   }
 

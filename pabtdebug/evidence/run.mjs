@@ -36,7 +36,7 @@ const repoRoot = resolve(here, "../..");
 /** The viewports the acceptance names, with what each is for. */
 const VIEWPORTS = [
   { name: "desktop", width: 1200, height: 762, why: "the wide default" },
-  { name: "laptop", width: 1024, height: 762, why: "the intermediate width" },
+  { name: "laptop", width: 1024, height: 768, why: "the intermediate width, at the height the acceptance names" },
   { name: "narrow", width: 700, height: 700, why: "the narrow layout, where the old page overflowed" },
 ];
 
@@ -49,8 +49,13 @@ const REGIONS = ["header", "breadcrumb", "timeline", "canvas", "detail", "scrub"
 /** Values the target plants, which must never appear in the page. */
 const PLANTED_SECRETS = ["hunter2-planted", "planted-capability-value"];
 
-const TICKS = 8;
-const TICK_INTERVAL_MS = 250;
+// Twelve ticks, so the run crosses a digit boundary. At eight it stopped one tick
+// short of 9 to 10, which is where a lexicographic comparison of two decimal
+// sequences starts dropping records - and the run was green while it did. The
+// count is chosen to make that boundary unavoidable, not because twelve is a
+// useful number of ticks.
+const TICKS = 12;
+const TICK_INTERVAL_MS = 200;
 
 function parseArgs(argv) {
   const options = { out: join(repoRoot, "scratch", "evidence"), keep: false };
@@ -178,17 +183,18 @@ async function main() {
     });
     note(`target ${address}, capability ${capability.length} characters, not logged`);
 
-    // The run's own records are waited for through the store, not by counting
-    // lines of the target's output: the head is the fact, and a line count would
-    // be a second way to be wrong about it.
-    await waitFor(`the run to reach tick ${TICKS}`, async () => {
+    /**
+     * headSequence reads the store's own account of where the run is, rather than
+     * counting lines of the target's output: the head is the fact, and a line
+     * count would be a second way to be wrong about it.
+     */
+    const headSequence = async () => {
       const response = await fetch(`http://${address}/debug/pabt/v2/state`, {
         headers: { "X-PABT-Capability": capability },
       });
-      if (!response.ok) return false;
-      const state = await response.json();
-      return state.head.HeadSequence >= TICKS ? state : false;
-    }, 30000);
+      if (!response.ok) return 0;
+      return Number((await response.json()).head.HeadSequence);
+    };
 
     browser = await chromium.launch();
     const context = await browser.newContext();
@@ -229,6 +235,37 @@ async function main() {
 
     const base = `http://${address}/debug/pabt/ui`;
     const measurements = {};
+
+    // The page is connected before the run finishes, on purpose. A page that
+    // attaches to a finished run reads every record over the bulk route and the
+    // stream carries nothing, so the live path - the one a reader watches - is
+    // never executed. Attaching here means the remaining records arrive over the
+    // stream, across a digit boundary, which is where a sequence comparison
+    // compared as text instead of as decimals silently stops following the run.
+    await page.setViewportSize({ width: 1200, height: 762 });
+    await page.goto(base, { waitUntil: "domcontentloaded" });
+    await page.fill("#capability", capability);
+    await page.click("#connect-form button[type=submit]");
+    await page.waitForSelector("#app:not([hidden])", { timeout: 20000 });
+    const connectedAt = await headSequence();
+    await waitFor(`the run to reach tick ${TICKS}`, async () =>
+      (await headSequence()) >= TICKS ? true : false, 40000);
+    // Asserted here, on this page, before anything reloads it. The viewport loop
+    // re-boots the client and reads every record over the bulk route, so a page
+    // that silently dropped half the stream would still show all twelve ticks in
+    // every measurement taken after it. This is the only place the live result is
+    // visible, and it is the one a reader watching the run actually sees.
+    const live = await page.evaluate(() => ({
+      sequences: [...document.querySelectorAll("#timeline-list button")].map((n) => n.dataset.sequence),
+      connection: document.getElementById("connection").textContent,
+    }));
+    if (live.sequences.length !== TICKS) {
+      fail(`the page followed the stream to ${live.sequences.length} of ${TICKS} ticks: ` +
+        `${live.sequences.join(",")} (connection: ${live.connection})`);
+    } else {
+      note(`the page connected at tick ${connectedAt} and followed the stream to ${TICKS} over the live ` +
+        `path, crossing a digit boundary (connection: ${live.connection})`);
+    }
 
     for (const viewport of VIEWPORTS) {
       await page.setViewportSize({ width: viewport.width, height: viewport.height });

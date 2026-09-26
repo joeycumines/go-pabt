@@ -120,6 +120,10 @@ function readNumber(text, start) {
   const intStart = i;
   while (i < text.length && DIGITS.includes(text[i])) i += 1;
   if (i === intStart) return null;
+  // JSON forbids a leading zero on a multi-digit integer, and quoting one would
+  // turn a malformed document into a valid one holding the string "01". It is
+  // passed through instead, so the native parser is the one that refuses it.
+  if (i - intStart > 1 && text[intStart] === "0") return null;
   if (text[i] === ".") {
     i += 1;
     const fracStart = i;

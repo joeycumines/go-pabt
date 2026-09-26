@@ -24,10 +24,9 @@ import { applyDelta, sameTree, ContinuityFault } from "../client/js/delta.mjs";
  * conversion the client actually performs.
  */
 function node(id, parentId, ordinal, extra = {}) {
-  return {
+  const built = {
     actionId: null,
     conditionId: null,
-    contentHash: `hash-${id}`,
     effectIds: [],
     frame: null,
     id,
@@ -40,6 +39,12 @@ function node(id, parentId, ordinal, extra = {}) {
     type: "ActionNode",
     ...extra,
   };
+  // The store seals a node's content hash over the whole node, position included,
+  // so a node that moved is re-sealed. A fixture whose hash ignores the position
+  // is not what the store writes, and it makes a move look like nothing changed -
+  // which is how comparing this field slipped through.
+  built.contentHash = `hash-${id}-${String(parentId)}-${built.ordinal}-${built.name}`;
+  return built;
 }
 
 function tree(sequence, planRevision, nodes, digest) {
@@ -142,17 +147,36 @@ test("the nodes come back in the preorder the tree is addressed by", () => {
   assert.deepEqual(applied.nodes.map((n) => n.id), ["r", "c", "c1", "a", "b", "b1"]);
 });
 
-test("a move is placed by the reorder and changes nothing else", () => {
+test("a move is placed by the reorder and changes nothing a reader can see", () => {
   // Reordering the root's children must not alter any node's content, only where
   // it sits. If a move were reported as a replace, a reader would be told the
-  // node changed when only its position did.
-  const delta = fullDelta();
-  const applied = applyDelta(baseTree(), delta);
-  const before = baseTree().nodes.find((n) => n.id === "c");
+  // node changed when only its position did. The content hash is not among the
+  // fields a reader can recompute, and the store re-seals it precisely because the
+  // position moved, so it is the one field that legitimately differs.
+  const base = baseTree();
+  const applied = applyDelta(base, fullDelta());
+  const before = base.nodes.find((n) => n.id === "c");
   const after = applied.nodes.find((n) => n.id === "c");
-  assert.equal(after.contentHash, before.contentHash);
   assert.equal(after.ordinal, "0");
+  for (const field of ["id", "parentId", "type", "name", "status", "effectIds", "lineage", "frame"]) {
+    assert.deepEqual(after[field], before[field], `${field} changed on a move`);
+  }
+  // And the comparison the client actually performs must call a move agreement.
+  assert.deepEqual(sameTree(applied, servedAfterMove()), []);
 });
+
+/**
+ * servedAfterMove is the tree the store would serve for a pure reorder: identical
+ * to the base except that the moved nodes carry the hashes the store re-sealed for
+ * their new positions.
+ */
+function servedAfterMove() {
+  const moved = targetTree();
+  for (const node of moved.nodes) {
+    node.contentHash = `hash-${node.id}-${String(node.parentId)}-${node.ordinal}-${node.name}`;
+  }
+  return moved;
+}
 
 test("a delta naming a base this client does not hold is refused", () => {
   const other = baseTree();
@@ -249,11 +273,34 @@ test("sameTree names what differs rather than only that something does", () => {
   const left = baseTree();
   const right = baseTree();
   right.nodes[1].name = "renamed";
-  right.nodes[1].contentHash = "hash-changed";
+  right.nodes[1].effectIds = ["eff-9"];
   const differences = sameTree(left, right);
   assert.ok(differences.includes("a.name"), differences.join(","));
-  assert.ok(differences.includes("a.contentHash"), differences.join(","));
+  assert.ok(differences.includes("a.effectIds"), differences.join(","));
   assert.ok(!differences.includes("digest"), differences.join(","));
+});
+
+test("sameTree does not report a content hash the client cannot recompute", () => {
+  // The store seals a node's hash over its position, so every node a move touches
+  // is re-sealed. A comparison that reported those as differences would raise a
+  // continuity fault on every move in the history, which is a false alarm about
+  // the one thing the comparison exists to get right.
+  const left = baseTree();
+  const right = baseTree();
+  for (const node of right.nodes) {
+    node.contentHash = `resealed-${node.id}`;
+    node.ordinal = String((Number(node.ordinal) + 1) % 3);
+  }
+  right.digest = "resealed-tree";
+  const differences = sameTree(left, right);
+  assert.ok(
+    !differences.some((d) => d.endsWith("contentHash")),
+    `a recomputed hash was reported: ${differences.join(",")}`,
+  );
+  // A real structural change in the same comparison is still reported, so the
+  // check above is not passing because the comparison stopped looking.
+  right.nodes[1].type = "PPAPost";
+  assert.ok(sameTree(left, right).includes("a.type"));
 });
 
 test("sameTree notices a node count that disagrees with the nodes", () => {

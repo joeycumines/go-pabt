@@ -17,7 +17,7 @@
 */
 
 import { el } from "./detail.mjs";
-import { compareSeq, indexTree, pathTo } from "./model.mjs";
+import { indexTree, pathTo } from "./model.mjs";
 
 /**
  * renderIdentity fills the header's account of the store.
@@ -246,8 +246,10 @@ export function applyRovingTabindex(root, nodeId) {
  *
  * The strip is an input[type=range] over sequences, which is why its semantics,
  * its keyboard handling, and its announcement come from the platform rather than
- * from code here. Its upper bound is the highest sequence the client has read, so
- * the strip never offers a tick that has not been fetched and would render empty.
+ * from code here. Its upper bound is the highest sequence this client has
+ * actually read, not the store's head: the head can be ahead of what has been
+ * fetched, and a strip that offers a tick it does not hold moves its thumb to a
+ * position that renders nothing.
  *
  * @param {any} model
  */
@@ -256,8 +258,8 @@ export function renderScrub(model) {
   const readout = document.getElementById("scrub-readout");
   const held = model.sequences();
   const first = held.length > 0 ? held[0] : "1";
-  const last = model.head && compareSeq(model.head, first) > 0 ? model.head : first;
-  const selected = held.includes(model.selectedSequence) ? model.selectedSequence : first;
+  const last = held.length > 0 ? held[held.length - 1] : first;
+  const selected = held.includes(model.selectedSequence) ? model.selectedSequence : last;
   range.min = first;
   range.max = last;
   range.value = selected;
