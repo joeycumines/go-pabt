@@ -30,13 +30,20 @@ import (
 )
 
 // Bundle format. One length-prefixed frame per object, a canonical header, and a
-// trailer that authenticates both.
+// trailer that binds itself to both.
 //
 // The design is deliberately one frame per object rather than a frame per chunk.
 // Every object the store admits is already bounded by MaxRecordBytes or
 // MaxTreeBytes, so sub-framing a single object would buy streaming of something
 // that is bounded anyway, at the cost of a second length, a chunk index, and a
 // second place for a digest to go missing.
+//
+// What the format proves is damage, not authorship. Nothing in it is signed, so a
+// rewriter that recomputes every digest can substitute content. What it does prove
+// is that a bundle was not truncated, that its frames were not reordered, and that
+// a frame was not exchanged with another, because the record chain and the objects'
+// own digests are claims a rewriter has to restate consistently across the whole
+// file rather than one field at a time.
 const (
 	BundleFormatName    = "pabtdebug.bundle"
 	BundleFormatVersion = uint32(1)
@@ -74,18 +81,22 @@ const (
 	BundleEntryTrailer BundleEntryKind = "trailer"
 )
 
-// BundleEntryOrder fixes the order frames appear in, so two exports of the same
-// history are byte-identical and a reader can rely on the sequence.
+// BundleEntryOrder fixes the order frames appear in, so the frames of two exports of
+// the same history are byte-identical and a reader can rely on the sequence. The
+// header is not part of that claim: it carries the export's time, so two exports of
+// one history differ in their header and in the digest the header contributes to.
 var BundleEntryOrder = []BundleEntryKind{
-	BundleEntryPlan, BundleEntryRun, BundleEntryCodec,
+	BundleEntryPlan, BundleEntryRun,
 	BundleEntryRecord, BundleEntryTree, BundleEntryDelta,
 }
 
 // BundleHeader identifies what a bundle is.
 //
-// Generation travels in the header because an import increments it, and a bundle
-// produced from one generation describes a history that is only meaningful
-// against that generation.
+// Generation is the source store's generation at export. It travels as provenance:
+// an import mints a session, a plan, and a run of its own, and publishes them at the
+// local store's next generation, so the source generation is recorded rather than
+// matched against. The sequence range, by contrast, is checked against the frames,
+// because it is a claim about what the frames contain.
 type BundleHeader struct {
 	Format          string            `json:"format"`
 	Version         uint32            `json:"version"`
@@ -106,8 +117,6 @@ type BundleTrailer struct {
 	HeaderSHA256  string                     `json:"headerSha256"`
 	FrameCount    uint64                     `json:"frameCount"`
 	Counts        map[BundleEntryKind]uint64 `json:"counts"`
-	FirstByRun    map[string]uint64          `json:"firstByRun"`
-	LastByRun     map[string]uint64          `json:"lastByRun"`
 	ContentSHA256 string                     `json:"contentSha256"`
 }
 
@@ -124,18 +133,12 @@ func HashBundleContent(frames []byte) string {
 	return hashBytes(DomainBundle+"/content", frames)
 }
 
-// bundleDigest digests a whole bundle as the digests of its three sections.
+// bundleDigestOf digests a whole bundle as the digests of its three sections.
 //
 // The sections are digested rather than carried, because the writer cannot hold a
-// run's frames and a reader can recompute the same three digests from the file. One
-// projection for both is what makes an exported bundle and a staged copy of it
+// run's frames and a reader can recompute the same three digests while it streams.
+// One projection for both is what makes an exported bundle and a staged copy of it
 // agree without either side keeping the other's bytes.
-func bundleDigest(header, frames, trailer []byte) (string, error) {
-	return bundleDigestOf(HashBundleContent(header), HashBundleContent(frames), HashBundleContent(trailer))
-}
-
-// bundleDigestOf is that projection over section digests already in hand, which is
-// how the writer computes it while the frames are still streaming.
 func bundleDigestOf(header, frames, trailer string) (string, error) {
 	return HashCanonical(DomainBundle, struct {
 		Header  string `json:"header"`
@@ -147,12 +150,10 @@ func bundleDigestOf(header, frames, trailer string) (string, error) {
 // bundleWriter writes a bundle incrementally, so exporting a long history never
 // holds it in memory.
 type bundleWriter struct {
-	w        io.Writer
-	header   []byte
-	counts   map[BundleEntryKind]uint64
-	firstRun map[string]uint64
-	lastRun  map[string]uint64
-	frames   uint64
+	w      io.Writer
+	header []byte
+	counts map[BundleEntryKind]uint64
+	frames uint64
 	// framed is digested as the frames go out, so the trailer's content digest can
 	// be computed without holding the run. The bytes themselves are not buffered:
 	// a run of any length has to stream, and at the default record and tree limits
@@ -182,21 +183,19 @@ func newBundleWriter(w io.Writer, header BundleHeader) (*bundleWriter, error) {
 		return nil, fmt.Errorf("pabtdebug: write a bundle: %w", err)
 	}
 	return &bundleWriter{
-		w:        w,
-		header:   encoded,
-		framed:   newStreamDigest(DomainBundle + "/content"),
-		counts:   map[BundleEntryKind]uint64{},
-		firstRun: map[string]uint64{},
-		lastRun:  map[string]uint64{},
+		w:      w,
+		header: encoded,
+		counts: map[BundleEntryKind]uint64{},
+		framed: newStreamDigest(DomainBundle + "/content"),
 	}, nil
 }
 
 // add writes one frame.
 //
-// The frame's digest is of the bytes it carries, so a frame altered in transit
-// fails its own check before a reader has to compare it with anything else. The
-// trailer's content digest is unkeyed and a rewriter recomputes it for free, so
-// it cannot be the thing that makes a frame self-checking.
+// The frame's digest is of the bytes it carries, so a frame is self-checking
+// without the reader having to know what kind of object it holds. The trailer's
+// content digest is unkeyed and a rewriter recomputes it for free, so it cannot be
+// the thing that makes a frame self-checking.
 func (b *bundleWriter) add(kind BundleEntryKind, run string, payload []byte) error {
 	digest := HashBundleContent(payload)
 	header, err := CanonicalEncode(struct {
@@ -218,12 +217,6 @@ func (b *bundleWriter) add(kind BundleEntryKind, run string, payload []byte) err
 	}
 	b.counts[kind]++
 	b.frames++
-	if run != "" {
-		if _, seen := b.firstRun[run]; !seen {
-			b.firstRun[run] = 1
-		}
-		b.lastRun[run]++
-	}
 	return nil
 }
 
@@ -239,8 +232,6 @@ func (b *bundleWriter) close(header BundleHeader) (string, error) {
 		HeaderSHA256:  headerDigest,
 		FrameCount:    b.frames,
 		Counts:        b.counts,
-		FirstByRun:    b.firstRun,
-		LastByRun:     b.lastRun,
 		ContentSHA256: contentDigest,
 	}
 	encoded, err := CanonicalEncode(trailer)

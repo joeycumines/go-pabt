@@ -23,6 +23,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -34,12 +35,14 @@ func testStorePath(t *testing.T) string {
 
 // storeClock returns a clock that advances by a fixed step on every call, so
 // stored timestamps are distinct and ordered without depending on wall time.
+//
+// The counter is atomic because the store reads its clock from whichever goroutine
+// is driving it, and two of them can be driving the same store at once.
 func storeClock() func() time.Time {
-	var n int
+	var n atomic.Int64
 	base := time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)
 	return func() time.Time {
-		n++
-		return base.Add(time.Duration(n) * time.Millisecond)
+		return base.Add(time.Duration(n.Add(1)) * time.Millisecond)
 	}
 }
 
