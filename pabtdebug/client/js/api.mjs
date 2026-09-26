@@ -52,8 +52,13 @@ export class Api {
    * the body itself, which the export route needs because its body is a bundle
    * rather than JSON.
    *
+   * The path is relative to the route set's base, which is composed here and
+   * nowhere else. A caller that built a whole path itself would produce a
+   * doubled one, which the server answers as a 404 from path matching rather than
+   * as anything that looks like a mistake in the client.
+   *
    * @param {string} path
-   * @param {{method?: string, body?: BodyInit|null}} [init]
+   * @param {{method?: string, body?: BodyInit|null, signal?: AbortSignal}} [init]
    * @returns {Promise<Response>}
    */
   async request(path, init = {}) {
@@ -68,8 +73,13 @@ export class Api {
         headers,
         body: init.body ?? null,
         cache: "no-store",
+        // Forwarded rather than accepted and dropped: the stream is the one
+        // request that has to be cancellable, and a signal that never reaches
+        // fetch leaves the connection open after the page has moved on.
+        signal: init.signal ?? null,
       });
     } catch (cause) {
+      if (cause.name === "AbortError") throw cause;
       throw new ApiError(`the server did not answer: ${cause.message}`, 0);
     }
     if (!response.ok) {
@@ -129,7 +139,8 @@ export class Api {
   }
 
   /**
-   * streamURL builds the stream address for a cursor.
+   * streamPath builds the stream's path for a cursor, relative to the base that
+   * request composes.
    *
    * The cursor is a token in a query string, which the capability rule would
    * otherwise forbid. It is not a secret - the cursor's own doc comment says a
@@ -140,8 +151,8 @@ export class Api {
    * @param {string} token
    * @returns {string}
    */
-  streamURL(token) {
-    return `${BASE}/stream?cursor=${encodeURIComponent(token)}`;
+  streamPath(token) {
+    return `/stream?cursor=${encodeURIComponent(token)}`;
   }
 
   /**

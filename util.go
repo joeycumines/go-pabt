@@ -323,42 +323,50 @@ func (n *node[T]) actionName() string {
 	return n.action.actionName()
 }
 
-// effectName renders an action's effect keys and their declared values in a
-// stable order, so the same effects always produce the same name.
-func (a *action[T]) effectName(values map[any]any) string {
+// effectName renders the keys of an action's effects in a stable order, so the
+// same effects always produce the same name.
+//
+// The values are deliberately not in the name. A name is a plain string: it does
+// not pass through the codec, the redaction walk, or the diagnostic sanitizer, so
+// a value formatted into one is a secret written into every record that mentions
+// the node, into every digest over those records, and into every export and
+// screenshot containing them - with no mechanism recorded and no way for a later
+// reader to tell it was ever there. The name says what the action touches, which
+// is what tells one action from another, and the values are in the effect rows,
+// where a declared secret is redacted and an undeclared one is at least scrubbed.
+//
+// Dropping the values also stops %v being applied to an arbitrary application
+// value, which was one panicking String method away from taking down a tick.
+func (a *action[T]) effectName() string {
 	if len(a.effects) == 0 {
 		return "Action"
 	}
 	type entry struct {
-		key   any
-		order string
+		order   string
+		display string
 	}
 	entries := make([]entry, 0, len(a.effects))
 	for key := range a.effects {
-		entries = append(entries, entry{key: key, order: keyOrder(key)})
+		// keyOrder is a total order over keys, not text to show: it prefixes the
+		// type so two keys of different types never compare as equal, and that
+		// prefix is not something to put in front of a reader.
+		entries = append(entries, entry{order: keyOrder(key), display: fmt.Sprintf("%v", key)})
 	}
 	sort.Slice(entries, func(i, j int) bool { return entries[i].order < entries[j].order })
-	var b strings.Builder
-	for i, e := range entries {
-		if i > 0 {
-			b.WriteString(", ")
-		}
-		b.WriteString(fmt.Sprintf("%v→%v", e.key, values[e.key]))
+	parts := make([]string, 0, len(entries))
+	for _, e := range entries {
+		parts = append(parts, e.display)
 	}
-	return b.String()
+	return strings.Join(parts, ", ")
 }
 
-// actionName returns the cached name when a capture recorded the effect values,
-// and otherwise reads them from the application as before.
+// actionName returns the cached name when a capture recorded the effect keys, and
+// otherwise reads them from the application as before.
 func (a *action[T]) actionName() string {
 	if a.cache != nil {
 		return a.cache.name
 	}
-	values := make(map[any]any, len(a.effects))
-	for key, eff := range a.effects {
-		values[key] = eff.Value()
-	}
-	return a.effectName(values)
+	return a.effectName()
 }
 
 func (n *node[T]) nodeType() NodeType {
@@ -631,7 +639,7 @@ func (n *node[T]) generateAction(post Condition, postID OccurrenceID, act Action
 		return false, nil
 	}
 	if c != nil {
-		r.cache.name = r.effectName(r.cache.values)
+		r.cache.name = r.effectName()
 	}
 
 	// create action node

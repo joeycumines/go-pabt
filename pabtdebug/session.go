@@ -425,7 +425,11 @@ func (s *Session) buildRecord(
 	// by the action and not by anything a consumer could join on. Without them a
 	// reader can see that an effect exists and that a condition exists and has to
 	// guess that they are the same fact.
-	record.Actions = storedActions(snapshot)
+	actions, err := s.storedActions(ctx, snapshot)
+	if err != nil {
+		return StoredRecord{}, nil, err
+	}
+	record.Actions = actions
 	effects, err := s.storedEffects(ctx, snapshot)
 	if err != nil {
 		return StoredRecord{}, nil, err

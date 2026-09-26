@@ -64,6 +64,12 @@ body {
     "scrub      scrub     scrub";
 }
 
+/* A `display` on these two overrides the user agent's [hidden] rule, so the
+   attribute has to be honoured explicitly. Without it the debugger renders under
+   the connect screen from the first paint, and the connect screen's own controls
+   are laid out over a page that is already there. */
+#app[hidden] { display: none; }
+
 #header     { grid-area: header; }
 #breadcrumb { grid-area: breadcrumb; }
 #timeline   { grid-area: timeline; }
@@ -237,6 +243,9 @@ button.crumb {
 /* ---------- shared region furniture ---------- */
 
 .region-title {
+  /* Never shrink: a clipped region title is worse than a short list, and the
+     first evidence run caught "TICKS" cut in half at 700 pixels. */
+  flex: 0 0 auto;
   font-family: var(--font-ui);
   font-size: 10px;
   font-weight: 600;
@@ -269,6 +278,16 @@ button.crumb {
 }
 
 #canvas > .scroll, #detail > .scroll { flex: 1 1 auto; }
+
+/* The tick list scrolls inside the region rather than overflowing it. Clipped
+   mid-row is how a list stops being readable without ever looking broken. */
+#timeline > .timeline-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+}
 
 /* ---------- timeline ---------- */
 
@@ -503,14 +522,28 @@ button.crumb {
 
 /* ---------- connect ---------- */
 
+/*
+  The connect screen is an overlay rather than a second page in the flow.
+  Stacked, it made the body two viewports tall, and `overflow: hidden` does not
+  prevent that from being scrolled - it only hides the scrollbar. Clicking the
+  connect button scrolled the element into view, which left the debugger open at
+  the bottom of a document whose content was above it, and every region
+  measured at a negative y. Fixed positioning takes the screen out of the flow
+  entirely, so the document is exactly one viewport and has nowhere to scroll to.
+*/
 .connect {
+  position: fixed;
+  inset: 0;
   display: flex;
   align-items: center;
   justify-content: center;
-  min-height: 100vh;
   padding: 24px;
   box-sizing: border-box;
+  overflow: auto;
+  background: var(--bg);
 }
+
+.connect[hidden] { display: none; }
 
 .card {
   width: min(460px, 100%);
@@ -564,9 +597,13 @@ code { color: var(--accent); }
   heights the reader needs, and the timeline is capped and scrolls inside itself.
 */
 @media (max-width: 759px) {
+  /* The detail gets the larger share of what is left. Every region is present
+     and above its floor at 700x700, which is the acceptance; this is about what
+     a reader actually sees without scrolling, and the panel they came to read is
+     the one that was falling below the fold. */
   #app {
     grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: auto auto auto minmax(150px, 1fr) minmax(180px, 1fr) auto;
+    grid-template-rows: auto auto 84px minmax(150px, 1fr) minmax(180px, 1.4fr) auto;
     grid-template-areas:
       "header"
       "breadcrumb"
@@ -578,8 +615,9 @@ code { color: var(--accent); }
 
   .identity dd { max-width: 16ch; }
   .identity > div:nth-child(n+3) { display: none; }
-  #timeline { max-height: 132px; }
   .header-actions { width: 100%; justify-content: space-between; }
+  .occ-head { padding: 8px 12px 6px; }
+  .field { padding: 7px 12px; }
 }
 
 @media (max-width: 460px) {

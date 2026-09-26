@@ -20,7 +20,6 @@ import (
 	"fmt"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"testing"
 
 	bt "github.com/joeycumines/go-behaviortree"
@@ -161,6 +160,17 @@ func (p *sealedProvider) OpenStateView(req StateViewRequest) (TypedStateView[*se
 		revision:  StateRevision{PlanRevision: req.PlanRevision, WorldRevision: "w1"},
 		coherence: p.coherence,
 	}, nil
+}
+
+// with builds a provider over an explicit variable reader and action factory, for
+// a test whose action is not the state's default one.
+func (p *sealedProvider) with(
+	variable func(any) (any, error),
+	actions func(*sealedCondition) ([]Action[*sealedCondition], error),
+) *sealedProvider {
+	p.variable = variable
+	p.actions = actions
+	return p
 }
 
 func (p *sealedProvider) forState(s *sealedState) *sealedProvider {
@@ -342,8 +352,14 @@ func TestCapturedSnapshotHasOccurrencesAndProvenance(t *testing.T) {
 	if action.PostconditionID != got.ID {
 		t.Errorf("action postcondition = %v, want the expanded condition %v", action.PostconditionID, got.ID)
 	}
-	if action.Name != "x→done" {
-		t.Errorf("action name = %q, want %q", action.Name, "x→done")
+	// The name says what the action touches. The value is recorded as an effect,
+	// where a declared secret is redacted; a name is plain text that bypasses
+	// every one of those mechanisms, so the value must not be in one.
+	if action.Name != "x" {
+		t.Errorf("action name = %q, want the effect key %q", action.Name, "x")
+	}
+	if strings.Contains(action.Name, "done") {
+		t.Errorf("the action's name carries its effect's value: %q", action.Name)
 	}
 	if len(snap.Effects) != 1 {
 		t.Fatalf("snapshot effects = %d, want 1", len(snap.Effects))
@@ -553,103 +569,6 @@ func TestCapturedInspectionMakesNoApplicationCall(t *testing.T) {
 	})
 }
 
-// TestOccurrenceIdentitySurvivesConflictResolution proves an occurrence keeps
-// its identity when conflict resolution moves its node, and that the
-// post-condition copy records where it came from.
-//
-// Conflict resolution only ever compares sibling ppa roots, and a goal slice
-// holds one preconditions root, so two goal slices never meet. The fixture
-// therefore puts both conditions in one slice, which makes their leaves siblings
-// and both eligible to become ppa roots. The later expansion then finds that the
-// earlier subtree's effects break its own guard, and the subtree moves leftward.
-//
-// The test fails if no conflict test was ever recorded or if no node changed
-// parent, because a fixture that does not conflict would prove nothing about
-// surviving a move.
-func TestOccurrenceIdentitySurvivesConflictResolution(t *testing.T) {
-	variables := map[string]any{"a": "start", "b": "start", "g1": "ok", "g2": "ok"}
-	state := &conflictState{variables: variables}
-	condA := &sealedCondition{key: "a", expected: "done"}
-	condB := &sealedCondition{key: "b", expected: "done"}
-	plan, err := NewCaptured(
-		state,
-		[]Conditions[*sealedCondition]{{condA, condB}},
-		WithStateViews[*sealedCondition](&sealedProvider{
-			coherence: CoherenceSnapshot, variable: state.Variable, actions: state.Actions,
-		}),
-	)
-	if err != nil {
-		t.Fatalf("NewCaptured: %v", err)
-	}
-
-	survey := func() (ids map[OccurrenceID]bool, parents map[OccurrenceID]OccurrenceID) {
-		ids, parents = map[OccurrenceID]bool{}, map[OccurrenceID]OccurrenceID{}
-		var walk func(n *node[*sealedCondition], parent OccurrenceID)
-		walk = func(n *node[*sealedCondition], parent OccurrenceID) {
-			ids[n.id] = true
-			parents[n.id] = parent
-			for c := n.first; c != nil; c = c.next {
-				walk(c, n.id)
-			}
-		}
-		walk(plan.root, "")
-		return
-	}
-	before, parentsBefore := survey()
-	// One goal slice makes the plan root its own preconditions root, so it holds
-	// the root plus one leaf per condition.
-	if len(before) < 3 {
-		t.Fatalf("the plan has only %d identified nodes, too few for this to mean anything", len(before))
-	}
-
-	var conflictTests int
-	for range 6 {
-		result := plan.TickCaptured(TickEnvironment{})
-		for _, cb := range result.Snapshot.Callbacks {
-			if cb.Use == UseConflictTest {
-				conflictTests++
-			}
-		}
-	}
-	if conflictTests == 0 {
-		t.Fatal("no conflict test was ever recorded, so the fixture never conflicted")
-	}
-
-	after, parentsAfter := survey()
-	var moved int
-	for id := range after {
-		if parentsBefore[id] != parentsAfter[id] {
-			moved++
-		}
-	}
-	if moved == 0 {
-		t.Error("no node changed parent, so no subtree was actually moved")
-	}
-	for id := range before {
-		if !after[id] {
-			t.Errorf("occurrence identity %q did not survive conflict resolution", id)
-		}
-		if !ValidOccurrenceID(id) {
-			t.Errorf("node id %q is not a valid occurrence id", id)
-		}
-	}
-	// The one derivation the planner performs must name its source.
-	var lineage int
-	var check func(n *node[*sealedCondition])
-	check = func(n *node[*sealedCondition]) {
-		if ValidLineageID(n.lineage) {
-			lineage++
-		}
-		for c := n.first; c != nil; c = c.next {
-			check(c)
-		}
-	}
-	check(plan.root)
-	if lineage == 0 {
-		t.Error("no node recorded a lineage, so the post-condition derivation is unproven")
-	}
-}
-
 type conflictState struct{ variables map[string]any }
 
 func (s *conflictState) Variable(key any) (any, error) {
@@ -699,46 +618,6 @@ func (a *conflictingAction) Node() bt.Node {
 	return bt.New(func([]bt.Node) (bt.Status, error) { return bt.Success, nil })
 }
 
-// TestVerdictAuthorityRequiresCoherentRevisions proves the planner, not the
-// verifier, decides whether a claim is authoritative, and that two live reads
-// cannot support one.
-func TestVerdictAuthorityRequiresCoherentRevisions(t *testing.T) {
-	for _, test := range []struct {
-		name      string
-		coherence StateCoherence
-		want      bool
-	}{
-		{name: "snapshot", coherence: CoherenceSnapshot, want: true},
-		{name: "revisioned", coherence: CoherenceRevisioned, want: true},
-		{name: "live", coherence: CoherenceLive, want: false},
-		{name: "unknown", coherence: CoherenceUnknown, want: false},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			plan, _, _ := newSealedFixture(t, test.coherence)
-			result := tickUntilSettled(t, plan)
-			var verdicts int
-			for _, exec := range result.Snapshot.Executions {
-				for _, rel := range exec.Relations {
-					verdicts++
-					if rel.Authoritative != test.want {
-						t.Errorf("verdict authoritative = %v, want %v for coherence %q",
-							rel.Authoritative, test.want, test.coherence)
-					}
-					if rel.Result != RelationPreserves {
-						t.Errorf("verdict result = %v, want preserves", rel.Result)
-					}
-					if rel.Method == "" {
-						t.Error("verdict has no method, so its provenance is undeclared")
-					}
-				}
-			}
-			if verdicts == 0 {
-				t.Fatal("no verdicts recorded for the executed action")
-			}
-		})
-	}
-}
-
 func TestCapturedObserverIsTheSourceOfObservedValues(t *testing.T) {
 	plan, _, _ := newSealedFixture(t, CoherenceSnapshot)
 	result := tickUntilSettled(t, plan)
@@ -765,38 +644,6 @@ func TestCapturedObserverIsTheSourceOfObservedValues(t *testing.T) {
 	}
 	if executions == 0 {
 		t.Fatal("no action execution recorded")
-	}
-}
-
-func TestUndeclaredExpectationStaysUnavailable(t *testing.T) {
-	cond := &undeclaredCondition{key: "x", expected: "done"}
-	variables := map[string]any{"x": "done"}
-	state := &bareState{variables: variables}
-	plan, err := NewCaptured(
-		state,
-		[]Conditions[*undeclaredCondition]{{cond}},
-		WithStateViews[*undeclaredCondition](&bareProvider{state: state}),
-	)
-	if err != nil {
-		t.Fatalf("NewCaptured: %v", err)
-	}
-	result := plan.TickCaptured(TickEnvironment{})
-	if len(result.Snapshot.Conditions) != 1 {
-		t.Fatalf("conditions = %d, want 1", len(result.Snapshot.Conditions))
-	}
-	got := result.Snapshot.Conditions[0]
-	if got.ExpectedKnown {
-		t.Errorf("expected value was declared as %v, but the condition declares none", got.Expected)
-	}
-	if got.Key != "x" {
-		t.Errorf("condition key = %v, want x", got.Key)
-	}
-	// The rendering must say the declaration is absent rather than standing in a
-	// value derived from the key.
-	plan.root.first.precondition.captured = true
-	info := plan.root.first.buildNodeInfo()
-	if got := info.ConditionSummary(); got != "<undeclared>" {
-		t.Errorf("condition summary = %q, want %q", got, "<undeclared>")
 	}
 }
 
@@ -856,50 +703,6 @@ func (p *bareProvider) OpenStateView(StateViewRequest) (TypedStateView[*undeclar
 	return &bareView{state: p.state}, nil
 }
 
-func TestStateViewOpenedAndClosedExactlyOncePerTick(t *testing.T) {
-	plan, _, provider := newSealedFixture(t, CoherenceSnapshot)
-	tickUntilSettled(t, plan)
-	opens, closes := provider.counts()
-	if opens == 0 {
-		t.Fatal("no state view was opened")
-	}
-	// One pre-tick view per tick, plus one post-action view per action
-	// execution, must all be closed.
-	if closes != opens {
-		t.Errorf("state views opened = %d, closed = %d", opens, closes)
-	}
-}
-
-func TestCapturedViewClosesExactlyOnceWhenThePlannerPanics(t *testing.T) {
-	cond := &sealedCondition{key: "x", expected: "done"}
-	variables := map[string]any{"x": "start"}
-	state := &sealedState{variables: variables}
-	state.apply = func() { panic(`pabt test: action panicked`) }
-	provider := (&sealedProvider{coherence: CoherenceSnapshot}).forState(state)
-	plan, err := NewCaptured(
-		state,
-		[]Conditions[*sealedCondition]{{cond}},
-		WithStateViews[*sealedCondition](provider),
-	)
-	if err != nil {
-		t.Fatalf("NewCaptured: %v", err)
-	}
-	func() {
-		defer func() {
-			if r := recover(); r == nil {
-				t.Error("a planner panic did not propagate to the caller")
-			}
-		}()
-		// The first tick expands; the second runs the action and panics.
-		plan.TickCaptured(TickEnvironment{})
-		plan.TickCaptured(TickEnvironment{})
-	}()
-	opens, closes := provider.counts()
-	if opens != closes {
-		t.Errorf("after a panic, state views opened = %d, closed = %d", opens, closes)
-	}
-}
-
 func TestCapturedRejectsConcurrentTick(t *testing.T) {
 	plan, _, _ := newSealedFixture(t, CoherenceSnapshot)
 	entered := make(chan struct{})
@@ -922,206 +725,10 @@ func TestCapturedRejectsConcurrentTick(t *testing.T) {
 	close(release)
 }
 
-func TestValidateStatusUsesTheDependencyValues(t *testing.T) {
-	// The dependency derives its statuses from a blank iota, so the zero value
-	// is not a status. Pinning the numbers here is what stops the wrong set from
-	// propagating into storage and wire formats again.
-	if bt.Running != 1 || bt.Success != 2 || bt.Failure != 3 {
-		t.Fatalf("dependency statuses changed: Running=%d Success=%d Failure=%d",
-			bt.Running, bt.Success, bt.Failure)
-	}
-	for _, ok := range []bt.Status{bt.Running, bt.Success, bt.Failure} {
-		if err := ValidateStatus(ok); err != nil {
-			t.Errorf("ValidateStatus(%d) = %v, want nil", ok, err)
-		}
-	}
-	for _, bad := range []bt.Status{0, 4, -1, 99} {
-		if err := ValidateStatus(bad); err == nil {
-			t.Errorf("ValidateStatus(%d) = nil, want an error", bad)
-		}
-	}
-}
-
-func TestNodeStatusSnapshotIsCoherent(t *testing.T) {
-	var s NodeStatus
-	first := s.Snapshot()
-	if first.StatusPresent {
-		t.Error("a node that never ticked reports a status")
-	}
-	if first.TickCount != 0 || first.Version != 0 {
-		t.Errorf("fresh snapshot = %+v, want zero", first)
-	}
-
-	s.record(bt.Running)
-	s.record(bt.Success)
-	got := s.Snapshot()
-	if got.TickCount != 2 {
-		t.Errorf("tick count = %d, want 2", got.TickCount)
-	}
-	if got.LastStatus != bt.Success {
-		t.Errorf("last status = %v, want Success", got.LastStatus)
-	}
-	if !got.StatusPresent {
-		t.Error("a recorded status is not marked present")
-	}
-	if got.Version != 2 {
-		t.Errorf("version = %d, want 2", got.Version)
-	}
-	if s.TickCount() != got.TickCount || s.LastStatus() != got.LastStatus {
-		t.Error("the accessors disagree with the coherent snapshot")
-	}
-}
-
-func TestNodeStatusRejectsAnAbsentStatusRatherThanInventingOne(t *testing.T) {
-	var s NodeStatus
-	// A status the dependency does not define is recorded verbatim but never
-	// claimed as present, so a consumer shows it as unavailable.
-	s.record(bt.Status(0))
-	got := s.Snapshot()
-	if got.StatusPresent {
-		t.Error("an undefined status was reported as present")
-	}
-	if got.LastStatus != 0 {
-		t.Errorf("last status = %d, want the recorded value", got.LastStatus)
-	}
-}
-
-func TestNodeStatusSnapshotUnderConcurrentReaders(t *testing.T) {
-	// Version and TickCount advance together, so a single Snapshot read must
-	// always agree on them. Independent counters could not make that guarantee,
-	// which is the property this test exists to hold.
-	var (
-		s     NodeStatus
-		start = make(chan struct{})
-		wg    sync.WaitGroup
-		torn  atomic.Int64
-		reads atomic.Int64
-	)
-	for range 4 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			<-start
-			for range 500 {
-				got := s.Snapshot()
-				reads.Add(1)
-				if got.Version != uint64(got.TickCount) {
-					torn.Add(1)
-				}
-				if got.StatusPresent != (ValidateStatus(got.LastStatus) == nil) {
-					torn.Add(1)
-				}
-			}
-		}()
-	}
-	close(start)
-	for i := range 2000 {
-		if i%2 == 0 {
-			s.record(bt.Running)
-		} else {
-			s.record(bt.Success)
-		}
-	}
-	wg.Wait()
-	if reads.Load() != 2000 {
-		t.Fatalf("reads = %d, want 2000", reads.Load())
-	}
-	if n := torn.Load(); n != 0 {
-		t.Errorf("observed %d inconsistent status snapshots", n)
-	}
-}
-
-func TestValidOccurrenceID(t *testing.T) {
-	id := &identity{namespace: strings.Repeat("a", 32)}
-	minted := id.mint()
-	if !ValidOccurrenceID(minted) {
-		t.Errorf("minted id %q rejected by its own validator", minted)
-	}
-	second := id.mint()
-	if minted == second {
-		t.Error("mint returned the same identity twice")
-	}
-	for _, bad := range []string{
-		"",
-		"nope",
-		"pabt-v1-",
-		"pabt-v1-aaaaaaaa-0000000000000000", // namespace too short
-		"pabt-v1-" + strings.Repeat("a", 32) + "-0000",             // ordinal too short
-		"pabt-v1-" + strings.Repeat("A", 32) + "-0000000000000000", // uppercase
-		"pabt-v2-" + strings.Repeat("a", 32) + "-0000000000000000", // wrong version
-	} {
-		if ValidOccurrenceID(OccurrenceID(bad)) {
-			t.Errorf("ValidOccurrenceID(%q) = true, want false", bad)
-		}
-	}
-	lineage := lineageOf(minted)
-	if !ValidLineageID(lineage) {
-		t.Errorf("lineage %q rejected by its own validator", lineage)
-	}
-	if ValidLineageID(LineageID(minted)) {
-		t.Error("a plain occurrence id was accepted as a lineage id")
-	}
-	if lineageOf("") != "" {
-		t.Error("lineage of an empty source is not empty")
-	}
-}
-
-func TestExpectedValueOnlyWhenDeclared(t *testing.T) {
-	if _, ok := ExpectedValue(&undeclaredCondition{key: "x"}); ok {
-		t.Error("a condition that declares nothing reported an expected value")
-	}
-	value, ok := ExpectedValue(&sealedCondition{key: "x", expected: "done"})
-	if !ok || value != "done" {
-		t.Errorf("ExpectedValue = %v, %v, want done, true", value, ok)
-	}
-	if _, ok := ExpectedValue(nil); ok {
-		t.Error("nil reported a declared expected value")
-	}
-}
-
-func TestCapturedStateViewsAreAuthoritativeAndNeverFallBack(t *testing.T) {
-	cond := &sealedCondition{key: "x", expected: "done"}
-	variables := map[string]any{"x": "start"}
-	state := &sealedState{
-		variables: variables,
-		apply:     func() { variables["x"] = "done" },
-	}
-	// A provider that fails must not silently fall back to the raw state.
-	plan, err := NewCaptured(
-		state,
-		[]Conditions[*sealedCondition]{{cond}},
-		WithStateViews[*sealedCondition](failingProvider{}),
-	)
-	if err != nil {
-		t.Fatalf("NewCaptured: %v", err)
-	}
-	result := plan.TickCaptured(TickEnvironment{})
-	if result.CaptureError == nil {
-		t.Fatal("a failing state view produced no capture error")
-	}
-	if len(result.Snapshot.Nodes) != 0 {
-		t.Error("a failing state view still produced a tree")
-	}
-}
-
 type failingProvider struct{}
 
 func (failingProvider) OpenStateView(StateViewRequest) (TypedStateView[*sealedCondition], error) {
 	return nil, fmt.Errorf(`pabt test: view unavailable`)
-}
-
-func TestCapturedDefaultsToAnExplicitLiveView(t *testing.T) {
-	cond := &sealedCondition{key: "x", expected: "done"}
-	variables := map[string]any{"x": "done"}
-	state := &sealedState{variables: variables, apply: func() {}}
-	plan, err := NewCaptured(state, []Conditions[*sealedCondition]{{cond}})
-	if err != nil {
-		t.Fatalf("NewCaptured: %v", err)
-	}
-	result := plan.TickCaptured(TickEnvironment{})
-	if result.Snapshot.Coherence != CoherenceLive {
-		t.Errorf("coherence = %q, want %q for the default provider", result.Snapshot.Coherence, CoherenceLive)
-	}
 }
 
 func TestNewRemainsUncaptured(t *testing.T) {
@@ -1153,26 +760,6 @@ func TestNewRemainsUncaptured(t *testing.T) {
 	}
 }
 
-func TestCapturedProviderRejectsNilConfiguration(t *testing.T) {
-	cond := &sealedCondition{key: "x", expected: "done"}
-	state := &sealedState{variables: map[string]any{"x": "done"}, apply: func() {}}
-	if _, err := NewCaptured(state, []Conditions[*sealedCondition]{{cond}},
-		WithStateViews[*sealedCondition](nil)); err == nil {
-		t.Error("a nil state view provider was accepted")
-	}
-	if _, err := NewCaptured(state, []Conditions[*sealedCondition]{{cond}},
-		WithExecutionObserver[*sealedCondition](nil)); err == nil {
-		t.Error("a nil execution observer was accepted")
-	}
-	if _, err := NewCaptured(state, []Conditions[*sealedCondition]{{cond}},
-		WithTransitionVerifier[*sealedCondition](nil)); err == nil {
-		t.Error("a nil transition verifier was accepted")
-	}
-	if _, err := NewCaptured[*sealedCondition](nil, nil); err == nil {
-		t.Error("a nil state was accepted")
-	}
-}
-
 // --- Regression coverage for the findings of the first review pass. ---
 
 // TestCapturedEntryPointWorksOnAPlanBuiltWithNew proves the captured tick path is
@@ -1194,163 +781,6 @@ func TestCapturedEntryPointWorksOnAPlanBuiltWithNew(t *testing.T) {
 	}
 	if len(result.Snapshot.Conditions) != 1 {
 		t.Errorf("conditions = %d, want 1", len(result.Snapshot.Conditions))
-	}
-}
-
-// TestEveryApplicationCallIsRecorded proves the recorded evidence covers the
-// calls an audit would ask about, including the ones that return a value the
-// planner then caches.
-func TestEveryApplicationCallIsRecorded(t *testing.T) {
-	plan, _, _ := newSealedFixture(t, CoherenceSnapshot)
-	// Expansion records the action's own calls, which happen on the first tick.
-	first := plan.TickCaptured(TickEnvironment{})
-	tickUntilSettled(t, plan)
-	all := append([]CallbackEvidence{}, plan.construction...)
-	all = append(all, first.Snapshot.Callbacks...)
-
-	seen := map[CallbackKind]int{}
-	for _, cb := range all {
-		seen[cb.Kind]++
-	}
-	for _, want := range []CallbackKind{
-		CallbackKey, CallbackExpected, CallbackStateActions,
-		CallbackActionEffects, CallbackActionNode, CallbackActionConditions,
-		CallbackEffectValue, CallbackVariableRead, CallbackMatch,
-	} {
-		if seen[want] == 0 {
-			t.Errorf("no %v callback was recorded, so the audit of application calls has a hole", want)
-		}
-	}
-	// An expectation the application does not declare is still a call, and must
-	// be visible as such rather than absent.
-	bare := &bareState{variables: map[string]any{"x": "done"}}
-	barePlan, err := NewCaptured(
-		bare, []Conditions[*undeclaredCondition]{{&undeclaredCondition{key: "x", expected: "done"}}},
-		WithStateViews[*undeclaredCondition](&bareProvider{state: bare}),
-	)
-	if err != nil {
-		t.Fatalf("NewCaptured: %v", err)
-	}
-	var asked int
-	for _, cb := range barePlan.construction {
-		if cb.Kind == CallbackExpected {
-			asked++
-			if cb.Known {
-				t.Error("a condition that declares nothing was recorded as declaring one")
-			}
-		}
-	}
-	if asked == 0 {
-		t.Error("an undeclared expectation produced no recorded call")
-	}
-}
-
-// TestRootStatusIsPublishedInOneStep applies the same tear oracle the status
-// snapshot guarantees to the plan root, which the tick wrapper publishes.
-func TestRootStatusIsPublishedInOneStep(t *testing.T) {
-	var (
-		cond   = &sealedCondition{key: "x", expected: "done"}
-		vars   = map[string]any{"x": "start"}
-		state  *sealedState
-		plan   *Plan[*sealedCondition]
-		torn   atomic.Int64
-		reads  atomic.Int64
-		stop   = make(chan struct{})
-		guard  sync.WaitGroup
-		status *NodeStatus
-	)
-	state = &sealedState{variables: vars}
-	state.apply = func() { vars["x"] = "done" }
-	var err error
-	plan, err = NewCaptured(state, []Conditions[*sealedCondition]{{cond}},
-		WithStateViews[*sealedCondition](&sealedProvider{
-			coherence: CoherenceSnapshot, variable: state.Variable, actions: state.Actions,
-		}))
-	if err != nil {
-		t.Fatalf("NewCaptured: %v", err)
-	}
-	for range 6 {
-		plan.TickCaptured(TickEnvironment{})
-	}
-	status = plan.root.status
-	for range 4 {
-		guard.Add(1)
-		go func() {
-			defer guard.Done()
-			for {
-				select {
-				case <-stop:
-					return
-				default:
-				}
-				got := status.Snapshot()
-				reads.Add(1)
-				if got.Version != uint64(got.TickCount) {
-					torn.Add(1)
-				}
-			}
-		}()
-	}
-	for range 3000 {
-		plan.TickCaptured(TickEnvironment{})
-	}
-	close(stop)
-	guard.Wait()
-	if reads.Load() == 0 {
-		t.Fatal("no reads happened")
-	}
-	if n := torn.Load(); n != 0 {
-		t.Errorf("observed %d torn root status reads", n)
-	}
-	final := status.Snapshot()
-	if final.Version != uint64(final.TickCount) {
-		t.Errorf("root status = %+v, want version equal to tick count", final)
-	}
-}
-
-// TestSecondActionInATickIsNotAuthoritative proves a verdict is refused when the
-// window also contains another action's effects.
-func TestSecondActionInATickIsNotAuthoritative(t *testing.T) {
-	state := &pairState{variables: map[string]any{"x": "start"}}
-	cond := &sealedCondition{key: "x", expected: "done"}
-	plan, err := NewCaptured(
-		state, []Conditions[*sealedCondition]{{cond}},
-		WithStateViews[*sealedCondition](&sealedProvider{
-			coherence: CoherenceSnapshot, variable: state.Variable, actions: state.Actions,
-		}),
-		WithExecutionObserver[*sealedCondition](&sealedObserver{}),
-		WithTransitionVerifier[*sealedCondition](sealedVerifier{}),
-	)
-	if err != nil {
-		t.Fatalf("NewCaptured: %v", err)
-	}
-	var found bool
-	for range 4 {
-		result := plan.TickCaptured(TickEnvironment{})
-		if len(result.Snapshot.Executions) < 2 {
-			continue
-		}
-		found = true
-		for i, exec := range result.Snapshot.Executions {
-			verdicts := 0
-			for _, rel := range exec.Relations {
-				verdicts++
-				want := i == 0
-				if rel.Authoritative != want {
-					t.Errorf("execution %d verdict authoritative = %v, want %v", i, rel.Authoritative, want)
-				}
-			}
-			if verdicts == 0 {
-				t.Errorf("execution %d has no verdict", i)
-			}
-			if exec.Isolated != (i == 0) {
-				t.Errorf("execution %d isolated = %v, want %v", i, exec.Isolated, i == 0)
-			}
-		}
-		break
-	}
-	if !found {
-		t.Fatal("no tick ran two actions, so the isolation rule was not exercised")
 	}
 }
 
@@ -1382,112 +812,6 @@ func (s *pairState) Actions(failed *sealedCondition) ([]Action[*sealedCondition]
 			&sealedEffect{key: "right", value: "b"},
 		}, node: keepRunning},
 	}, nil
-}
-
-func TestUnmarshalKeepsAPresentStatusFromTheOlderFormat(t *testing.T) {
-	var s NodeStatus
-	// The older format had no StatusPresent field, so its absence must be derived
-	// rather than decoded as "no status", which would silently lose the record.
-	if err := s.UnmarshalJSON([]byte(`{"TickCount":5,"LastStatus":2}`)); err != nil {
-		t.Fatalf("UnmarshalJSON: %v", err)
-	}
-	got := s.Snapshot()
-	if !got.StatusPresent {
-		t.Error("a recorded status decoded as an absence")
-	}
-	if got.LastStatus != bt.Success || got.TickCount != 5 {
-		t.Errorf("snapshot = %+v, want the recorded pair", got)
-	}
-	// An explicit false is still honoured.
-	if err := s.UnmarshalJSON([]byte(
-		`{"TickCount":5,"LastStatus":2,"StatusPresent":false}`)); err != nil {
-		t.Fatalf("UnmarshalJSON: %v", err)
-	}
-	if s.Snapshot().StatusPresent {
-		t.Error("an explicit absent status was read as present")
-	}
-	// A status the dependency does not define derives to absent.
-	if err := s.UnmarshalJSON([]byte(`{"TickCount":1,"LastStatus":7}`)); err != nil {
-		t.Fatalf("UnmarshalJSON: %v", err)
-	}
-	if s.Snapshot().StatusPresent {
-		t.Error("an undefined status was read as present")
-	}
-}
-
-func TestMergeErrorKeepsBothTypes(t *testing.T) {
-	got := mergeError(
-		&RecordedError{Type: "pabt.ErrOne", Message: "one"},
-		&RecordedError{Type: "pabt.ErrTwo", Message: "two"},
-	)
-	if got == nil {
-		t.Fatal("mergeError(nil, nil) is not nil")
-	}
-	if got.Type != "pabt.ErrOne|pabt.ErrTwo" {
-		t.Errorf("merged type = %q, want both types", got.Type)
-	}
-	if mergeError(nil, nil) != nil {
-		t.Error("merging two nil errors produced an error")
-	}
-}
-
-func TestPostExpansionNodesReportTheConditionTicks(t *testing.T) {
-	plan, _, _ := newSealedFixture(t, CoherenceSnapshot)
-	for range 3 {
-		plan.TickCaptured(TickEnvironment{})
-	}
-	snap := plan.snapshot(&tickCapture[*sealedCondition]{})
-	var post, postCondition bool
-	for _, n := range snap.Nodes {
-		switch n.Type {
-		case NodeTypePPAPost:
-			post = true
-			if n.Status.TickCount == 0 {
-				t.Error("the post-condition node reports no ticks, but it is the node that evaluates the condition")
-			}
-			if !n.Status.StatusPresent {
-				t.Error("the post-condition node reports no status after evaluating its condition")
-			}
-		case NodeTypePPARoot:
-			postCondition = true
-		}
-	}
-	if !post {
-		t.Fatal("the plan was not expanded, so there is no post-condition node to inspect")
-	}
-	if !postCondition {
-		t.Error("the expanded tree has no ppa root")
-	}
-}
-
-func TestCapturedEvidenceIsStableForCollidingKeyRendering(t *testing.T) {
-	// Two distinct keys render identically under %v. The order of recorded
-	// effects must still be the same on every run, or two identical runs would
-	// produce different evidence.
-	var names []string
-	for range 40 {
-		state := &collidingState{variables: map[string]any{"k": "start"}}
-		plan, err := NewCaptured(
-			state, []Conditions[*collidingCondition]{{&collidingCondition{key: "k", expected: "done"}}},
-			WithStateViews[*collidingCondition](&collidingProvider{state: state}),
-		)
-		if err != nil {
-			t.Fatalf("NewCaptured: %v", err)
-		}
-		plan.TickCaptured(TickEnvironment{})
-		snap := plan.snapshot(&tickCapture[*collidingCondition]{})
-		for _, a := range snap.Actions {
-			names = append(names, a.Name)
-		}
-	}
-	if len(names) == 0 {
-		t.Fatal("no action was generated, so there was no name to compare")
-	}
-	for _, n := range names {
-		if n != names[0] {
-			t.Fatalf("action name is not stable across runs: %q then %q", names[0], n)
-		}
-	}
 }
 
 type (

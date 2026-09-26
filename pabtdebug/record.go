@@ -399,12 +399,17 @@ type StoredCondition struct {
 // action's own alternative branches are guarded by, which is a different
 // relation from the postcondition and is kept separate.
 type StoredAction struct {
-	ActionID        string   `json:"actionId"`
-	NodeID          *string  `json:"nodeId"`
-	Name            string   `json:"name"`
-	PostconditionID *string  `json:"postconditionId"`
-	ConditionIDs    []string `json:"conditionIds"`
-	EffectIDs       []string `json:"effectIds"`
+	ActionID string  `json:"actionId"`
+	NodeID   *string `json:"nodeId"`
+	// Name is the action's label, and it is assembled by the planner out of the
+	// keys of the effects the action declares. Those keys are application text, so
+	// the name is carried as a value rather than as a string: a name is exactly
+	// the kind of field that bypasses the sanitizer and ends up in a digest, and
+	// an action's name is built from application input.
+	Name            StoredValue `json:"name"`
+	PostconditionID *string     `json:"postconditionId"`
+	ConditionIDs    []string    `json:"conditionIds"`
+	EffectIDs       []string    `json:"effectIds"`
 }
 
 // StoredEffect is one effect an action declares, with the value the application

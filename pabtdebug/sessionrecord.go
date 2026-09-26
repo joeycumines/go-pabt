@@ -131,18 +131,22 @@ func (s *Session) storedTree(snapshot pabt.TickSnapshot) (*StoredTree, error) {
 // The action is the relation that connects an effect to the condition the
 // action was there to make, so it is recorded as a section rather than left to
 // be inferred from an effect and a node that happen to share a variable key.
-func storedActions(snapshot pabt.TickSnapshot) []StoredAction {
+func (s *Session) storedActions(ctx context.Context, snapshot pabt.TickSnapshot) ([]StoredAction, error) {
 	out := make([]StoredAction, 0, len(snapshot.Actions))
 	for _, action := range snapshot.Actions {
 		stored := StoredAction{
 			ActionID: string(action.ID),
-			Name:     action.Name,
 			// The slices are made rather than aliased: a nil and an empty list are
 			// different facts in a canonical record, and the snapshot's own nil must
 			// not become this record's spelling.
 			ConditionIDs: make([]string, 0, len(action.ConditionIDs)),
 			EffectIDs:    make([]string, 0, len(action.EffectIDs)),
 		}
+		name, err := s.codecs.Encode(ctx, "action."+stored.ActionID+".name", action.Name)
+		if err != nil {
+			return nil, err
+		}
+		stored.Name = name
 		if action.NodeID != "" {
 			node := string(action.NodeID)
 			stored.NodeID = &node
@@ -159,7 +163,7 @@ func storedActions(snapshot pabt.TickSnapshot) []StoredAction {
 		}
 		out = append(out, stored)
 	}
-	return out
+	return out, nil
 }
 
 // storedEffects turns the capture boundary's effects into the store's own list,

@@ -1,0 +1,9 @@
+{
+  "name": "pabtdebug-evidence",
+  "private": true,
+  "type": "module",
+  "description": "The executable Chromium verification for the pabtdebug browser client. The browser build is pinned so a run is reproducible: a different build can lay a page out differently, and an unpinned dependency would make a layout change indistinguishable from a browser change.",
+  "devDependencies": {
+    "playwright": "1.63.0"
+  }
+}

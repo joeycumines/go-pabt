@@ -2,3 +2,6 @@
 /.vscode
 /config.mk
 *.log
+
+# The evidence runner pinned browser driver. The package is fetched, not committed.
+/pabtdebug/evidence/node_modules

@@ -69,7 +69,10 @@ export class EventStream {
    * @returns {Promise<void>}
    */
   async pump(signal) {
-    const response = await this.api.request(this.api.streamURL(this.token), { signal });
+    const response = await this.api.request(this.api.streamPath(this.token), { signal });
+    if (!response.body) {
+      throw new Error("the stream arrived with no body to read");
+    }
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let buffer = "";

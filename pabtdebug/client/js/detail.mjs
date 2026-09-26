@@ -112,11 +112,16 @@ function occurrenceHeader(node, record) {
       : "";
     add("frame", [where, node.frame.function ? ` ${node.frame.function}` : ""].join("").trim());
   }
-  const head = el("div", { class: "occ-head" }, [
-    el("div", { class: "occ-name", text: node.name || node.type }),
-    el("div", { class: "occ-meta" }, [el("span", { text: node.type })]),
-    meta,
-  ]);
+  // The type is only worth its own line when it says something the name does not.
+  // A structural node is named after its type, and printing it twice cost a line
+  // of the panel a reader is trying to read.
+  const label = node.name || node.type;
+  const children = [el("div", { class: "occ-name", text: label })];
+  if (node.type && node.type !== label) {
+    children.push(el("div", { class: "occ-meta" }, [el("span", { text: node.type })]));
+  }
+  children.push(meta);
+  const head = el("div", { class: "occ-head" }, children);
   head.appendChild(el("div", { class: "occ-meta" }, [
     el("span", {}, [el("span", { text: "id " }), el("b", { text: node.id })]),
   ]));
@@ -341,7 +346,12 @@ function actionBlock(record, node) {
   const action = actions.find((a) => a.nodeId === node.id) ?? actions.find((a) => a.actionId === node.actionId);
   if (!action) return el("div");
   const body = el("div", { class: "evidence" });
-  body.appendChild(evidenceRow("action", null, { missing: action.name || action.actionId }));
+  // The name is a value like every other piece of application text, so it is
+  // rendered through the same path: scrubbed, possibly redacted, and never
+  // interpreted as markup.
+  body.appendChild(evidenceRow("action", action.name ?? null, {
+    missing: action.actionId,
+  }));
   const effects = (record.effects ?? []).filter((e) => e.actionId === action.actionId);
   if (effects.length === 0) {
     body.appendChild(el("div", { class: "ev" }, [
