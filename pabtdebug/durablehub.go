@@ -35,15 +35,16 @@ import (
 // statement that a record exists, so a client can never be told about a sequence the
 // store does not hold, and a tick that failed to commit is not an event.
 type DurableHub struct {
-	mu       sync.Mutex
-	limits   DurableHubLimits
-	key      RunKey
-	closed   bool
-	last     uint64
-	clients  map[uint64]*hubClient
-	nextID   uint64
-	dropped  uint64
-	overflow uint64
+	mu         sync.Mutex
+	limits     DurableHubLimits
+	key        RunKey
+	generation uint64
+	closed     bool
+	last       uint64
+	clients    map[uint64]*hubClient
+	nextID     uint64
+	dropped    uint64
+	overflow   uint64
 }
 
 // DurableHubLimits are the bounds one hub holds itself to.
@@ -118,14 +119,28 @@ func NewDurableHub(key RunKey, generation uint64, limits DurableHubLimits) (*Dur
 		return nil, err
 	}
 	return &DurableHub{
-		limits:  limits,
-		key:     key,
-		clients: map[uint64]*hubClient{},
+		limits:     limits,
+		key:        key,
+		generation: generation,
+		clients:    map[uint64]*hubClient{},
 	}, nil
 }
 
 // RunKey returns the run this hub announces.
-func (h *DurableHub) RunKey() RunKey { return h.key }
+func (h *DurableHub) RunKey() RunKey {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.key
+}
+
+// Generation returns the store generation this hub was made for. A stream compares it
+// with the generation the store is at, because a hub from another generation announces
+// records a cursor for this one would refuse.
+func (h *DurableHub) Generation() uint64 {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.generation
+}
 
 // Publish announces a committed record.
 //
@@ -218,7 +233,6 @@ type HubSubscription struct {
 type HubClient struct {
 	hub     *DurableHub
 	client  *hubClient
-	closed  bool
 	release func()
 }
 
@@ -318,6 +332,12 @@ func (h *DurableHub) Close() {
 	h.closed = true
 	for id, client := range h.clients {
 		close(client.messages)
+		if !client.behind {
+			// Every waiter is released, not only the ones waiting for a record: a reader
+			// blocked on the behind signal would otherwise wait for a client that is
+			// being shut down.
+			close(client.behindCh)
+		}
 		delete(h.clients, id)
 	}
 }

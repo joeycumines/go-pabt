@@ -108,10 +108,10 @@ func (d *durable) handleImport(w http.ResponseWriter, r *http.Request) {
 		d.fail(w, err)
 		return
 	}
-	// The store now serves a different session, so the stream's hub is dropped: a
-	// client that was attached to the old one would otherwise be told about records
-	// from a history it is no longer reading.
-	d.invalidateHub()
+	// The store now serves a different session. The hub is revalidated on its next
+	// use rather than dropped here, which replaces it and ends the connections
+	// attached to it: a client on the old one is told its generation is stale rather
+	// than served the old run's records under the new one.
 	d.writeJSON(w, http.StatusOK, ImportResponse{Report: ticket.Report(), Activation: activated})
 }
 

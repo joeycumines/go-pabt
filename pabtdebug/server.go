@@ -53,6 +53,9 @@ type Server struct {
 	// is separate from the server's handler so that a named route cannot be reached
 	// without passing the check.
 	v2 *http.ServeMux
+
+	// started guards the one start path.
+	started bool
 }
 
 // NewServer creates a new debug server for the given tracker at the specified address.
@@ -103,7 +106,16 @@ func NewServer(tracker *Tracker, addr string) *Server {
 
 // HandleFunc registers an additional HTTP handler on the debug server's mux.
 // This allows examples to expose custom endpoints (e.g. safety counters).
+//
+// A pattern under the durable route set is registered on that set's own mux, so it is
+// still behind the capability check. Registering it on the outer mux would answer
+// without the check, because a named pattern wins over the subtree guard, and a
+// one-line mistake here would be a silent unauthenticated route.
 func (s *Server) HandleFunc(pattern string, handler http.HandlerFunc) {
+	if s.v2 != nil && strings.HasPrefix(pattern, "/debug/pabt/v2/") {
+		s.v2.HandleFunc(pattern, handler)
+		return
+	}
 	if mux, ok := s.server.Handler.(*http.ServeMux); ok {
 		mux.HandleFunc(pattern, handler)
 	}
@@ -173,6 +185,13 @@ func (s *Server) resolveTracker(r *http.Request) (*Tracker, bool) {
 // A durable server already owns its listener, so Start serves on it rather than
 // binding a second time, and the address a caller was told is the one being served.
 func (s *Server) Start() error {
+	s.mu.Lock()
+	if s.started {
+		s.mu.Unlock()
+		return fmt.Errorf(`pabtdebug: the server is already serving`)
+	}
+	s.started = true
+	s.mu.Unlock()
 	if s.listener != nil {
 		return s.server.Serve(s.listener)
 	}
@@ -212,7 +231,14 @@ func (s *Server) Close() error {
 	if s.durable != nil {
 		s.durable.close()
 	}
-	return s.server.Close()
+	err := s.server.Close()
+	// http.Server only closes the listeners it was handed by Serve, so a durable server
+	// that was built and abandoned without ever being started would keep its port for
+	// the life of the process. Closing an already-closed listener is harmless.
+	if s.listener != nil {
+		_ = s.listener.Close()
+	}
+	return err
 }
 
 // handlePlans returns a JSON array of plan info for all registered plans.

@@ -61,7 +61,7 @@ func (d *durable) handleStream(w http.ResponseWriter, r *http.Request) {
 		}
 		after = cursor.Sequence
 	}
-	hub := d.hubOf(ctx)
+	hub := d.hubOf(ctx, key, installation.Generation)
 	if hub == nil {
 		d.fail(w, fmt.Errorf("%w: the stream has no hub", ErrNotFound))
 		return
@@ -101,6 +101,12 @@ func (d *durable) handleStream(w http.ResponseWriter, r *http.Request) {
 	written, err := d.replay(ctx, stream, key, after, head.HeadSequence)
 	if err != nil {
 		_ = stream.writeEvent("error", map[string]string{"message": err.Error()})
+		return
+	}
+	// The hub is asked for the run the request resolved, so a hub left over from
+	// another history can never be the one this stream reads.
+	if hub.RunKey() != key {
+		d.fail(w, fmt.Errorf("%w: the stream's hub names another run", ErrCursorStale))
 		return
 	}
 	d.pump(ctx, stream, hub, sub, written)
@@ -209,7 +215,7 @@ func (d *durable) writeBehind(ctx context.Context, stream *sseWriter, hub *Durab
 	cursor := Cursor{
 		StoreID:    installation.StoreID,
 		RunKey:     hub.RunKey(),
-		Generation: installation.Generation,
+		Generation: hub.Generation(),
 		Sequence:   written,
 	}
 	token, err := cursor.Encode()

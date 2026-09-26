@@ -23,9 +23,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -79,17 +82,13 @@ func newDurableFixtureWith(t *testing.T, records int, hubLimits DurableHubLimits
 func (f *durableFixture) commit(t *testing.T, n int) {
 	t.Helper()
 	ctx := context.Background()
-	// The same session the server watches, so a record committed here is announced to
-	// the stream rather than only reaching it through a replay.
-	hub := f.server.durable.hubOf(ctx)
-	if hub == nil {
-		t.Fatalf("the server has no hub: %v", f.server.durable.activeRunErr(ctx))
-	}
+	// The same wiring an application uses, so a record committed here reaches the
+	// stream the way it would in a real process rather than by reaching inside.
 	session, err := OpenSession(ctx, f.store, f.plan.plan, SessionConfig{
 		Identity: SessionIdentity{
 			SessionID: f.key.SessionID, PlanID: f.key.PlanID, RunID: f.key.RunID,
 		},
-		Announce: hub.Publish,
+		Announce: f.server.Announce,
 	})
 	if err != nil {
 		t.Fatalf("OpenSession: %v", err)
@@ -157,6 +156,7 @@ func TestEveryRequestCarriesTheCapabilityAndNothingElseDoes(t *testing.T) {
 	}
 	for _, path := range []string{
 		"/debug/pabt/v2/state",
+		"/debug/pabt/v2/stream",
 		"/debug/pabt/v2/records",
 		"/debug/pabt/v2/records/1",
 		"/debug/pabt/v2/trees/1",
@@ -200,6 +200,25 @@ func TestEveryRequestCarriesTheCapabilityAndNothingElseDoes(t *testing.T) {
 		if resp.StatusCode != http.StatusUnauthorized {
 			t.Errorf("%s with the token in the URL = %d, want 401", inURL, resp.StatusCode)
 		}
+	}
+	// The import route is a write, so it is checked with a body and by a method that
+	// would reach the store rather than the method check.
+	post, err := http.NewRequest(http.MethodPost,
+		"http://"+f.server.Addr()+"/debug/pabt/v2/import", bytes.NewReader([]byte("not a bundle")))
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	postResp, err := f.client.Do(post)
+	if err != nil {
+		t.Fatalf("do: %v", err)
+	}
+	postBody, _ := io.ReadAll(postResp.Body)
+	_ = postResp.Body.Close()
+	if postResp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("the import route without a capability = %d, want 401", postResp.StatusCode)
+	}
+	if bytes.Contains(postBody, []byte(capability)) {
+		t.Error("the import route echoed the capability in its refusal")
 	}
 	// The ready file names the address and nothing else, because a file any process
 	// can read is not a place for a token.
@@ -309,15 +328,41 @@ func TestAResumeIsExactAcrossARestart(t *testing.T) {
 	if err := restored.CheckRefuses(installation.StoreID, f.key, installation.Generation); err != nil {
 		t.Fatalf("a cursor from this store was refused after a restart: %v", err)
 	}
-	// The store serves the rest, which is the whole claim: the resume is a read, not a
-	// thing the old process remembered.
-	final, err := f.store.RecordsSince(context.Background(), f.key, restored.Sequence)
+	// The new server serves the rest over its own stream, which is the whole claim: the
+	// resume is a read of the store, not a thing the old process remembered.
+	f.waitReady(t)
+	streaming := &http.Client{}
+	resumeReq, err := http.NewRequest(http.MethodGet,
+		"http://"+f.server.Addr()+"/debug/pabt/v2/stream?cursor="+token, nil)
 	if err != nil {
-		t.Fatalf("RecordsSince: %v", err)
+		t.Fatalf("request: %v", err)
 	}
-	if len(final.Records) != 1 || final.Records[0].Sequence != through+1 {
-		t.Fatalf("the resume returned %d records, want the one after %d",
-			len(final.Records), through)
+	resumeReq.Header.Set(capabilityHeader, f.server.Capability())
+	resumeResp, err := streaming.Do(resumeReq)
+	if err != nil {
+		t.Fatalf("do: %v", err)
+	}
+	defer func() { _ = resumeResp.Body.Close() }()
+	if resumeResp.StatusCode != http.StatusOK {
+		t.Fatalf("the restarted server refused the old server's cursor: %d", resumeResp.StatusCode)
+	}
+	resumed := bufio.NewReader(resumeResp.Body)
+	if _, err := readSSE(resumed); err != nil {
+		t.Fatalf("read the greeting: %v", err)
+	}
+	event, err := readSSE(resumed)
+	if err != nil {
+		t.Fatalf("read the resumed record: %v", err)
+	}
+	var record StoredRecord
+	if err := CanonicalDecode([]byte(event.data), &record); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if record.Sequence != through+1 {
+		t.Errorf("the restarted server resumed at %d, want %d", record.Sequence, through+1)
+	}
+	if record.EventUID == "" || record.RecordSHA256 == "" {
+		t.Error("the resumed record carries no identity or digest")
 	}
 }
 
@@ -736,7 +781,265 @@ func TestAStreamEndsWithAResumablePositionWhenAClientFallsBehind(t *testing.T) {
 		t.Errorf("the resume returned %d records, want the 2 after %d",
 			len(page.Records), cursor.Sequence)
 	}
-	if f.server.durable.hubOf(context.Background()).Overflowed() != 1 {
+	installation, err := f.store.Installation(context.Background())
+	if err != nil {
+		t.Fatalf("Installation: %v", err)
+	}
+	if f.server.durable.hubOf(context.Background(), f.key, installation.Generation).Overflowed() != 1 {
 		t.Error("the hub did not count the disconnects, so an operator would not learn the bound is too small")
+	}
+}
+
+func TestAnOutOfBandImportStopsTheStreamAnnouncingTheOldRun(t *testing.T) {
+	f := newDurableFixture(t, 3)
+	f.waitReady(t)
+	// A bundle is imported by calling the store directly, the way an application that
+	// never went through the route would. The server hears nothing, so the only thing
+	// that can stop its stream from announcing the old run is revalidating the hub on
+	// use rather than caching one forever.
+	resp, bundle := f.get(t, "/debug/pabt/v2/export")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("export = %d: %s", resp.StatusCode, firstLine(bundle))
+	}
+	ticket, err := f.store.StageImport(context.Background(), bytes.NewReader(bundle), DefaultImportLimits())
+	if err != nil {
+		t.Fatalf("StageImport: %v", err)
+	}
+	activated, err := f.store.ActivateImport(context.Background(), ticket)
+	if err != nil {
+		t.Fatalf("ActivateImport: %v", err)
+	}
+	imported := RunKey{
+		SessionID: activated.SessionID, PlanID: activated.PlanID, RunID: activated.RunID,
+	}
+	streaming := &http.Client{}
+	req, err := http.NewRequest(http.MethodGet, "http://"+f.server.Addr()+"/debug/pabt/v2/stream", nil)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	req.Header.Set(capabilityHeader, f.server.Capability())
+	streamResp, err := streaming.Do(req)
+	if err != nil {
+		t.Fatalf("do: %v", err)
+	}
+	defer func() { _ = streamResp.Body.Close() }()
+	if streamResp.StatusCode != http.StatusOK {
+		t.Fatalf("stream = %d", streamResp.StatusCode)
+	}
+	reader := bufio.NewReader(streamResp.Body)
+	if _, err := readSSE(reader); err != nil {
+		t.Fatalf("read the greeting: %v", err)
+	}
+	// The stream replayed the new run's records, and a record from the old run is
+	// never delivered on it, however many the old session commits.
+	f.commit(t, 6)
+	seen := []string{}
+	for i := 0; i < 3; i++ {
+		event, err := readSSE(reader)
+		if err != nil {
+			break
+		}
+		if event.name != "record" {
+			continue
+		}
+		var record StoredRecord
+		if err := CanonicalDecode([]byte(event.data), &record); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		seen = append(seen, record.RunKey.RunID)
+	}
+	for _, runID := range seen {
+		if runID == f.key.RunID {
+			t.Fatalf("the stream on the imported run delivered a record from %q", runID)
+		}
+	}
+	// And the hub it is reading is the one for the run the store serves.
+	hub := f.server.durable.hubOf(context.Background(), imported, activated.Generation)
+	if hub == nil {
+		t.Fatal("the server has no hub for the imported run")
+	}
+	if hub.RunKey() != imported {
+		t.Errorf("the hub names run %v, want %v", hub.RunKey(), imported)
+	}
+	if hub.Generation() != activated.Generation {
+		t.Errorf("the hub names generation %d, want %d", hub.Generation(), activated.Generation)
+	}
+}
+
+func TestARepresentationThatDisagreesWithTheChainIsRefused(t *testing.T) {
+	f := newDurableFixture(t, 3)
+	f.waitReady(t)
+	// The representation is rewritten with a renamed node and its own digest
+	// recomputed, so the row is internally consistent and only the record the chain
+	// covers says otherwise. A route that served it would hand a client a tree the
+	// history never committed, which is the one thing a representation is not.
+	original, err := f.store.TreeAt(context.Background(), f.key, 1)
+	if err != nil {
+		t.Fatalf("TreeAt: %v", err)
+	}
+	altered := original
+	altered.Nodes = append([]StoredNode(nil), original.Nodes...)
+	altered.Nodes[0].Name = "PlantedRoot"
+	altered.Digest = ""
+	digest, err := HashTree(altered)
+	if err != nil {
+		t.Fatalf("re-seal: %v", err)
+	}
+	altered.Digest = digest
+	encoded, err := CanonicalEncode(altered)
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	if _, err := f.store.writer.ExecContext(context.Background(),
+		"UPDATE representations SET tree_json = ?, tree_sha256 = ? "+
+			"WHERE session_id = ? AND run_id = ? AND seq = 1",
+		encoded, mustHex(digest), f.key.SessionID, f.key.RunID); err != nil {
+		t.Fatalf("rewrite: %v", err)
+	}
+	resp, body := f.get(t, "/debug/pabt/v2/representations/1")
+	if resp.StatusCode == http.StatusOK {
+		t.Fatalf("a representation that disagrees with the record was served: %s", firstLine(body))
+	}
+	if !strings.Contains(string(body), "corrupt") {
+		t.Errorf("the refusal says %q, want it to name the corruption", firstLine(body))
+	}
+	// The tree route refuses it too, and says the same thing: one rule, not two.
+	resp, body = f.get(t, "/debug/pabt/v2/trees/1")
+	if resp.StatusCode == http.StatusOK {
+		t.Errorf("the tampered tree was served: %s", firstLine(body))
+	}
+}
+
+func TestTheServerReleasesItsPortWhetherOrNotItWasStarted(t *testing.T) {
+	store := openTestStore(t, testStorePath(t))
+	bootstrapTestStore(t, store)
+	server, err := NewDurableServer(store, DurableServerConfig{Addr: "127.0.0.1:0"})
+	if err != nil {
+		t.Fatalf("NewDurableServer: %v", err)
+	}
+	addr := server.Addr()
+	// Closed without ever having been started, which is what a construct-then-abandon
+	// path does, and what would hold the port for the life of the process.
+	if err := server.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	listener, err := net.Listen("tcp", addr)
+	if err != nil {
+		t.Fatalf("the port is still held after Close: %v", err)
+	}
+	_ = listener.Close()
+	// Two servers over one store both bind, and both release.
+	first, err := NewDurableServer(store, DurableServerConfig{Addr: "127.0.0.1:0"})
+	if err != nil {
+		t.Fatalf("NewDurableServer: %v", err)
+	}
+	second, err := NewDurableServer(store, DurableServerConfig{Addr: "127.0.0.1:0"})
+	if err != nil {
+		t.Fatalf("NewDurableServer: %v", err)
+	}
+	if first.Addr() == second.Addr() {
+		t.Error("two servers bound the same address")
+	}
+	for _, s := range []*Server{first, second} {
+		addr := s.Addr()
+		go func() { _ = s.Start() }()
+		f := &durableFixture{server: s, client: &http.Client{Timeout: 5 * time.Second}}
+		f.waitReady(t)
+		// One start path: a second Start is refused rather than serving the same
+		// listener twice, which would make Close report a closed connection.
+		if err := s.Start(); err == nil {
+			t.Error("a second Start was accepted")
+		}
+		if err := s.Close(); err != nil {
+			t.Errorf("Close: %v", err)
+		}
+		listener, err := net.Listen("tcp", addr)
+		if err != nil {
+			t.Errorf("the port is still held after Close: %v", err)
+			continue
+		}
+		_ = listener.Close()
+	}
+}
+
+func TestABadParameterOrAnUnreachableSequenceIsABadRequest(t *testing.T) {
+	f := newDurableFixture(t, 2)
+	f.waitReady(t)
+	huge := strconv.FormatUint(math.MaxUint64, 10)
+	for _, path := range []string{
+		"/debug/pabt/v2/records/after=" + "abc",
+		"/debug/pabt/v2/records?after=abc",
+		"/debug/pabt/v2/records?after=" + huge,
+		"/debug/pabt/v2/records/" + huge,
+		"/debug/pabt/v2/trees/" + huge,
+		"/debug/pabt/v2/representations/" + huge,
+		"/debug/pabt/v2/records/0",
+		"/debug/pabt/v2/records/-1",
+	} {
+		resp, body := f.get(t, path)
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Errorf("%s = %d, want 400: %s", path, resp.StatusCode, firstLine(body))
+		}
+		if bytes.Contains(body, []byte("sql:")) {
+			t.Errorf("%s leaked a driver error: %s", path, firstLine(body))
+		}
+	}
+	// A position the run has not reached is a conflict, not an empty page whose cursor
+	// reads zero and would send a paging client back to the start.
+	resp, body := f.get(t, "/debug/pabt/v2/records?after=9999")
+	if resp.StatusCode != http.StatusConflict {
+		t.Errorf("a position past the head = %d, want 409: %s", resp.StatusCode, firstLine(body))
+	}
+	// A write method on a read route is refused, so every route answers the same way.
+	for _, path := range []string{"/records/1", "/trees/1", "/representations/1"} {
+		req, err := http.NewRequest(http.MethodPost, "http://"+f.server.Addr()+"/debug/pabt/v2"+path, nil)
+		if err != nil {
+			t.Fatalf("request: %v", err)
+		}
+		req.Header.Set(capabilityHeader, f.server.Capability())
+		postResp, err := f.client.Do(req)
+		if err != nil {
+			t.Fatalf("do: %v", err)
+		}
+		_ = postResp.Body.Close()
+		if postResp.StatusCode != http.StatusMethodNotAllowed {
+			t.Errorf("POST %s = %d, want 405", path, postResp.StatusCode)
+		}
+	}
+	// An untrusted cursor field is not reflected back into the refusal.
+	hostile := Cursor{StoreID: `PABTPROBE"><script>`, RunKey: f.key, Generation: 1}
+	token, err := hostile.Encode()
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	resp, body = f.get(t, "/debug/pabt/v2/stream?cursor="+token)
+	if bytes.Contains(body, []byte("script")) {
+		t.Errorf("the refusal quotes the cursor it was sent: %s", firstLine(body))
+	}
+}
+
+func TestACustomRouteUnderTheDurableSetIsStillBehindTheCapability(t *testing.T) {
+	f := newDurableFixture(t, 1)
+	f.waitReady(t)
+	// Registering a handler is an in-process mistake waiting to happen: on the outer
+	// mux a named pattern wins over the subtree guard, so the route would answer
+	// without the capability. The registration goes on the guarded set instead.
+	f.server.HandleFunc("/debug/pabt/v2/custom", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"secret":"planted"}`))
+	})
+	req, err := http.NewRequest(http.MethodGet,
+		"http://"+f.server.Addr()+"/debug/pabt/v2/custom", nil)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	resp, err := f.client.Do(req)
+	if err != nil {
+		t.Fatalf("do: %v", err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("a custom route answered without the capability: %d %s", resp.StatusCode, body)
 	}
 }

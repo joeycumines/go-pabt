@@ -96,17 +96,20 @@ func DecodeCursor(token string) (Cursor, error) {
 // an import replaces the active session and moves the generation, and a client that
 // resumed by sequence alone would apply a delta from one history to a tree from
 // another.
+// A refusal names what the store is serving and never quotes what the cursor carried.
+// The cursor is untrusted text: it comes back from a client, possibly from a browser
+// address bar, and a refusal is the one place it would be reflected. Saying which run
+// and which generation are expected loses the client nothing it did not already send.
 func (c Cursor) CheckRefuses(store StoreID, key RunKey, generation uint64) error {
-	if c.StoreID != store {
-		return fmt.Errorf("%w: the cursor names store %q, this is %q", ErrCursorStale, c.StoreID, store)
-	}
-	if c.RunKey != key {
-		return fmt.Errorf("%w: the cursor names run %s, the request names %s",
-			ErrCursorStale, c.RunKey.RunID, key.RunID)
-	}
-	if c.Generation != generation {
-		return fmt.Errorf("%w: the cursor names generation %d, the store is at %d",
-			ErrCursorStale, c.Generation, generation)
+	switch {
+	case c.StoreID != store:
+		return fmt.Errorf("%w: it names another store, and this is %q", ErrCursorStale, store)
+	case c.RunKey != key:
+		return fmt.Errorf("%w: it names another run, and the request named %s",
+			ErrCursorStale, key.RunID)
+	case c.Generation != generation:
+		return fmt.Errorf("%w: it names another generation, and the store is at %d",
+			ErrCursorStale, generation)
 	}
 	return nil
 }

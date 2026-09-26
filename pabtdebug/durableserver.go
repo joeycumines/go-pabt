@@ -24,6 +24,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"math"
 	"net"
 	"net/http"
 	"os"
@@ -307,7 +308,7 @@ func (d *durable) handleState(w http.ResponseWriter, r *http.Request) {
 		RunState:      state,
 		Head:          head,
 	}
-	if hub := d.hubOf(r.Context()); hub != nil {
+	if hub := d.hubOf(r.Context(), key, installation.Generation); hub != nil {
 		out.HubOverflows = hub.Overflowed()
 		out.HubSubscribers = hub.Clients()
 	}
@@ -332,15 +333,18 @@ func (d *durable) handleRecords(w http.ResponseWriter, r *http.Request) {
 		d.fail(w, err)
 		return
 	}
-	if after > 0 {
-		// A page from a position is a resume, so it is held to the same rule as a
-		// cursor: a position from another generation is refused rather than served.
-		if err := (Cursor{
-			StoreID: installation.StoreID, RunKey: key, Generation: installation.Generation, Sequence: after,
-		}).CheckRefuses(installation.StoreID, key, installation.Generation); err != nil {
-			d.fail(w, err)
-			return
-		}
+	head, err := d.store.Head(ctx, key)
+	if err != nil {
+		d.fail(w, err)
+		return
+	}
+	if after > head.HeadSequence {
+		// A position the run has not reached is refused rather than answered with an
+		// empty page whose cursor reads zero, which would send a paging client back to
+		// the start of the run.
+		d.fail(w, fmt.Errorf("%w: position %d is past the head %d",
+			ErrHeadMismatch, after, head.HeadSequence))
+		return
 	}
 	page, err := d.store.RecordsSince(ctx, key, after)
 	if err != nil {
@@ -348,11 +352,17 @@ func (d *durable) handleRecords(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	page.RunKey = key
+	// The cursor a client leaves with names the position it asked from when the page is
+	// empty, so an empty page at a live position does not rewind it to zero.
+	position := page.Through
+	if position == 0 {
+		position = after
+	}
 	cursor := Cursor{
 		StoreID:    installation.StoreID,
 		RunKey:     key,
 		Generation: installation.Generation,
-		Sequence:   page.Through,
+		Sequence:   position,
 	}
 	if page.HasMore {
 		cursor.KeyframeSequence = page.Through
@@ -367,6 +377,10 @@ type RecordPageResponse struct {
 }
 
 func (d *durable) handleRecord(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 	sequence, ok := d.sequence(w, r)
 	if !ok {
 		return
@@ -387,6 +401,10 @@ func (d *durable) handleRecord(w http.ResponseWriter, r *http.Request) {
 
 // handleTree serves one record's tree.
 func (d *durable) handleTree(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 	sequence, ok := d.sequence(w, r)
 	if !ok {
 		return
@@ -425,6 +443,10 @@ type BaseReference struct {
 }
 
 func (d *durable) handleRepresentation(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 	sequence, ok := d.sequence(w, r)
 	if !ok {
 		return
@@ -520,18 +542,30 @@ func (d *durable) resolve(r *http.Request) (RunKey, Installation, error) {
 	return key, installation, nil
 }
 
+// maxSequence is the largest sequence the store can address. A sequence above it
+// cannot be bound by the row it names, and a driver asked for one answers with its own
+// error, so it is refused here as the bad request it is.
+const maxSequence = uint64(math.MaxInt64)
+
 // sequence reads a sequence from the path, refusing anything that is not one.
 func (d *durable) sequence(w http.ResponseWriter, r *http.Request) (uint64, bool) {
 	raw := r.PathValue("sequence")
 	sequence, err := strconv.ParseUint(raw, 10, 64)
-	if err != nil || sequence == 0 {
+	if err != nil || sequence == 0 || sequence > maxSequence {
 		http.Error(w, "the sequence must be a positive decimal number", http.StatusBadRequest)
 		return 0, false
 	}
 	return sequence, true
 }
 
+// ErrBadParameter reports a request parameter that is not the value it must be.
+var ErrBadParameter = errors.New(`pabtdebug: malformed request parameter`)
+
 // queryUint reads a bounded unsigned query parameter.
+//
+// Bounded means the value, not only the type: a sequence the store cannot address is
+// refused here rather than handed to a driver that would report it as an internal
+// error.
 func queryUint(r *http.Request, name string, fallback uint64) (uint64, error) {
 	raw := r.URL.Query().Get(name)
 	if raw == "" {
@@ -539,7 +573,11 @@ func queryUint(r *http.Request, name string, fallback uint64) (uint64, error) {
 	}
 	value, err := strconv.ParseUint(raw, 10, 64)
 	if err != nil {
-		return 0, fmt.Errorf("pabtdebug: %s must be a decimal number: %w", name, ErrNotFound)
+		return 0, fmt.Errorf("%w: %s must be a decimal number", ErrBadParameter, name)
+	}
+	if value > maxSequence {
+		return 0, fmt.Errorf("%w: %s is above the largest sequence a store can address",
+			ErrBadParameter, name)
 	}
 	return value, nil
 }
@@ -548,6 +586,8 @@ func queryUint(r *http.Request, name string, fallback uint64) (uint64, error) {
 func (d *durable) fail(w http.ResponseWriter, err error) {
 	status := http.StatusInternalServerError
 	switch {
+	case errors.Is(err, ErrBadParameter):
+		status = http.StatusBadRequest
 	case errors.Is(err, ErrNotFound):
 		status = http.StatusNotFound
 	case errors.Is(err, ErrHeadMismatch), errors.Is(err, ErrCursorStale):
@@ -574,47 +614,56 @@ func (d *durable) writeJSON(w http.ResponseWriter, status int, value any) {
 	_, _ = w.Write([]byte("\n"))
 }
 
-// activeRunErr reports why there is no active run, for a caller that needs the reason
-// rather than a nil hub.
-func (d *durable) activeRunErr(ctx context.Context) error {
-	_, err := d.activeRun(ctx)
-	return err
-}
-
-// hubOf returns the stream's hub, if the stream has been used in this process.
+// hubOf returns the hub for the run and generation the store is serving now.
 //
-// The hub is created on first use and kept, because a client that reconnects to a new
-// process is served from the store, which is the point: nothing about a resume depends
-// on a hub that a restart has thrown away.
-func (d *durable) hubOf(ctx context.Context) *DurableHub {
-	d.mu.RLock()
-	hub := d.hub
-	d.mu.RUnlock()
-	if hub != nil {
-		return hub
-	}
-	key, err := d.activeRun(ctx)
-	if err != nil {
-		return nil
-	}
-	installation, err := d.store.Installation(ctx)
-	if err != nil {
-		return nil
-	}
+// It is revalidated on every call rather than cached blindly, because a hub is about
+// one history: an import replaces the active session and moves the generation, and a
+// hub kept across that would announce one run's records on another run's stream. The
+// old hub is closed, which ends the connections attached to it, and the next request
+// builds one for what the store serves now.
+func (d *durable) hubOf(ctx context.Context, key RunKey, generation uint64) *DurableHub {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	if d.hub != nil {
-		return d.hub
-	}
 	if d.closed {
 		return nil
 	}
-	hub, err = NewDurableHub(key, installation.Generation, d.limits)
+	if d.hub != nil && (d.hub.RunKey() != key || d.hub.Generation() != generation) {
+		d.hub.Close()
+		d.hub = nil
+	}
+	if d.hub != nil {
+		return d.hub
+	}
+	hub, err := NewDurableHub(key, generation, d.limits)
 	if err != nil {
 		return nil
 	}
 	d.hub = hub
 	return hub
+}
+
+// Announce publishes a committed record to the stream's current hub.
+//
+// It is the wiring an application uses, and it resolves the hub on every call rather
+// than capturing one: after an import the hub is replaced, and a session that captured
+// the old one would announce into a closed hub for the rest of the process.
+func (s *Server) Announce(ctx context.Context, receipt CommitReceipt, record StoredRecord) error {
+	if s.durable == nil {
+		return fmt.Errorf(`pabtdebug: this server does not serve a durable history`)
+	}
+	key, err := s.durable.activeRun(ctx)
+	if err != nil {
+		return err
+	}
+	installation, err := s.durable.store.Installation(ctx)
+	if err != nil {
+		return err
+	}
+	hub := s.durable.hubOf(ctx, key, installation.Generation)
+	if hub == nil {
+		return fmt.Errorf(`pabtdebug: the stream has no hub`)
+	}
+	return hub.Publish(ctx, receipt, record)
 }
 
 // invalidateHub drops the hub, so a resumed stream announces the run that is active

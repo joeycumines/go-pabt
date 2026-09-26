@@ -1003,6 +1003,12 @@ func (s *SQLiteStore) DeltaBase(
 // Representation returns a record's stored tree and the base its delta names, so a
 // caller can reconstruct a tree from a delta and check it against the keyframe the
 // store also holds.
+//
+// What it returns has been verified the way TreeAt verifies, because a caller that is
+// handed a representation is about to trust it: the tree against its own digest, the
+// tree against the record the chain covers, and the delta against the base it names.
+// A representation that disagrees with any of those is reported rather than served,
+// so no caller has to remember to check.
 func (s *SQLiteStore) Representation(
 	ctx context.Context,
 	key RunKey,
@@ -1010,6 +1016,17 @@ func (s *SQLiteStore) Representation(
 ) (tree StoredTree, base *string, delta *ExactTreeDelta, err error) {
 	if err := s.checkUsable(false); err != nil {
 		return StoredTree{}, nil, nil, err
+	}
+	// The record's own copy of the tree is the one the chain covers, so it is what
+	// says which tree this sequence committed.
+	record, err := s.RecordAt(ctx, key, sequence)
+	if err != nil {
+		return StoredTree{}, nil, nil, err
+	}
+	if record.Tree == nil {
+		return StoredTree{}, nil, nil, fmt.Errorf(
+			"%w: sequence %d holds a representation and its record has no tree",
+			ErrStoreCorrupt, sequence)
 	}
 	var (
 		raw      []byte
@@ -1035,10 +1052,32 @@ func (s *SQLiteStore) Representation(
 		uid := baseUID.String
 		base = &uid
 	}
+	digest, err := HashTree(tree)
+	if err != nil {
+		return StoredTree{}, nil, nil, err
+	}
+	if digest != tree.Digest {
+		return StoredTree{}, nil, nil, fmt.Errorf("%w: the tree at %d digest is %q, recomputes to %q",
+			ErrStoreCorrupt, sequence, tree.Digest, digest)
+	}
+	committed, err := HashTree(*record.Tree)
+	if err != nil {
+		return StoredTree{}, nil, nil, err
+	}
+	if committed != digest {
+		return StoredTree{}, nil, nil, fmt.Errorf(
+			"%w: the tree at %d is %q, the committed record holds %q",
+			ErrStoreCorrupt, sequence, digest, committed)
+	}
 	if len(deltaRaw) > 0 {
 		var decoded ExactTreeDelta
 		if err := CanonicalDecode(deltaRaw, &decoded); err != nil {
 			return StoredTree{}, nil, nil, fmt.Errorf("%w: a stored delta: %v", ErrStoreCorrupt, err)
+		}
+		// The base the delta names is read and re-sealed rather than trusted, so a
+		// caller is never told to apply a delta to a tree the store does not hold.
+		if err := VerifyChain(ctx, s.readers, key, &decoded); err != nil {
+			return StoredTree{}, nil, nil, err
 		}
 		delta = &decoded
 	}

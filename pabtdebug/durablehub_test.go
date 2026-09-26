@@ -19,7 +19,9 @@ package pabtdebug
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
+	"time"
 
 	bt "github.com/joeycumines/go-behaviortree"
 )
@@ -320,5 +322,147 @@ func TestAStoreReplayIsBoundedAndSaysWhenThereIsMore(t *testing.T) {
 	}
 	if _, err := f.store.RecordsSince(ctx, f.key, 0); !errors.Is(err, ErrStoreCorrupt) {
 		t.Errorf("a replay of an altered record = %v, want a corruption report", err)
+	}
+}
+
+// commitInBackground commits on another goroutine, which is the only honest way to
+// have a reader and a writer run at the same time: a queue of two cannot survive
+// twelve commits from one goroutine however fast the reader is, because the reader
+// does not run at all until the commits are done.
+func commitInBackground(t *testing.T, f *hubFixture, n int) <-chan error {
+	t.Helper()
+	done := make(chan error, 1)
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				done <- fmt.Errorf("a commit panicked: %v", r)
+			}
+		}()
+		for f.ticks < n {
+			result := f.session.Tick(context.Background())
+			if result.Err != nil {
+				done <- result.Err
+				return
+			}
+			if result.Kind == RecordTick && result.StatusPresent && bt.Status(result.Status) == bt.Success {
+				f.ticks++
+			} else if result.Sequence != 0 {
+				f.ticks++
+			}
+		}
+		done <- nil
+	}()
+	return done
+}
+
+func TestAReaderThatReportsWhatItTookIsNeverDropped(t *testing.T) {
+	// A queue of two against many more records than that, with the reader running at the
+	// same time as the writer. A reader that reports what it took is never behind, and
+	// one that does not is behind almost at once. Without the report the accounting
+	// only ever grows, so a reader at full speed is eventually dropped for a queue that
+	// is empty.
+	tight := DefaultDurableHubLimits()
+	tight.MaxQueuedEvents = 2
+	reporting := newHubFixture(t, tight)
+	sub, err := reporting.hub.Subscribe()
+	if err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+	done := commitInBackground(t, reporting, 12)
+	drained := 0
+	for drained < 12 {
+		select {
+		case message := <-sub.Client.Messages():
+			sub.Client.Took(message)
+			drained++
+		case err := <-done:
+			if err != nil {
+				t.Fatalf("commit: %v", err)
+			}
+			done = nil
+		case <-time.After(5 * time.Second):
+			t.Fatalf("a reader that reported what it took only received %d of 12", drained)
+		}
+	}
+	if sub.Client.Behind() {
+		t.Error("a reader that reported what it took was dropped for being behind")
+	}
+	if reporting.hub.Overflowed() != 0 {
+		t.Errorf("the hub counted %d disconnects for a reader that kept up", reporting.hub.Overflowed())
+	}
+
+	// The same shape with a reader that takes without reporting. This is what the report
+	// is for, so it is the half that fails if the accounting measures the history rather
+	// than the queue.
+	silent := newHubFixture(t, tight)
+	quiet, err := silent.hub.Subscribe()
+	if err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+	if err := <-commitInBackground(t, silent, 6); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+	if !quiet.Client.Behind() {
+		t.Error("a reader that took records without reporting was never told it was behind")
+	}
+	if silent.hub.Overflowed() == 0 {
+		t.Error("the hub did not count a reader it had to disconnect")
+	}
+}
+
+func TestAHubRefusesAClientThatFellBehindUntilItIsClosed(t *testing.T) {
+	limits := DefaultDurableHubLimits()
+	limits.MaxQueuedEvents = 1
+	f := newHubFixture(t, limits)
+	sub, err := f.hub.Subscribe()
+	if err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+	f.commit(t, 2)
+	if !sub.Client.Behind() {
+		t.Fatal("the client did not fall behind")
+	}
+	// The signal is closed rather than fired, so a reader blocked on it is released and
+	// cannot miss it.
+	select {
+	case <-sub.Client.BehindSignal():
+	case <-time.After(time.Second):
+		t.Fatal("the behind signal never arrived")
+	}
+	// The record that was already queued is still delivered: a client is told it fell
+	// behind, not silently skipped what it had already been sent.
+	select {
+	case message := <-sub.Client.Messages():
+		if message.Sequence != 1 {
+			t.Errorf("the delivered record is %d, want the first", message.Sequence)
+		}
+	default:
+		t.Error("the queued record was dropped rather than delivered")
+	}
+	// And nothing further is offered.
+	f.commit(t, 3)
+	select {
+	case extra := <-sub.Client.Messages():
+		t.Errorf("a client that fell behind was handed sequence %d", extra.Sequence)
+	default:
+	}
+}
+
+func TestAClosedHubClosesTheBehindSignalToo(t *testing.T) {
+	f := newHubFixture(t, DefaultDurableHubLimits())
+	sub, err := f.hub.Subscribe()
+	if err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+	f.hub.Close()
+	// A reader blocked on the signal is released by the channel closing, not by a
+	// panic, so Close on a running server is always safe.
+	select {
+	case <-sub.Client.BehindSignal():
+	case <-time.After(time.Second):
+		t.Error("closing the hub left a reader waiting on the behind signal")
+	}
+	if _, open := <-sub.Client.Messages(); open {
+		t.Error("closing the hub left a client's queue open")
 	}
 }
