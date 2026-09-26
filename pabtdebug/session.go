@@ -33,11 +33,12 @@ import (
 // planner did not produce, and nothing the planner produced is discarded
 // without a terminal record saying so.
 type Session struct {
-	store   *SQLiteStore
-	planner pabt.CapturedPlanner
-	key     RunKey
-	codecs  *CodecRegistry
-	limits  ValueLimits
+	store    *SQLiteStore
+	planner  pabt.CapturedPlanner
+	key      RunKey
+	codecs   *CodecRegistry
+	limits   ValueLimits
+	announce func(context.Context, CommitReceipt, StoredRecord) error
 
 	// gate serialises ticks. The store's append lease would serialise commits
 	// anyway, but serialising here means a second caller is told rather than
@@ -55,6 +56,16 @@ type SessionConfig struct {
 
 	// ValueLimits bounds what one recorded value may cost.
 	ValueLimits ValueLimits
+
+	// Announce is called once per committed record, with the receipt that proves the
+	// commit. A nil Announce records nothing extra.
+	//
+	// It is fed from the receipt rather than from the tick, so a subscriber can never
+	// be told about a sequence the store does not hold, and a tick that failed to
+	// commit is not an event. An Announce that returns an error does not undo the
+	// commit: the record is already durable, and the error is the subscriber's to
+	// report.
+	Announce func(context.Context, CommitReceipt, StoredRecord) error
 }
 
 // TickResult is what one tick produced.
@@ -89,6 +100,13 @@ type TickResult struct {
 
 	// Err is why no record was committed, if nothing was.
 	Err error
+
+	// AnnounceErr is why a subscriber was not told about a record that was committed.
+	//
+	// It is separate from Err because the record is durable either way, and a caller
+	// that saw Err set would conclude the opposite. A subscriber that cannot be reached
+	// is a fact about the subscriber.
+	AnnounceErr error
 }
 
 // OpenSession attaches a session to a bootstrapped run.
@@ -123,11 +141,12 @@ func OpenSession(
 		return nil, fmt.Errorf("pabtdebug: attach a session: %w", err)
 	}
 	return &Session{
-		store:   store,
-		planner: planner,
-		key:     key,
-		codecs:  cfg.Codecs,
-		limits:  limits,
+		store:    store,
+		planner:  planner,
+		key:      key,
+		codecs:   cfg.Codecs,
+		limits:   limits,
+		announce: cfg.Announce,
 	}, nil
 }
 
@@ -319,6 +338,21 @@ func (s *Session) finalize(ctx context.Context, ticket IntentTicket, outcome tic
 	out.Receipt = receipt
 	if out.CompletedAt.IsZero() {
 		out.CompletedAt = time.Now()
+	}
+	// The announcement happens after the commit, and it announces the record as the
+	// store holds it rather than the one this function built. The two differ: the
+	// store seals the record it writes, and a subscriber told about the unsealed one
+	// would be quoting bytes the chain does not cover. Reading it back costs one
+	// indexed read and makes the announcement the store's own statement. Its error is
+	// reported alongside the tick's own, never in place of it: the record exists
+	// either way.
+	if s.announce != nil {
+		committed, readErr := s.store.RecordAt(ctx, s.key, receipt.Sequence)
+		if readErr != nil {
+			out.AnnounceErr = readErr
+		} else {
+			out.AnnounceErr = s.announce(ctx, receipt, committed)
+		}
 	}
 	return out
 }

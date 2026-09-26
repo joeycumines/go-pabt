@@ -268,6 +268,19 @@ type EventPage struct {
 	HasMore   bool
 }
 
+// RecordPage is a bounded run of whole records.
+//
+// It is the whole record rather than the metadata Events carries, because the reader
+// that needs it is a client resuming a stream, and a client cannot apply a delta it
+// has not been given the record for. The bounds are the store's own.
+type RecordPage struct {
+	RunKey    RunKey
+	Records   []StoredRecord
+	OldestSeq uint64
+	Through   uint64
+	HasMore   bool
+}
+
 // SQLiteStore is the durable history.
 //
 // One write connection and a small read pool, with the connection policy in the

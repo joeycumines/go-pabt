@@ -293,6 +293,73 @@ func (s *SQLiteStore) RunState(ctx context.Context, key RunKey) (string, error) 
 	return state, nil
 }
 
+// RecordsSince returns the committed records after a position, in order, bounded.
+//
+// A reconnecting client reads the gap between where it was and where the run is now
+// from here, rather than from anything the transport kept. The bound is on rows and on
+// bytes, so a caller walking a long gap pages it instead of materialising a run, and
+// HasMore is a fact about the store rather than about the page that was asked for.
+func (s *SQLiteStore) RecordsSince(ctx context.Context, key RunKey, after uint64) (RecordPage, error) {
+	if err := s.checkUsable(false); err != nil {
+		return RecordPage{}, err
+	}
+	rows, err := s.readers.QueryContext(ctx,
+		"SELECT seq, record_json FROM records WHERE session_id = ? AND run_id = ? AND seq > ? "+
+			"ORDER BY seq LIMIT ?",
+		key.SessionID, key.RunID, after, s.limits.MaxPageRows)
+	if err != nil {
+		return RecordPage{}, fmt.Errorf("pabtdebug: read records: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var (
+		out   RecordPage
+		bytes uint64
+	)
+	for rows.Next() {
+		var (
+			sequence uint64
+			raw      []byte
+		)
+		if err := rows.Scan(&sequence, &raw); err != nil {
+			return RecordPage{}, fmt.Errorf("pabtdebug: read a record: %w", err)
+		}
+		size := uint64(len(raw))
+		if len(out.Records) > 0 && bytes+size > s.limits.MaxPageBytes {
+			// The page stops before a record that would exceed the byte bound, and says
+			// so, rather than returning a page that silently ignores the bound.
+			out.HasMore = true
+			break
+		}
+		var record StoredRecord
+		if err := CanonicalDecode(raw, &record); err != nil {
+			return RecordPage{}, fmt.Errorf("%w: record %d: %v", ErrStoreCorrupt, sequence, err)
+		}
+		digest, err := HashRecord(record)
+		if err != nil {
+			return RecordPage{}, err
+		}
+		if digest != record.RecordSHA256 {
+			return RecordPage{}, fmt.Errorf("%w: record %d digest is %q, recomputes to %q",
+				ErrStoreCorrupt, sequence, record.RecordSHA256, digest)
+		}
+		if len(out.Records) == 0 {
+			out.OldestSeq = sequence
+		}
+		out.Records = append(out.Records, record)
+		bytes += size
+		out.Through = sequence
+	}
+	if err := rows.Err(); err != nil {
+		return RecordPage{}, fmt.Errorf("pabtdebug: read records: %w", err)
+	}
+	if uint32(len(out.Records)) == s.limits.MaxPageRows {
+		// The page came back full, so there may be more even though the byte bound was
+		// never reached. Saying so is what lets a caller page without guessing.
+		out.HasMore = true
+	}
+	return out, nil
+}
+
 // VerifyChain walks a run's records and checks every link and digest.
 //
 // It is the store's own integrity check, and it runs on open when the store was
