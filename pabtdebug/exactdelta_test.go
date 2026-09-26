@@ -422,3 +422,109 @@ func TestAKeyframeIsADeltaFromNothing(t *testing.T) {
 		t.Errorf("the keyframe read back as %q, stored as %q", got.Digest, stored.Digest)
 	}
 }
+
+// TestAParentThatLosesItsLastChildRoundTrips covers the case the generator and the
+// applier disagreed about.
+//
+// A parent that keeps no children has no entry in the target's child map, so
+// walking the target alone emitted no child order for it and the delta said only
+// "remove the child". The applier kept the base's list, which still named the
+// removed node, and refused the delta the generator had just produced. In the
+// product that is not a rejected round trip but a failed tick: the store refuses
+// to commit the delta, so a tick that actually ran is recorded as a storage
+// error. The reviewer who found this could not reach it from a live run, which is
+// why it is pinned here rather than left to a plan that happens to produce it.
+func TestAParentThatLosesItsLastChildRoundTrips(t *testing.T) {
+	root, parent, child := "root", "parent", "child-0"
+	base := sealDeltaTree(t, deltaRunKey(), "e", 1, 2,
+		deltaFixtureNode(root, nil, 0, root),
+		deltaFixtureNode(parent, id(root), 0, parent),
+		deltaFixtureNode(child, id(parent), 0, child),
+	)
+	target := sealDeltaTree(t, deltaRunKey(), "e", 2, 2,
+		deltaFixtureNode(root, nil, 0, root),
+		deltaFixtureNode(parent, id(root), 0, parent),
+	)
+	delta, err := ComputeExactDelta(base, target)
+	if err != nil {
+		t.Fatalf("ComputeExactDelta: %v", err)
+	}
+	var removes, reorders int
+	for _, op := range delta.Operations {
+		switch op.Kind {
+		case DeltaRemove:
+			removes++
+		case DeltaReorder:
+			reorders++
+			if len(op.Reorder.ChildOrder) != 0 {
+				t.Errorf("the reorder for the emptied parent lists %v, want none",
+					op.Reorder.ChildOrder)
+			}
+		}
+	}
+	if removes != 1 {
+		t.Errorf("the delta removes %d nodes, want 1", removes)
+	}
+	if reorders == 0 {
+		t.Error("the delta says nothing about the parent that lost its child, so it is not exact")
+	}
+	if err := ValidateExactDelta(base, *delta); err != nil {
+		t.Fatalf("the applier refuses the generator's own delta: %v", err)
+	}
+	applied, err := ApplyExactDelta(base, *delta)
+	if err != nil {
+		t.Fatalf("ApplyExactDelta: %v", err)
+	}
+	if applied.Digest != target.Digest {
+		t.Errorf("the applied tree is %s, the target is %s", applied.Digest, target.Digest)
+	}
+	for _, node := range applied.Nodes {
+		if node.ID == "child-0" {
+			t.Error("the removed node is still in the applied tree")
+		}
+	}
+}
+
+// TestTheRemovalPhaseUnlinksFromTheParent covers the applier half on its own, with
+// a delta that says only "remove". The applier must not depend on the generator
+// having also said what the parent was left holding, because a delta is applied by
+// things other than this package's own generator.
+func TestTheRemovalPhaseUnlinksFromTheParent(t *testing.T) {
+	root, parent, first, second := "root", "parent", "child-1", "child-2"
+	base := sealDeltaTree(t, deltaRunKey(), "e", 1, 2,
+		deltaFixtureNode(root, nil, 0, root),
+		deltaFixtureNode(parent, id(root), 0, parent),
+		deltaFixtureNode(first, id(parent), 0, first),
+		deltaFixtureNode(second, id(parent), 1, second),
+	)
+	target := sealDeltaTree(t, deltaRunKey(), "e", 2, 2,
+		deltaFixtureNode(root, nil, 0, root),
+		deltaFixtureNode(parent, id(root), 0, parent),
+		deltaFixtureNode(first, id(parent), 0, first),
+	)
+	delta, err := ComputeExactDelta(base, target)
+	if err != nil {
+		t.Fatalf("ComputeExactDelta: %v", err)
+	}
+	// Drop the reorder the generator emits, so only the removal is left to apply.
+	var kept []DeltaOp
+	for _, op := range delta.Operations {
+		if op.Kind == DeltaReorder {
+			continue
+		}
+		kept = append(kept, op)
+	}
+	delta.Operations = kept
+	// The delta's own digest covers its operations, so removing one and applying
+	// the result means re-sealing it. That is the point: the applier is being
+	// handed a delta that is internally consistent and simply does not mention the
+	// parent's new child order.
+	digest, err := HashDelta(*delta)
+	if err != nil {
+		t.Fatalf("HashDelta: %v", err)
+	}
+	delta.SHA256 = digest
+	if _, err := ApplyExactDelta(base, *delta); err != nil {
+		t.Fatalf("the applier could not remove a child on a remove alone: %v", err)
+	}
+}
