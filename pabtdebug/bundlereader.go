@@ -300,15 +300,11 @@ func (b *bundleReader) finish() (stagedFacts, error) {
 		return out, fmt.Errorf("%w: the trailer's content digest does not match the frames",
 			ErrBundleInvalid)
 	}
-	// The kinds the header declares are checked against the frames on both sides: a
-	// kind it names and the bundle does not carry, and a kind the bundle carries and
-	// it does not name, are both a header that does not describe this bundle.
-	for _, kind := range b.header.EntryKinds {
-		if b.counts[kind] == 0 {
-			return out, fmt.Errorf("%w: the header declares %s frames and the bundle carries none",
-				ErrBundleInvalid, kind)
-		}
-	}
+	// A frame kind the header does not declare is a header that does not describe this
+	// bundle. A declared kind the frames do not carry is not: EntryKinds is the order
+	// the format writes, not an inventory of one bundle, and a run with no deltas
+	// declares the delta kind and carries none. The trailer's counts are the inventory,
+	// and they are compared above.
 	for kind, count := range b.counts {
 		if !slices.Contains(b.header.EntryKinds, kind) {
 			return out, fmt.Errorf("%w: the bundle carries %d %s frames the header does not declare",

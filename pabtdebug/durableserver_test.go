@@ -1048,23 +1048,127 @@ func TestACustomRouteUnderTheDurableSetIsStillBehindTheCapability(t *testing.T) 
 	// Registering a handler is an in-process mistake waiting to happen: on the outer
 	// mux a named pattern wins over the subtree guard, so the route would answer
 	// without the capability. The registration goes on the guarded set instead.
-	f.server.HandleFunc("/debug/pabt/v2/custom", func(w http.ResponseWriter, r *http.Request) {
+	planted := func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"secret":"planted"}`))
-	})
+	}
+	// Three spellings, because the decision is a string test and each one can go wrong
+	// on its own: inside the subtree, the bare prefix, and a path beside the prefix.
+	// The fourth is host-qualified, where the pattern does not begin with the path at
+	// all, and a caller that registers the durable namespace under another host would
+	// otherwise answer without the check.
+	for _, pattern := range []string{
+		"/debug/pabt/v2/custom",
+		"/debug/pabt/v2",
+		"/debug/pabt/v2beside",
+		f.server.Addr() + "/debug/pabt/v2/hosted",
+	} {
+		f.server.HandleFunc(pattern, planted)
+		path := pattern
+		if slash := strings.IndexByte(path, '/'); slash > 0 {
+			path = path[slash:]
+		}
+		req, err := http.NewRequest(http.MethodGet, "http://"+f.server.Addr()+path, nil)
+		if err != nil {
+			t.Fatalf("request %s: %v", pattern, err)
+		}
+		resp, err := f.client.Do(req)
+		if err != nil {
+			t.Fatalf("do %s: %v", pattern, err)
+		}
+		body, _ := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if resp.StatusCode != http.StatusUnauthorized {
+			t.Errorf("%s answered without the capability: %d %s", pattern, resp.StatusCode, body)
+		}
+	}
+	// And the route still works for a caller that presents the token, or registering it
+	// would have been useless rather than merely unsafe.
 	req, err := http.NewRequest(http.MethodGet,
 		"http://"+f.server.Addr()+"/debug/pabt/v2/custom", nil)
 	if err != nil {
 		t.Fatalf("request: %v", err)
 	}
+	req.Header.Set(capabilityHeader, f.server.Capability())
 	resp, err := f.client.Do(req)
 	if err != nil {
 		t.Fatalf("do: %v", err)
 	}
 	body, _ := io.ReadAll(resp.Body)
 	_ = resp.Body.Close()
-	if resp.StatusCode != http.StatusUnauthorized {
-		t.Errorf("a custom route answered without the capability: %d %s", resp.StatusCode, body)
+	if resp.StatusCode != http.StatusOK || !strings.Contains(string(body), "planted") {
+		t.Errorf("an authenticated custom route = %d %s", resp.StatusCode, body)
+	}
+}
+
+// A representation row for a record that committed no tree is a contradiction the
+// writer cannot produce, so it takes a direct row to find: the record says there is no
+// tree and the representation says there is one.
+func TestARowForARecordThatCommittedNoTreeIsRefused(t *testing.T) {
+	f := newDurableFixture(t, 0)
+	f.waitReady(t)
+	ctx := context.Background()
+	session, err := OpenSession(ctx, f.store, panickingPlan(t), SessionConfig{
+		Identity:    f.identity(),
+		Codecs:      NewCodecRegistry(DefaultValueLimits()),
+		ValueLimits: DefaultValueLimits(),
+	})
+	if err != nil {
+		t.Fatalf("OpenSession: %v", err)
+	}
+	var treeless uint64
+	for range 3 {
+		result := session.Tick(ctx)
+		if result.Err != nil {
+			t.Fatalf("Tick: %v", err)
+		}
+		if result.Kind == RecordPanicked && result.Sequence != 0 {
+			treeless = result.Sequence
+		}
+	}
+	if treeless == 0 {
+		t.Skip("the fixture committed no tree-less record, so this case does not apply")
+	}
+	// The row is moved rather than invented, because a representation's event identity
+	// is a foreign key into a record: a row can only exist for a record that committed.
+	// Moving a real row onto a record that committed none is exactly the contradiction.
+	source, err := f.store.TreeAt(ctx, f.key, 1)
+	if err != nil {
+		t.Fatalf("TreeAt: %v", err)
+	}
+	_, _, delta, err := f.store.Representation(ctx, f.key, 1)
+	if err != nil {
+		t.Fatalf("Representation: %v", err)
+	}
+	event := source
+	_ = delta
+	if err != nil {
+		t.Fatalf("Representation: %v", err)
+	}
+	forged := source
+	forged.Sequence = treeless
+	if _, err := f.store.writer.ExecContext(ctx,
+		"DELETE FROM representations WHERE session_id = ? AND event_uid = ?",
+		f.key.SessionID, event.EventUID); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	encoded, err := CanonicalEncode(forged)
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	if _, err := f.store.writer.ExecContext(ctx,
+		"INSERT INTO representations (session_id, event_uid, plan_id, run_id, seq, "+
+			"target_plan_revision, tree_json, tree_sha256) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+		f.key.SessionID, event.EventUID, f.key.PlanID, f.key.RunID, treeless,
+		forged.PlanRevision, encoded, mustHex(forged.Digest)); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+	if _, _, _, err := f.store.Representation(ctx, f.key, treeless); !errors.Is(err, ErrStoreCorrupt) {
+		t.Errorf("a representation for a record with no tree = %v, want a corruption report", err)
+	}
+	resp, body := f.get(t, fmt.Sprintf("/debug/pabt/v2/representations/%d", treeless))
+	if resp.StatusCode == http.StatusOK {
+		t.Errorf("the route served a representation for a record with no tree: %s", firstLine(body))
 	}
 }
 
@@ -1129,6 +1233,16 @@ func TestARecordWithNoTreeIsAbsentRatherThanCorrupt(t *testing.T) {
 	}
 }
 
+// head2 returns the run's head sequence.
+func head2(f *durableFixture, t *testing.T) uint64 {
+	t.Helper()
+	head, err := f.store.Head(context.Background(), f.key)
+	if err != nil {
+		t.Fatalf("Head: %v", err)
+	}
+	return head.HeadSequence
+}
+
 func TestAnAnnouncementForAnotherRunIsRefused(t *testing.T) {
 	f := newDurableFixture(t, 2)
 	f.waitReady(t)
@@ -1140,10 +1254,14 @@ func TestAnAnnouncementForAnotherRunIsRefused(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RecordAt: %v", err)
 	}
+	_ = record
 	elsewhere := record
 	elsewhere.RunKey = RunKey{SessionID: "another", PlanID: f.key.PlanID, RunID: "another-run"}
+	// The sequence is past the hub's position, so the hub's own monotonic guard cannot
+	// be what refuses this: without the run check the record would be published.
+	past := head2(f, t) + 1
 	err = f.server.Announce(ctx, CommitReceipt{
-		Sequence: record.Sequence, EventUID: record.EventUID, RecordSHA256: record.RecordSHA256,
+		Sequence: past, EventUID: record.EventUID, RecordSHA256: record.RecordSHA256,
 	}, elsewhere)
 	if !errors.Is(err, ErrCursorStale) {
 		t.Errorf("announcing another run's record = %v, want a refusal", err)
@@ -1235,5 +1353,45 @@ func TestADeltaWhoseBaseIsNotWhatItNamesIsRefused(t *testing.T) {
 	}
 	if _, _, _, err := f.store.Representation(ctx, f.key, 3); err == nil {
 		t.Error("a delta naming a base the store does not hold was served")
+	}
+}
+
+func TestARunWithNoDeltasStillExportsAndImports(t *testing.T) {
+	// A run with one record has one tree and no delta, because there is no earlier tree
+	// to be a delta from. Its bundle declares the delta kind, because that is the order
+	// the format writes, and carries none. The importer has to accept that, or a short
+	// run is a history that can never leave the process.
+	f := newDurableFixture(t, 1)
+	f.waitReady(t)
+	resp, bundle := f.get(t, "/debug/pabt/v2/export")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("export = %d: %s", resp.StatusCode, firstLine(bundle))
+	}
+	if resp.Header.Get("X-PABT-Bundle-SHA256") == "" {
+		t.Error("the export reported no bundle digest")
+	}
+	imported := postBundle(t, f, bundle)
+	if imported.Activation.RecordCount != 1 {
+		t.Errorf("the import stored %d records, want 1", imported.Activation.RecordCount)
+	}
+	// And the imported run is whole: one record, one tree, no delta, and a chain that
+	// verifies.
+	key := RunKey{
+		SessionID: imported.Activation.SessionID,
+		PlanID:    imported.Activation.PlanID,
+		RunID:     imported.Activation.RunID,
+	}
+	if verified, err := f.store.VerifyChain(context.Background(), key); err != nil {
+		t.Errorf("the imported chain does not verify: %v", err)
+	} else if verified != 1 {
+		t.Errorf("the imported chain verified %d records, want 1", verified)
+	}
+	if _, err := f.store.TreeAt(context.Background(), key, 1); err != nil {
+		t.Errorf("the imported tree is not readable: %v", err)
+	}
+	if _, _, delta, err := f.store.Representation(context.Background(), key, 1); err != nil {
+		t.Errorf("the imported representation is not readable: %v", err)
+	} else if delta != nil {
+		t.Error("the imported representation carries a delta the bundle did not have")
 	}
 }

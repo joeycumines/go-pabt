@@ -116,15 +116,26 @@ func (s *Server) HandleFunc(pattern string, handler http.HandlerFunc) {
 	if !ok {
 		return
 	}
+	if s.v2 == nil {
+		mux.HandleFunc(pattern, handler)
+		return
+	}
+	// A host pattern is "example.com/path" or "{user}.example.com/path", so the path is
+	// taken from the first slash. Testing the whole string would let a caller register
+	// the durable namespace under another host and answer without the check.
+	path := pattern
+	if slash := strings.IndexByte(path, '/'); slash > 0 {
+		path = path[slash:]
+	}
 	switch {
-	case s.v2 != nil && strings.HasPrefix(pattern, "/debug/pabt/v2/"):
+	case strings.HasPrefix(path, "/debug/pabt/v2/"):
 		// Inside the subtree the guarded mux owns it, so the check cannot be bypassed.
 		s.v2.HandleFunc(pattern, handler)
-	case s.v2 != nil && strings.HasPrefix(pattern, "/debug/pabt/v2"):
+	case strings.HasPrefix(path, "/debug/pabt/v2"):
 		// The bare prefix and anything beside it are exact paths on the outer mux, which
 		// the subtree guard does not cover. They are registered wrapped in the check
-		// rather than left to the reader's judgement about which side of the namespace
-		// a string is on.
+		// rather than left to a caller's judgement about which side of the namespace a
+		// string is on.
 		mux.Handle(pattern, s.requireCapabilityHandler(handler))
 	default:
 		mux.HandleFunc(pattern, handler)

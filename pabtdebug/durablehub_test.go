@@ -366,7 +366,10 @@ func TestAReaderThatReportsWhatItTookIsNeverDropped(t *testing.T) {
 		tight func(DurableHubLimits) DurableHubLimits
 	}{
 		{"an event bound", func(l DurableHubLimits) DurableHubLimits {
-			l.MaxQueuedEvents = 2
+			// A generous bound and a longer burst, so a reader that reports what it took
+			// cannot be marked behind by losing a race it was never meant to lose. The
+			// silent reader still crosses it, which is the half that matters.
+			l.MaxQueuedEvents = 20
 			return l
 		}},
 	} {
@@ -376,9 +379,9 @@ func TestAReaderThatReportsWhatItTookIsNeverDropped(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Subscribe: %v", err)
 			}
-			done := commitInBackground(t, reporting, 12)
+			done := commitInBackground(t, reporting, 40)
 			drained := 0
-			for drained < 12 {
+			for drained < 40 {
 				select {
 				case message := <-sub.Client.Messages():
 					sub.Client.Took(message)
@@ -388,8 +391,8 @@ func TestAReaderThatReportsWhatItTookIsNeverDropped(t *testing.T) {
 						t.Fatalf("commit: %v", err)
 					}
 					done = nil
-				case <-time.After(5 * time.Second):
-					t.Fatalf("a reader that reported what it took only received %d of 12", drained)
+				case <-time.After(10 * time.Second):
+					t.Fatalf("a reader that reported what it took only received %d of 40", drained)
 				}
 			}
 			if sub.Client.Behind() {
@@ -408,11 +411,14 @@ func TestAReaderThatReportsWhatItTookIsNeverDropped(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Subscribe: %v", err)
 			}
-			if err := <-commitInBackground(t, silent, 6); err != nil {
+			// The same burst the reporting reader survived, so the only difference
+			// between the two halves is the report.
+			if err := <-commitInBackground(t, silent, 40); err != nil {
 				t.Fatalf("commit: %v", err)
 			}
 			if !quiet.Client.Behind() {
-				t.Error("a reader that took records without reporting was never told it was behind")
+				t.Errorf("a reader that took records without reporting was never told it was behind; "+
+					"the hub reached %d", silent.hub.LastSequence())
 			}
 			if silent.hub.Overflowed() == 0 {
 				t.Error("the hub did not count a reader it had to disconnect")

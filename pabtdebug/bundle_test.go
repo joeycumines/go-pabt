@@ -629,10 +629,10 @@ func TestABundleThatNamesAnotherFormatIsRefused(t *testing.T) {
 			h.Version = BundleFormatVersion + 1
 			return h
 		}},
-		{"entry kinds it does not carry", func(h BundleHeader) BundleHeader {
-			h.EntryKinds = append(append([]BundleEntryKind(nil), h.EntryKinds...), BundleEntryCodec)
-			return h
-		}},
+		// A kind the frames carry and the header does not declare is a header that
+		// does not describe the bundle. The reverse is not a defect: the declared kinds
+		// are the order the format writes, so a run with no deltas declares the delta
+		// kind and carries none.
 		{"entry kinds missing one it does", func(h BundleHeader) BundleHeader {
 			h.EntryKinds = h.EntryKinds[1:]
 			return h
