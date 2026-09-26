@@ -125,9 +125,11 @@ func TestAnExportCoversEveryRecordAndTree(t *testing.T) {
 			if !bytes.Equal(frame.Payload, originalBytes) {
 				t.Errorf("record %d is not the bytes the store holds", records)
 			}
-			if frame.SHA256 != original.RecordSHA256 {
-				t.Errorf("record %d frame digest %q, the record is %q",
-					records, frame.SHA256, original.RecordSHA256)
+			// The frame's digest is of the bytes it carries, so a reader can check
+			// a frame without knowing what kind of object it holds.
+			if got := HashBundleContent(frame.Payload); got != frame.SHA256 {
+				t.Errorf("record %d frame digest %q, the bytes it carries hash to %q",
+					records, frame.SHA256, got)
 			}
 		case BundleEntryTree:
 			trees++
@@ -307,46 +309,80 @@ func readBundle(t *testing.T, data []byte) ([]bundleFrame, BundleTrailer, error)
 	return frames, trailer, nil
 }
 
-func TestAnAlteredBundleIsDetected(t *testing.T) {
-	store, key := bundleFixture(t, 4)
-	artifact, err := store.Export(context.Background(), ExportRequest{Key: key})
+func TestAnAlteredFrameIsRefusedByStaging(t *testing.T) {
+	// The earlier version of this test re-derived SHA-256 in its own body and
+	// returned silently on any failure, so it passed with every verification
+	// removed from the reader. This one goes through staging, which is the
+	// production check, and fails when the check does not fire.
+	source, key := bundleFixture(t, 4)
+	ctx := context.Background()
+	artifact, err := source.Export(ctx, ExportRequest{Key: key})
 	if err != nil {
 		t.Fatalf("Export: %v", err)
 	}
-	defer func() { _ = artifact.Release() }()
-	data := bundleBytes(t, artifact)
-
-	// Flipping one byte inside a record payload must be visible: the frame carries
-	// the record's own digest, and the trailer counts what it carried.
-	altered := append([]byte(nil), data...)
-	at := bytes.Index(altered, []byte("\"name\":\"a\""))
-	if at < 0 {
-		t.Skip("the fixture's record shape changed, so this case does not apply")
-	}
-	altered[at+9] = 'b'
-	frames, trailer, err := readBundle(t, altered)
+	payload, err := io.ReadAll(mustOpen(t, artifact))
 	if err != nil {
-		return // an alteration that breaks the framing is also detected
+		t.Fatalf("read: %v", err)
 	}
-	_ = trailer
-	for _, frame := range frames {
+	if err := artifact.Release(); err != nil {
+		t.Fatalf("Release: %v", err)
+	}
+
+	// Exchanging two record payloads leaves each frame carrying a record whose own
+	// digest does not describe it, which is what an alteration in transit and a
+	// buggy rewriter both look like.
+	sections, err := splitStagedBundle(payload)
+	if err != nil {
+		t.Fatalf("split: %v", err)
+	}
+	frames, err := parseStagedFrames(sections)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	var first, second = -1, -1
+	for i, frame := range frames {
 		if frame.Kind != BundleEntryRecord {
 			continue
 		}
-		var record StoredRecord
-		if err := CanonicalDecode(frame.Payload, &record); err != nil {
-			return
+		switch {
+		case first < 0:
+			first = i
+		case second < 0:
+			second = i
 		}
-		digest, err := HashRecord(record)
-		if err != nil {
-			return
-		}
-		if digest == record.RecordSHA256 && frame.SHA256 == record.RecordSHA256 {
-			t.Error("an altered record payload still verifies against its own digest")
-		}
-		return
 	}
-	t.Error("the altered bundle has no record frame to check")
+	if first < 0 || second < 0 {
+		t.Fatal("the bundle does not hold two record frames to exchange")
+	}
+	frames[first].Payload, frames[second].Payload = frames[second].Payload, frames[first].Payload
+
+	// The bundle is rebuilt with the same writer, so its trailer is internally
+	// consistent and only the per-frame check can catch this.
+	var rebuilt bytes.Buffer
+	header := BundleHeader{
+		Format: BundleFormatName, Version: BundleFormatVersion,
+		EntryKinds: BundleEntryOrder,
+	}
+	writer, err := newBundleWriter(&rebuilt, header)
+	if err != nil {
+		t.Fatalf("newBundleWriter: %v", err)
+	}
+	for _, frame := range frames {
+		if err := writer.add(frame.Kind, frame.Run, frame.Payload); err != nil {
+			t.Fatalf("add: %v", err)
+		}
+	}
+	if _, err := writer.close(header); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+
+	target := openTestStore(t, testStorePath(t))
+	bootstrapTestStore(t, target)
+	if _, err := target.StageImport(ctx, bytes.NewReader(rebuilt.Bytes()), DefaultImportLimits()); err == nil {
+		t.Error("a bundle whose record payloads were swapped was staged")
+	} else if !errors.Is(err, ErrBundleInvalid) {
+		t.Errorf("a swapped bundle = %v, want an invalid bundle", err)
+	}
 }
 
 func TestAnImportReproducesEveryRecordUnderNewIdentities(t *testing.T) {
@@ -370,6 +406,12 @@ func TestAnImportReproducesEveryRecordUnderNewIdentities(t *testing.T) {
 	ticket, err := target.StageImport(ctx, bytes.NewReader(payload), DefaultImportLimits())
 	if err != nil {
 		t.Fatalf("StageImport: %v", err)
+	}
+	// The staged file carries the digest the export reported, because both are
+	// taken over the same three sections.
+	if ticket.BundleSHA256 != artifact.Receipt().BundlesSHA256 {
+		t.Errorf("the staged bundle is %q, the export reported %q",
+			ticket.BundleSHA256, artifact.Receipt().BundlesSHA256)
 	}
 	if ticket.LocalSessionID == key.SessionID {
 		t.Error("the import reused the source session identity")
@@ -440,6 +482,36 @@ func TestAnImportReproducesEveryRecordUnderNewIdentities(t *testing.T) {
 	// A tree the run committed is still readable after the import.
 	if _, err := target.TreeAt(ctx, imported, 1); err != nil {
 		t.Errorf("an imported tree is not readable: %v", err)
+	}
+	// Every representation survives the rewrite, and every imported delta still
+	// reconstructs the tree it is stored beside, under the identities this import
+	// minted rather than the ones the source used.
+	importedDeltas := 0
+	for sequence := uint64(1); sequence <= 6; sequence++ {
+		tree, _, delta, err := target.Representation(ctx, imported, sequence)
+		if err != nil {
+			t.Fatalf("Representation %d: %v", sequence, err)
+		}
+		if delta == nil {
+			continue
+		}
+		importedDeltas++
+		base, err := target.TreeAt(ctx, imported, delta.BaseSequence)
+		if err != nil {
+			t.Fatalf("the delta base at %d is not readable: %v", delta.BaseSequence, err)
+		}
+		rebuilt, err := ApplyExactDelta(base, *delta)
+		if err != nil {
+			t.Errorf("an imported delta at %d does not apply: %v", sequence, err)
+			continue
+		}
+		if rebuilt.Digest != tree.Digest {
+			t.Errorf("an imported delta at %d reconstructs to %q, the stored tree is %q",
+				sequence, rebuilt.Digest, tree.Digest)
+		}
+	}
+	if importedDeltas == 0 {
+		t.Error("no imported delta was stored, so the rewritten delta path is not exercised")
 	}
 }
 
@@ -534,14 +606,19 @@ func TestAStaleImportTicketIsRefused(t *testing.T) {
 	if err != nil {
 		t.Fatalf("StageImport: %v", err)
 	}
-	// Activating advances the generation, so the other ticket was staged against a
-	// generation that is no longer current.
+	// Staged against the same generation, before anything moved.
+	second, err := target.StageImport(ctx, bytes.NewReader(payload), DefaultImportLimits())
+	if err != nil {
+		t.Fatalf("StageImport: %v", err)
+	}
+	// Activating advances the generation, so the second ticket was staged against a
+	// generation that is no longer current, and publishing it would move the store
+	// backwards.
 	if _, err := target.ActivateImport(ctx, first); err != nil {
 		t.Fatalf("ActivateImport: %v", err)
 	}
-	second, err := target.StageImport(ctx, bytes.NewReader(payload), DefaultImportLimits())
-	if err != nil {
-		t.Fatalf("StageImport after an activation: %v", err)
+	if _, err := target.ActivateImport(ctx, second); !errors.Is(err, ErrImportStale) {
+		t.Errorf("a ticket from a superseded generation = %v, want a stale refusal", err)
 	}
 	forged := second
 	forged.proof[0] ^= 0xff

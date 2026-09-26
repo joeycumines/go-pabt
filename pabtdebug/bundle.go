@@ -18,7 +18,6 @@ package pabtdebug
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"database/sql"
 	"encoding/binary"
@@ -118,10 +117,31 @@ func HashBundleHeader(h BundleHeader) (string, error) {
 	return HashCanonical(DomainBundle+"/header", h)
 }
 
-// HashBundleContent digests the exact frame bytes, excluding the magic, the header
-// length, and the trailer, so a trailer's own digest cannot be part of its input.
+// HashBundleContent digests a byte range inside a bundle under the content
+// domain, excluding the magic, the header length, and the trailer, so a trailer's
+// own digest cannot be part of its input.
 func HashBundleContent(frames []byte) string {
 	return hashBytes(DomainBundle+"/content", frames)
+}
+
+// bundleDigest digests a whole bundle as the digests of its three sections.
+//
+// The sections are digested rather than carried, because the writer cannot hold a
+// run's frames and a reader can recompute the same three digests from the file. One
+// projection for both is what makes an exported bundle and a staged copy of it
+// agree without either side keeping the other's bytes.
+func bundleDigest(header, frames, trailer []byte) (string, error) {
+	return bundleDigestOf(HashBundleContent(header), HashBundleContent(frames), HashBundleContent(trailer))
+}
+
+// bundleDigestOf is that projection over section digests already in hand, which is
+// how the writer computes it while the frames are still streaming.
+func bundleDigestOf(header, frames, trailer string) (string, error) {
+	return HashCanonical(DomainBundle, struct {
+		Header  string `json:"header"`
+		Frames  string `json:"frames"`
+		Trailer string `json:"trailer"`
+	}{header, frames, trailer})
 }
 
 // bundleWriter writes a bundle incrementally, so exporting a long history never
@@ -129,11 +149,15 @@ func HashBundleContent(frames []byte) string {
 type bundleWriter struct {
 	w        io.Writer
 	header   []byte
-	framed   *bytes.Buffer
 	counts   map[BundleEntryKind]uint64
 	firstRun map[string]uint64
 	lastRun  map[string]uint64
 	frames   uint64
+	// framed is digested as the frames go out, so the trailer's content digest can
+	// be computed without holding the run. The bytes themselves are not buffered:
+	// a run of any length has to stream, and at the default record and tree limits
+	// buffering one would cost gigabytes for a short run.
+	framed *streamDigest
 }
 
 // newBundleWriter writes the magic and the header, and leaves room for the
@@ -160,17 +184,21 @@ func newBundleWriter(w io.Writer, header BundleHeader) (*bundleWriter, error) {
 	return &bundleWriter{
 		w:        w,
 		header:   encoded,
-		framed:   &bytes.Buffer{},
+		framed:   newStreamDigest(DomainBundle + "/content"),
 		counts:   map[BundleEntryKind]uint64{},
 		firstRun: map[string]uint64{},
 		lastRun:  map[string]uint64{},
 	}, nil
 }
 
-// add writes one frame. The payload's digest is inside the frame, so a frame that
-// was altered in transit fails its own check before a reader has to compare it
-// with anything.
-func (b *bundleWriter) add(kind BundleEntryKind, run string, payload []byte, digest string) error {
+// add writes one frame.
+//
+// The frame's digest is of the bytes it carries, so a frame altered in transit
+// fails its own check before a reader has to compare it with anything else. The
+// trailer's content digest is unkeyed and a rewriter recomputes it for free, so
+// it cannot be the thing that makes a frame self-checking.
+func (b *bundleWriter) add(kind BundleEntryKind, run string, payload []byte) error {
+	digest := HashBundleContent(payload)
 	header, err := CanonicalEncode(struct {
 		Kind   BundleEntryKind `json:"kind"`
 		Run    string          `json:"run"`
@@ -182,14 +210,11 @@ func (b *bundleWriter) add(kind BundleEntryKind, run string, payload []byte, dig
 	}
 	var length [4]byte
 	binary.BigEndian.PutUint32(length[:], uint32(len(header)))
-	if _, err := b.framed.Write(length[:]); err != nil {
-		return err
-	}
-	if _, err := b.framed.Write(header); err != nil {
-		return err
-	}
-	if _, err := b.framed.Write(payload); err != nil {
-		return err
+	for _, section := range [][]byte{length[:], header, payload} {
+		b.framed.add(section)
+		if _, err := b.w.Write(section); err != nil {
+			return err
+		}
 	}
 	b.counts[kind]++
 	b.frames++
@@ -202,16 +227,14 @@ func (b *bundleWriter) add(kind BundleEntryKind, run string, payload []byte, dig
 	return nil
 }
 
-// close writes the framed bytes and the trailer, and returns the bundle's digest.
+// close writes the trailer, which ends the frames the writer has already written,
+// and returns the bundle's digest.
 func (b *bundleWriter) close(header BundleHeader) (string, error) {
-	if _, err := b.w.Write(b.framed.Bytes()); err != nil {
-		return "", fmt.Errorf("pabtdebug: write a bundle: %w", err)
-	}
 	headerDigest, err := HashBundleHeader(header)
 	if err != nil {
 		return "", err
 	}
-	contentDigest := HashBundleContent(b.framed.Bytes())
+	contentDigest := b.framed.sum()
 	trailer := BundleTrailer{
 		HeaderSHA256:  headerDigest,
 		FrameCount:    b.frames,
@@ -239,12 +262,9 @@ func (b *bundleWriter) close(header BundleHeader) (string, error) {
 		return "", fmt.Errorf("pabtdebug: write a bundle: %w", err)
 	}
 	// The bundle's own digest covers the header, the frames, and the trailer, so any
-	// change to any of them changes it.
-	return HashCanonical(DomainBundle, struct {
-		Header  []byte `json:"header"`
-		Frames  []byte `json:"frames"`
-		Trailer []byte `json:"trailer"`
-	}{b.header, b.framed.Bytes(), encoded})
+	// change to any of them changes it. The framed bytes are digested as they are
+	// written, so this is a digest of what went out rather than a second copy of it.
+	return bundleDigestOf(HashBundleContent(b.header), b.framed.sum(), HashBundleContent(encoded))
 }
 
 // ExportRequest selects what an export covers.
@@ -414,7 +434,7 @@ func (s *SQLiteStore) Export(ctx context.Context, req ExportRequest) (*ExportArt
 	if err != nil {
 		return fail(err)
 	}
-	if err := writer.add(BundleEntryPlan, runLabel, planJSON, planDigest); err != nil {
+	if err := writer.add(BundleEntryPlan, runLabel, planJSON); err != nil {
 		return fail(err)
 	}
 
@@ -439,7 +459,7 @@ func (s *SQLiteStore) Export(ctx context.Context, req ExportRequest) (*ExportArt
 	if err != nil {
 		return fail(err)
 	}
-	if err := writer.add(BundleEntryRun, runLabel, runJSON, runDigest); err != nil {
+	if err := writer.add(BundleEntryRun, runLabel, runJSON); err != nil {
 		return fail(err)
 	}
 
@@ -460,7 +480,7 @@ func (s *SQLiteStore) Export(ctx context.Context, req ExportRequest) (*ExportArt
 		if err != nil {
 			return fail(err)
 		}
-		if err := writer.add(BundleEntryRecord, runLabel, encoded, record.RecordSHA256); err != nil {
+		if err := writer.add(BundleEntryRecord, runLabel, encoded); err != nil {
 			return fail(err)
 		}
 		receipt.RecordCount++
@@ -474,7 +494,7 @@ func (s *SQLiteStore) Export(ctx context.Context, req ExportRequest) (*ExportArt
 		if err != nil {
 			return fail(err)
 		}
-		if err := writer.add(BundleEntryTree, runLabel, treeJSON, tree.Digest); err != nil {
+		if err := writer.add(BundleEntryTree, runLabel, treeJSON); err != nil {
 			return fail(err)
 		}
 		receipt.TreeCount++
@@ -483,11 +503,7 @@ func (s *SQLiteStore) Export(ctx context.Context, req ExportRequest) (*ExportArt
 			if err != nil {
 				return fail(err)
 			}
-			deltaDigest, err := HashDelta(*delta)
-			if err != nil {
-				return fail(err)
-			}
-			if err := writer.add(BundleEntryDelta, runLabel, deltaJSON, deltaDigest); err != nil {
+			if err := writer.add(BundleEntryDelta, runLabel, deltaJSON); err != nil {
 				return fail(err)
 			}
 			receipt.DeltaCount++

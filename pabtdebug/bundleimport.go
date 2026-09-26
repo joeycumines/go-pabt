@@ -149,6 +149,16 @@ func (s *SQLiteStore) StageImport(
 	if err := file.Sync(); err != nil {
 		return fail(fmt.Errorf("pabtdebug: sync a staged import: %w", err))
 	}
+	if err := file.Close(); err != nil {
+		return fail(fmt.Errorf("pabtdebug: close a staged import: %w", err))
+	}
+	// The ticket is bound to the digest of the bytes that were actually staged.
+	// Without this it would name nothing, and activation would have no way to tell
+	// whether the file it reads is the file that was verified.
+	digest, err := digestStagedBundle(path)
+	if err != nil {
+		return fail(err)
+	}
 	installation, err := s.Installation(ctx)
 	if err != nil {
 		return fail(err)
@@ -170,7 +180,7 @@ func (s *SQLiteStore) StageImport(
 			PlanID:    written.header.SourcePlanID,
 			RunID:     written.header.SourceRunID,
 		},
-		BundleSHA256: written.bundleDigest,
+		BundleSHA256: digest,
 		Generation:   installation.Generation,
 		StagedPath:   path,
 		RecordCount:  written.records,
@@ -208,12 +218,11 @@ func (s *SQLiteStore) DiscardImport(ticket ImportTicket) error {
 
 // stagedFacts is what verifying a bundle established.
 type stagedFacts struct {
-	header       BundleHeader
-	trailer      BundleTrailer
-	bundleDigest string
-	records      uint64
-	trees        uint64
-	deltas       uint64
+	header  BundleHeader
+	trailer BundleTrailer
+	records uint64
+	trees   uint64
+	deltas  uint64
 }
 
 // verifyAndStageBundle reads a bundle once, checking it as it goes, and writes
@@ -240,8 +249,22 @@ func (s *SQLiteStore) verifyAndStageBundle(
 	if headerLen == 0 || headerLen > maxBundleHeaderBytes {
 		return out, fmt.Errorf("%w: the bundle header length is %d", ErrBundleInvalid, headerLen)
 	}
-	if _, err := dst.Write(kept.Bytes()); err != nil {
-		return out, fmt.Errorf("pabtdebug: stage an import: %w", err)
+	// The bound is enforced on the bytes as they arrive, against everything staged
+	// so far, so what lands on disk is what the caller was allowed to send.
+	var staged int64
+	stage := func(section []byte) error {
+		staged += int64(len(section))
+		if uint64(staged) > limits.MaxBytes {
+			return fmt.Errorf("%w: the staged bundle exceeds %d bytes",
+				ErrImportTooLarge, limits.MaxBytes)
+		}
+		if _, err := dst.Write(section); err != nil {
+			return fmt.Errorf("pabtdebug: stage an import: %w", err)
+		}
+		return nil
+	}
+	if err := stage(kept.Bytes()); err != nil {
+		return out, err
 	}
 	if err := ctx.Err(); err != nil {
 		return out, err
@@ -250,8 +273,8 @@ func (s *SQLiteStore) verifyAndStageBundle(
 	if err != nil {
 		return out, err
 	}
-	if _, err := dst.Write(headerBytes); err != nil {
-		return out, fmt.Errorf("pabtdebug: stage an import: %w", err)
+	if err := stage(headerBytes); err != nil {
+		return out, err
 	}
 	if err := CanonicalDecode(headerBytes, &out.header); err != nil {
 		return out, fmt.Errorf("%w: the bundle header: %v", ErrBundleInvalid, err)
@@ -268,10 +291,10 @@ func (s *SQLiteStore) verifyAndStageBundle(
 	// rather than commit to a length. A buffered peek is what makes that possible
 	// without reading a section twice or guessing.
 	reader := bufio.NewReader(io.LimitReader(source, int64(limits.MaxBytes)))
-	var (
-		frames     uint64
-		frameBytes int64
-	)
+	// The chain link the next record has to name, which is also the proof that the
+	// records arrived in the order they were committed in.
+	previousRecord := zeroDigest
+	var frames uint64
 	for {
 		marker, err := reader.Peek(len(bundleTrailerMagic))
 		if err != nil {
@@ -289,8 +312,8 @@ func (s *SQLiteStore) verifyAndStageBundle(
 			if _, err := reader.Discard(len(bundleTrailerMagic)); err != nil {
 				return out, fmt.Errorf("pabtdebug: read a bundle: %w", err)
 			}
-			if _, err := dst.Write(marker); err != nil {
-				return out, fmt.Errorf("pabtdebug: stage an import: %w", err)
+			if err := stage(marker); err != nil {
+				return out, err
 			}
 			break
 		}
@@ -327,24 +350,31 @@ func (s *SQLiteStore) verifyAndStageBundle(
 		}
 		// The content digest covers each frame's length prefix as well as its
 		// header and payload, because that is the byte range the exporter digested.
+		if err := verifyFrame(frame.Kind, frame.SHA256, payload); err != nil {
+			return out, err
+		}
 		for _, section := range [][]byte{lengthBytes, frameHeader, payload} {
-			if _, err := dst.Write(section); err != nil {
-				return out, fmt.Errorf("pabtdebug: stage an import: %w", err)
+			if err := stage(section); err != nil {
+				return out, err
 			}
 			frameDigest.add(section)
 		}
-		frameBytes += int64(len(frameHeader)) + int64(len(payload))
 		frames++
 		switch frame.Kind {
 		case BundleEntryRecord:
+			var record StoredRecord
+			if err := CanonicalDecode(payload, &record); err != nil {
+				return out, fmt.Errorf("%w: a record frame: %v", ErrBundleInvalid, err)
+			}
+			if err := verifyRecord(record, out.records+1, previousRecord); err != nil {
+				return out, err
+			}
+			previousRecord = record.RecordSHA256
 			out.records++
 		case BundleEntryTree:
 			out.trees++
 		case BundleEntryDelta:
 			out.deltas++
-		}
-		if uint64(frameBytes) > limits.MaxBytes {
-			return out, fmt.Errorf("%w: the bundle's frames exceed %d bytes", ErrImportTooLarge, limits.MaxBytes)
 		}
 		if err := ctx.Err(); err != nil {
 			return out, err
@@ -356,8 +386,8 @@ func (s *SQLiteStore) verifyAndStageBundle(
 	if err != nil {
 		return out, err
 	}
-	if _, err := dst.Write(trailerLenBytes); err != nil {
-		return out, fmt.Errorf("pabtdebug: stage an import: %w", err)
+	if err := stage(trailerLenBytes); err != nil {
+		return out, err
 	}
 	trailerLen := binary.BigEndian.Uint32(trailerLenBytes)
 	if trailerLen == 0 || trailerLen > maxBundleTrailerBytes {
@@ -367,8 +397,8 @@ func (s *SQLiteStore) verifyAndStageBundle(
 	if err != nil {
 		return out, err
 	}
-	if _, err := dst.Write(trailerBytes); err != nil {
-		return out, fmt.Errorf("pabtdebug: stage an import: %w", err)
+	if err := stage(trailerBytes); err != nil {
+		return out, err
 	}
 	if err := CanonicalDecode(trailerBytes, &out.trailer); err != nil {
 		return out, fmt.Errorf("%w: the trailer: %v", ErrBundleInvalid, err)
@@ -417,6 +447,101 @@ func readExactly(r io.Reader, n int64, bound uint64) ([]byte, error) {
 		return nil, fmt.Errorf("pabtdebug: read a bundle: %w", err)
 	}
 	return out, nil
+}
+
+// verifyFrame checks a frame against the digest its header names, and the objects
+// it carries against the digest inside them.
+//
+// Two digests make two claims. The frame digest says these bytes arrived intact,
+// and it covers every kind. A tree's and a delta's own digest says the bytes are
+// the object they claim to be, which is the claim that survives a rewriter: the
+// trailer's content digest is unkeyed, so recomputing it costs nothing, and only
+// the digest the object carries travels with the object.
+//
+// A record is checked by the caller instead, because the loop already has to read
+// it to see where it belongs in the chain.
+func verifyFrame(kind BundleEntryKind, digest string, payload []byte) error {
+	if digest == "" {
+		return fmt.Errorf("%w: a frame names no digest", ErrBundleInvalid)
+	}
+	if got := HashBundleContent(payload); got != digest {
+		return fmt.Errorf("%w: a frame names digest %q and holds bytes that hash to %q",
+			ErrBundleInvalid, digest, got)
+	}
+	switch kind {
+	case BundleEntryRecord:
+	case BundleEntryTree:
+		var tree StoredTree
+		if err := CanonicalDecode(payload, &tree); err != nil {
+			return fmt.Errorf("%w: a tree frame: %v", ErrBundleInvalid, err)
+		}
+		treeDigest, err := HashTree(tree)
+		if err != nil {
+			return err
+		}
+		if treeDigest != tree.Digest {
+			return fmt.Errorf("%w: a tree names digest %q and hashes to %q",
+				ErrBundleInvalid, tree.Digest, treeDigest)
+		}
+	case BundleEntryDelta:
+		var delta ExactTreeDelta
+		if err := CanonicalDecode(payload, &delta); err != nil {
+			return fmt.Errorf("%w: a delta frame: %v", ErrBundleInvalid, err)
+		}
+		deltaDigest, err := HashDelta(delta)
+		if err != nil {
+			return err
+		}
+		if deltaDigest != delta.SHA256 {
+			return fmt.Errorf("%w: a delta names digest %q and hashes to %q",
+				ErrBundleInvalid, delta.SHA256, deltaDigest)
+		}
+	case BundleEntryPlan, BundleEntryRun, BundleEntryCodec:
+		// An import mints its own plan and run identities and installs no codec, so
+		// these frames are provenance rather than content. The frame digest is the
+		// check that applies to them.
+	default:
+		return fmt.Errorf("%w: a frame claims to be a %s, which this format does not carry",
+			ErrBundleInvalid, kind)
+	}
+	return nil
+}
+
+// verifyRecord checks one record of a staged bundle against the place it holds and
+// the record before it.
+//
+// A record names its own sequence and links to its predecessor, so this is what
+// refuses a bundle whose records were reordered, exchanged, or pulled from another
+// history. Each payload's own digest survives such a bundle, because a record
+// travels with the digest that describes it, and the trailer's content digest is
+// unkeyed and recomputed for free. The chain is the claim no rewriter can restate
+// without also recomputing every record after it.
+func verifyRecord(record StoredRecord, sequence uint64, previousRecord string) error {
+	recordDigest, err := HashRecord(record)
+	if err != nil {
+		return err
+	}
+	if recordDigest != record.RecordSHA256 {
+		return fmt.Errorf("%w: a record names digest %q and hashes to %q",
+			ErrBundleInvalid, record.RecordSHA256, recordDigest)
+	}
+	payloadDigest, err := HashPayload(record)
+	if err != nil {
+		return err
+	}
+	if payloadDigest != record.PayloadSHA256 {
+		return fmt.Errorf("%w: a record names payload digest %q and hashes to %q",
+			ErrBundleInvalid, record.PayloadSHA256, payloadDigest)
+	}
+	if record.Sequence != sequence {
+		return fmt.Errorf("%w: a record claims sequence %d and arrived %dth",
+			ErrBundleInvalid, record.Sequence, sequence)
+	}
+	if record.PreviousRecordSHA256 != previousRecord {
+		return fmt.Errorf("%w: a record links to %q, the record before it is %q",
+			ErrBundleInvalid, record.PreviousRecordSHA256, previousRecord)
+	}
+	return nil
 }
 
 // streamDigest accumulates a digest over bytes that stream past, so a bundle is
@@ -471,12 +596,38 @@ func splitStagedBundle(data []byte) (stagedSections, error) {
 	out.header = rest[4 : 4+headerLen]
 	rest = rest[4+headerLen:]
 
-	terminator := bytes.Index(rest, []byte(bundleTrailerMagic))
-	if terminator < 0 {
-		return out, fmt.Errorf("%w: the staged file has no trailer terminator", ErrBundleInvalid)
+	// The frames are walked, not searched for. A node name or a captured value can
+	// contain the terminator's bytes, so an index over the payload would end the
+	// frames early and refuse a bundle that was legitimately exported.
+	frameStart := 0
+	for {
+		if bytes.HasPrefix(rest[frameStart:], []byte(bundleTrailerMagic)) {
+			break
+		}
+		if frameStart+4 > len(rest) {
+			return out, fmt.Errorf("%w: the staged file has no trailer terminator", ErrBundleInvalid)
+		}
+		headerLen := binary.BigEndian.Uint32(rest[frameStart : frameStart+4])
+		if headerLen == 0 || int(headerLen) > len(rest)-frameStart-4 {
+			return out, fmt.Errorf("%w: a frame header runs past the file", ErrBundleInvalid)
+		}
+		headerStart := frameStart + 4
+		var header struct {
+			Kind   BundleEntryKind `json:"kind"`
+			Run    string          `json:"run"`
+			Length uint64          `json:"length"`
+			SHA256 string          `json:"sha256"`
+		}
+		if err := CanonicalDecode(rest[headerStart:headerStart+int(headerLen)], &header); err != nil {
+			return out, fmt.Errorf("%w: a frame header: %v", ErrBundleInvalid, err)
+		}
+		if header.Length == 0 || int(header.Length) > len(rest)-headerStart-int(headerLen) {
+			return out, fmt.Errorf("%w: a frame payload runs past the file", ErrBundleInvalid)
+		}
+		frameStart = headerStart + int(headerLen) + int(header.Length)
 	}
-	out.frames = rest[:terminator]
-	rest = rest[terminator+len(bundleTrailerMagic):]
+	out.frames = rest[:frameStart]
+	rest = rest[frameStart+len(bundleTrailerMagic):]
 	if len(rest) < 4 {
 		return out, fmt.Errorf("%w: the staged file has no trailer length", ErrBundleInvalid)
 	}
@@ -490,9 +641,9 @@ func splitStagedBundle(data []byte) (stagedSections, error) {
 
 // digestStagedBundle returns the staged file's own digest.
 //
-// The digest is taken over the three sections as a canonical projection, which is
-// the same projection the exporter used, so an exported bundle and a staged copy
-// of it agree.
+// It is the digest the exporter computes over the same three sections, so an
+// exported bundle and a staged copy of it carry the same value, and a file
+// replaced between staging and activation is a different value.
 func digestStagedBundle(path string) (string, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -502,11 +653,7 @@ func digestStagedBundle(path string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return HashCanonical(DomainBundle, struct {
-		Header  []byte `json:"header"`
-		Frames  []byte `json:"frames"`
-		Trailer []byte `json:"trailer"`
-	}{sections.header, sections.frames, sections.trailer})
+	return bundleDigest(sections.header, sections.frames, sections.trailer)
 }
 
 // ActivateImport publishes a staged bundle as this store's active session.
@@ -529,7 +676,8 @@ func (s *SQLiteStore) ActivateImport(ctx context.Context, ticket ImportTicket) (
 	}
 	if installation.Generation != ticket.Generation {
 		// The store moved on since the bundle was staged, so the staged bytes were
-		// chosen against a generation that is no longer current.
+		// chosen against a generation that is no longer current. Staging again is
+		// cheap, and publishing an older generation would move the store backwards.
 		return ActivationResponse{}, fmt.Errorf("%w: the store is at generation %d, the bundle was staged at %d",
 			ErrImportStale, installation.Generation, ticket.Generation)
 	}
@@ -581,6 +729,17 @@ func (s *SQLiteStore) insertImportedHistory(
 	local RunKey,
 	now time.Time,
 ) (uint64, error) {
+	// The staged file is re-digested here rather than trusted. A file replaced
+	// between staging and activation would otherwise be published as though it were
+	// the one that was verified.
+	digest, err := digestStagedBundle(ticket.StagedPath)
+	if err != nil {
+		return 0, err
+	}
+	if digest != ticket.BundleSHA256 {
+		return 0, fmt.Errorf("%w: the staged bundle is no longer the one that was verified",
+			ErrImportStale)
+	}
 	data, err := os.ReadFile(ticket.StagedPath)
 	if err != nil {
 		return 0, fmt.Errorf("%w: the staged bundle is gone", ErrImportStale)
@@ -590,12 +749,13 @@ func (s *SQLiteStore) insertImportedHistory(
 		return 0, err
 	}
 	// The staged bytes are re-parsed here rather than remembered, so activation
-	// works from the file that was verified and nothing else.
-	frames, trailer, err := parseStagedFrames(sections)
+	// works from the file that was verified and nothing else. The frames are not
+	// re-verified: the file's digest is the one staging proved, so its bytes cannot
+	// have changed without this comparison having failed.
+	frames, err := parseStagedFrames(sections)
 	if err != nil {
 		return 0, err
 	}
-	_ = trailer
 
 	tx, err := s.writer.BeginTx(ctx, nil)
 	if err != nil {
@@ -611,15 +771,15 @@ func (s *SQLiteStore) insertImportedHistory(
 	}
 	plan := StoredPlan{PlanID: local.PlanID, Title: "imported " + ticket.SourceRunKey.RunID, CreatedAt: Timestamp(now)}
 	plan.RecordSHA256 = ""
-	digest, err := HashCanonical(DomainPlan, plan)
+	planDigest, err := HashCanonical(DomainPlan, plan)
 	if err != nil {
 		return 0, err
 	}
-	plan.RecordSHA256 = digest
+	plan.RecordSHA256 = planDigest
 	if _, err := tx.ExecContext(ctx,
 		"INSERT INTO plans (session_id, plan_id, title, created_at, metadata_json, record_sha256) "+
 			"VALUES (?, ?, ?, ?, NULL, ?)",
-		local.SessionID, local.PlanID, plan.Title, stamp(now), mustHex(digest)); err != nil {
+		local.SessionID, local.PlanID, plan.Title, stamp(now), mustHex(planDigest)); err != nil {
 		return 0, fmt.Errorf("pabtdebug: activate an import: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx,
@@ -635,9 +795,17 @@ func (s *SQLiteStore) insertImportedHistory(
 		previous      = zeroDigest
 		sequence      uint64
 		localBySource = map[string]string{}
-		sourceBySeq   = map[uint64]string{}
-		treeFrames    = map[uint64][]byte{}
-		deltaFrames   = map[uint64][]byte{}
+		localSequence = map[string]uint64{}
+		treeFrames    [][]byte
+		deltaFrames   [][]byte
+		// committedDigests maps a local event identity to the digest of the tree its
+		// own record committed. A tree frame has to name that tree, because the
+		// record is the copy the chain covers and the representation is the copy a
+		// reader is served.
+		committedDigests = map[string]string{}
+		// trees holds each re-sealed tree by local identity, so a delta can be
+		// reconstructed against the base this import actually wrote.
+		trees = map[string]StoredTree{}
 	)
 	for _, frame := range frames {
 		switch frame.Kind {
@@ -673,6 +841,7 @@ func (s *SQLiteStore) insertImportedHistory(
 					return 0, err
 				}
 				record.Tree.Digest = treeDigest
+				committedDigests[uid] = treeDigest
 			}
 			payloadDigest, err := HashPayload(record)
 			if err != nil {
@@ -702,19 +871,19 @@ func (s *SQLiteStore) insertImportedHistory(
 			}
 			previous = recordDigest
 			localBySource[sourceUID] = uid
-			sourceBySeq[sequence] = sourceUID
+			localSequence[uid] = sequence
 		case BundleEntryTree:
 			// The tree belongs to a sequence, which is its own frame order, so it
 			// is held until the record pass has established the local identities.
-			treeFrames[uint64(len(treeFrames))] = frame.Payload
+			treeFrames = append(treeFrames, frame.Payload)
 		case BundleEntryDelta:
-			deltaFrames[uint64(len(deltaFrames))] = frame.Payload
+			deltaFrames = append(deltaFrames, frame.Payload)
 		}
 	}
 
 	// The trees and deltas are written after every record so the local event
 	// identities they refer to already exist inside this transaction.
-	for frameIndex, payload := range treeFrames {
+	for _, payload := range treeFrames {
 		var tree StoredTree
 		if err := CanonicalDecode(payload, &tree); err != nil {
 			return 0, fmt.Errorf("%w: an imported tree: %v", ErrBundleInvalid, err)
@@ -725,6 +894,11 @@ func (s *SQLiteStore) insertImportedHistory(
 			return 0, fmt.Errorf("%w: a tree names event %q, which the bundle does not record",
 				ErrBundleInvalid, tree.EventUID)
 		}
+		committed, ok := committedDigests[uid]
+		if !ok {
+			return 0, fmt.Errorf("%w: a tree is committed for event %q, whose record holds none",
+				ErrBundleInvalid, tree.EventUID)
+		}
 		tree.RunKey = local
 		tree.EventUID = uid
 		tree.Digest = ""
@@ -732,7 +906,15 @@ func (s *SQLiteStore) insertImportedHistory(
 		if err != nil {
 			return 0, err
 		}
+		// The record's own copy of the tree is re-sealed from the same bytes, so the
+		// two digests are taken over equal content. They differ only when the frame
+		// holds a different tree, which is a damaged bundle rather than a history.
+		if digest != committed {
+			return 0, fmt.Errorf("%w: an imported tree re-seals to %q, its record committed %q",
+				ErrBundleInvalid, digest, committed)
+		}
 		tree.Digest = digest
+		trees[uid] = tree
 		treeBytes, err := CanonicalEncode(tree)
 		if err != nil {
 			return 0, err
@@ -744,19 +926,13 @@ func (s *SQLiteStore) insertImportedHistory(
 			mustHex(digest)); err != nil {
 			return 0, fmt.Errorf("pabtdebug: activate an import: %w", err)
 		}
-		if _, err := tx.ExecContext(ctx,
-			"UPDATE representations SET base_event_uid = NULL, base_seq = NULL "+
-				"WHERE session_id = ? AND run_id = ? AND seq = ?",
-			local.SessionID, local.RunID, seq); err != nil {
-			return 0, fmt.Errorf("pabtdebug: activate an import: %w", err)
-		}
-		_ = frameIndex
 	}
 
 	// A delta whose base is a record this bundle also carries is rewritten to the
-	// local identity of that record. A delta whose base is not in the bundle is
-	// dropped, because the base it names is not here to verify against.
-	for frameIndex, payload := range deltaFrames {
+	// local identity of that record. A delta whose base is not in the bundle, or
+	// whose ends are not both trees this import wrote, is dropped, because there is
+	// nothing here to verify it against.
+	for _, payload := range deltaFrames {
 		var delta ExactTreeDelta
 		if err := CanonicalDecode(payload, &delta); err != nil {
 			return 0, fmt.Errorf("%w: an imported delta: %v", ErrBundleInvalid, err)
@@ -765,56 +941,56 @@ func (s *SQLiteStore) insertImportedHistory(
 		if !ok {
 			continue
 		}
-		var baseUID any
-		var baseSeq any
-		if mapped, found := localBySource[delta.BaseEventUID]; found {
-			baseUID = mapped
-			for sourceSeq, source := range sourceBySeq {
-				if source == delta.BaseEventUID {
-					baseSeq = sourceSeq
-					break
-				}
-			}
+		targetTree, ok := trees[targetUID]
+		if !ok {
+			continue
 		}
+		baseUID, ok := localBySource[delta.BaseEventUID]
+		if !ok {
+			continue
+		}
+		baseTree, ok := trees[baseUID]
+		if !ok {
+			continue
+		}
+		if len(delta.Operations) == 0 {
+			// An empty delta describes no change, so storing it would only be a
+			// second way to say what the tree already says.
+			continue
+		}
+		// The trees were re-sealed, so every digest naming one is restated here. A
+		// delta that still named the source digests would name trees that no longer
+		// exist, and the imported run's own chain check would call it corrupt.
 		delta.RunKey = local
+		delta.BaseEventUID = baseUID
+		delta.BaseSequence = baseTree.Sequence
+		delta.BaseDigest = baseTree.Digest
+		delta.BasePlanRevision = baseTree.PlanRevision
 		delta.TargetEventUID = targetUID
-		if baseUID != nil {
-			delta.BaseEventUID = baseUID.(string)
-			delta.BaseSequence = baseSeq.(uint64)
-		} else {
-			delta.BaseEventUID = ""
-			delta.BaseSequence = 0
-		}
+		delta.TargetSequence = targetTree.Sequence
+		delta.TargetDigest = targetTree.Digest
 		delta.SHA256 = ""
 		digest, err := HashDelta(delta)
 		if err != nil {
 			return 0, err
 		}
 		delta.SHA256 = digest
+		// The delta is proved against the trees this import wrote before it is
+		// stored beside them, so a representation is never a pair that disagrees
+		// with itself. This is the store's own rule, applied to imported bytes.
+		if _, err := ApplyExactDelta(baseTree, delta); err != nil {
+			return 0, fmt.Errorf("%w: an imported delta: %v", ErrBundleInvalid, err)
+		}
 		deltaBytes, err := CanonicalEncode(delta)
 		if err != nil {
 			return 0, err
-		}
-		var targetSeq uint64
-		for sourceSeq, source := range sourceBySeq {
-			if source == delta.TargetEventUID || localBySource[source] == targetUID {
-				targetSeq = sourceSeq
-				break
-			}
-		}
-		operations := len(delta.Operations)
-		if operations == 0 {
-			// An empty delta describes no change, so storing it would only be a
-			// second way to say what the tree already says.
-			_ = frameIndex
-			continue
 		}
 		if _, err := tx.ExecContext(ctx,
 			"UPDATE representations SET base_event_uid = ?, base_seq = ?, delta_json = ?, "+
 				"delta_sha256 = ?, operation_count = ? "+
 				"WHERE session_id = ? AND run_id = ? AND seq = ?",
-			baseUID, baseSeq, deltaBytes, mustHex(digest), operations,
-			local.SessionID, local.RunID, targetSeq); err != nil {
+			baseUID, baseTree.Sequence, deltaBytes, mustHex(digest), len(delta.Operations),
+			local.SessionID, local.RunID, targetTree.Sequence); err != nil {
 			return 0, fmt.Errorf("pabtdebug: activate an import: %w", err)
 		}
 	}
@@ -862,16 +1038,20 @@ type bundleFrame struct {
 
 // parseStagedFrames re-parses a staged bundle's frames, so activation works from
 // the bytes that were verified rather than from anything remembered about them.
-func parseStagedFrames(sections stagedSections) ([]bundleFrame, BundleTrailer, error) {
+//
+// The trailer is not returned: the file's digest is what binds the two passes
+// together, and it covers the trailer, so re-reading it here would prove nothing
+// that digest has not already proved.
+func parseStagedFrames(sections stagedSections) ([]bundleFrame, error) {
 	rest := sections.frames
 	var frames []bundleFrame
 	for len(rest) > 0 {
 		if len(rest) < 4 {
-			return nil, BundleTrailer{}, fmt.Errorf("%w: a frame length is truncated", ErrBundleInvalid)
+			return nil, fmt.Errorf("%w: a frame length is truncated", ErrBundleInvalid)
 		}
 		headerLen := binary.BigEndian.Uint32(rest[:4])
 		if headerLen == 0 || int(headerLen) > len(rest)-4 {
-			return nil, BundleTrailer{}, fmt.Errorf("%w: a frame header runs past the file", ErrBundleInvalid)
+			return nil, fmt.Errorf("%w: a frame header runs past the file", ErrBundleInvalid)
 		}
 		var header struct {
 			Kind   BundleEntryKind `json:"kind"`
@@ -880,11 +1060,11 @@ func parseStagedFrames(sections stagedSections) ([]bundleFrame, BundleTrailer, e
 			SHA256 string          `json:"sha256"`
 		}
 		if err := CanonicalDecode(rest[4:4+headerLen], &header); err != nil {
-			return nil, BundleTrailer{}, fmt.Errorf("%w: a frame header: %v", ErrBundleInvalid, err)
+			return nil, fmt.Errorf("%w: a frame header: %v", ErrBundleInvalid, err)
 		}
 		rest = rest[4+headerLen:]
 		if header.Length == 0 || int(header.Length) > len(rest) {
-			return nil, BundleTrailer{}, fmt.Errorf("%w: a frame payload runs past the file", ErrBundleInvalid)
+			return nil, fmt.Errorf("%w: a frame payload runs past the file", ErrBundleInvalid)
 		}
 		frames = append(frames, bundleFrame{
 			Kind:    header.Kind,
@@ -894,9 +1074,5 @@ func parseStagedFrames(sections stagedSections) ([]bundleFrame, BundleTrailer, e
 		})
 		rest = rest[header.Length:]
 	}
-	var trailer BundleTrailer
-	if err := CanonicalDecode(sections.trailer, &trailer); err != nil {
-		return nil, BundleTrailer{}, fmt.Errorf("%w: the trailer: %v", ErrBundleInvalid, err)
-	}
-	return frames, trailer, nil
+	return frames, nil
 }
