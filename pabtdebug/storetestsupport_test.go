@@ -21,6 +21,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	_ "modernc.org/sqlite" // the test opens the file directly to corrupt it
 )
@@ -123,4 +124,47 @@ func itoa(v int) string {
 		v /= 10
 	}
 	return string(digits)
+}
+
+func makeRecord(tree *StoredTree) StoredRecord {
+	record := StoredRecord{
+		Kind:          RecordTick,
+		Revision:      RevisionScope{PlanRevision: testPlanRevision},
+		PayloadState:  PayloadComplete,
+		TreeEligible:  tree != nil,
+		Tree:          tree,
+		StartedAt:     Timestamp(time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)),
+		CompletedAt:   Timestamp(time.Date(2026, 9, 25, 12, 0, 0, 1, time.UTC)),
+		StatusPresent: true,
+		Status:        2,
+	}
+	return record
+}
+
+func smallTree(rootID string) *StoredTree {
+	node := StoredNode{
+		ID:        rootID,
+		Ordinal:   0,
+		Type:      "root",
+		Name:      "root",
+		EffectIDs: []string{},
+		Status:    StoredNodeStatus{TickCount: 1, LastStatus: 2, StatusPresent: true, Version: 1},
+	}
+	tree := &StoredTree{
+		RootID:       rootID,
+		Nodes:        []StoredNode{node},
+		NodeCount:    1,
+		PlanRevision: 1,
+	}
+	nodeDigest, err := HashNode(node)
+	if err != nil {
+		panic(err)
+	}
+	tree.Nodes[0].ContentHash = nodeDigest
+	digest, err := HashTree(*tree)
+	if err != nil {
+		panic(err)
+	}
+	tree.Digest = digest
+	return tree
 }

@@ -21,6 +21,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/binary"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -429,14 +430,26 @@ func (s *SQLiteStore) Export(ctx context.Context, req ExportRequest) (*ExportArt
 		return fail(err)
 	}
 
-	run := StoredRun{
-		RunKey:              key,
-		State:               "closed",
-		StartedAt:           Timestamp(time.Unix(0, 0).UTC()),
-		InitialPlanRevision: 0,
-		HeadSequence:        through,
-		HeadRecordSHA256:    head.HeadRecordSHA256,
+	// The run frame describes the run as the store holds it, not a run invented for
+	// the bundle: an importer that reports the source's start and state is reporting
+	// something true, and one that reports the epoch is reporting nothing.
+	run, err := s.readRun(ctx, key)
+	if err != nil {
+		return fail(err)
 	}
+	// The head is this bundle's, so a bounded export names the record it ends at
+	// rather than the run's own head, which it may not carry. The head tree is left
+	// empty for the same reason, and an importer derives its own head from the trees
+	// it wrote.
+	tail, err := s.RecordAt(ctx, key, through)
+	if err != nil {
+		return fail(err)
+	}
+	run.HeadSequence = through
+	run.HeadRecordSHA256 = tail.RecordSHA256
+	run.HeadTreeSequence = 0
+	run.HeadTreeEventUID = ""
+	run.HeadTreeDigest = ""
 	runJSON, err := CanonicalEncode(run)
 	if err != nil {
 		return fail(err)
@@ -477,9 +490,15 @@ func (s *SQLiteStore) Export(ctx context.Context, req ExportRequest) (*ExportArt
 		receipt.RecordCount++
 
 		tree, base, delta, err := s.Representation(ctx, key, sequence)
-		if err != nil {
-			// A record with no tree is normal, so this is not a failure.
+		switch {
+		case errors.Is(err, ErrNotFound):
+			// A record with no tree is normal, so this is not a failure. Any other
+			// error is the store failing to read a representation it holds, and
+			// continuing would produce a bundle that describes a history the store
+			// cannot hand over, which is not a bundle an importer could accept.
 			continue
+		case err != nil:
+			return fail(err)
 		}
 		treeJSON, err := CanonicalEncode(tree)
 		if err != nil {
@@ -547,6 +566,47 @@ func (s *SQLiteStore) readPlan(ctx context.Context, key RunKey) (StoredPlan, err
 		plan.CreatedAt = Timestamp(parsed.UTC())
 	}
 	return plan, nil
+}
+
+// readRun returns the run row as it is stored.
+func (s *SQLiteStore) readRun(ctx context.Context, key RunKey) (StoredRun, error) {
+	var (
+		state      string
+		started    string
+		ended      sql.NullString
+		initial    int
+		headSeq    int
+		headRecord []byte
+	)
+	row := s.readers.QueryRowContext(ctx,
+		"SELECT state, started_at, ended_at, initial_plan_revision, head_seq, head_record_sha256 "+
+			"FROM runs WHERE session_id = ? AND plan_id = ? AND run_id = ?",
+		key.SessionID, key.PlanID, key.RunID)
+	switch err := row.Scan(&state, &started, &ended, &initial, &headSeq, &headRecord); {
+	case errors.Is(err, sql.ErrNoRows):
+		return StoredRun{}, fmt.Errorf("%w: run %s", ErrNotFound, key.RunID)
+	case err != nil:
+		return StoredRun{}, fmt.Errorf("pabtdebug: read a run: %w", err)
+	}
+	run := StoredRun{
+		RunKey:              key,
+		State:               state,
+		InitialPlanRevision: uint64(initial),
+		HeadSequence:        uint64(headSeq),
+	}
+	if len(headRecord) > 0 {
+		run.HeadRecordSHA256 = hex.EncodeToString(headRecord)
+	}
+	if parsed, err := time.Parse(time.RFC3339Nano, started); err == nil {
+		run.StartedAt = Timestamp(parsed.UTC())
+	}
+	if ended.Valid {
+		if parsed, err := time.Parse(time.RFC3339Nano, ended.String); err == nil {
+			stamp := Timestamp(parsed.UTC())
+			run.EndedAt = &stamp
+		}
+	}
+	return run, nil
 }
 
 // tempPath returns a fresh owner-only path beside the store.
