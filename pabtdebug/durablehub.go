@@ -97,6 +97,10 @@ type hubClient struct {
 	messages  chan *hubMessage
 	queued    uint64
 	queuedRaw uint64
+	// behindCh is signalled the moment the client falls behind. Without it a reader
+	// already blocked waiting for its next record would not learn it had missed one
+	// until the next keep-alive, which is a connection held open for nothing.
+	behindCh chan struct{}
 	// behind is set when the client missed the bound. It stops the queue growing and
 	// tells the writer to end the connection with a position the client can resume
 	// from, rather than serving it a slower and slower stream of records.
@@ -174,8 +178,7 @@ func (h *DurableHub) offer(client *hubClient, message *hubMessage) {
 	}
 	if client.queued >= uint64(h.limits.MaxQueuedEvents) ||
 		client.queuedRaw+message.Size > h.limits.MaxQueuedBytes {
-		client.behind = true
-		h.overflow++
+		h.markBehind(client)
 		return
 	}
 	select {
@@ -186,9 +189,18 @@ func (h *DurableHub) offer(client *hubClient, message *hubMessage) {
 		// The channel is full even though the accounting says otherwise, which means a
 		// reader took a message without the accounting seeing it go. The client is
 		// treated as behind rather than trusted to keep up.
-		client.behind = true
-		h.overflow++
+		h.markBehind(client)
 	}
+}
+
+// markBehind records that a client cannot keep up and says so at once.
+func (h *DurableHub) markBehind(client *hubClient) {
+	if client.behind {
+		return
+	}
+	client.behind = true
+	h.overflow++
+	close(client.behindCh)
 }
 
 // HubSubscription is one client's place in the queue.
@@ -213,6 +225,25 @@ type HubClient struct {
 // Messages returns the channel of committed records.
 func (c *HubClient) Messages() <-chan *hubMessage { return c.client.messages }
 
+// Took reports that the client has read a message, which is what makes the bound a
+// statement about what is waiting rather than about what was ever sent.
+//
+// It has to be said. A reader that took a message without saying so would leave the
+// hub counting bytes the client no longer holds, and would eventually be disconnected
+// for being behind while reading at full speed.
+func (c *HubClient) Took(message *hubMessage) {
+	c.hub.mu.Lock()
+	defer c.hub.mu.Unlock()
+	if c.client.queued > 0 {
+		c.client.queued--
+	}
+	if c.client.queuedRaw >= message.Size {
+		c.client.queuedRaw -= message.Size
+	} else {
+		c.client.queuedRaw = 0
+	}
+}
+
 // Behind reports whether the client missed the queue bound. A client that has is told
 // to resume from a cursor, and its connection ends: the alternative is a stream that
 // arrives later and later, which is a debugger that lies about being live.
@@ -221,6 +252,10 @@ func (c *HubClient) Behind() bool {
 	defer c.hub.mu.Unlock()
 	return c.client.behind
 }
+
+// BehindSignal is closed when the client falls behind, so a reader waiting for its
+// next record is told at once rather than at the next keep-alive.
+func (c *HubClient) BehindSignal() <-chan struct{} { return c.client.behindCh }
 
 // Overflowed reports how many clients the hub has had to disconnect for falling
 // behind, which is what tells an operator the bound is too small.
@@ -253,6 +288,7 @@ func (h *DurableHub) Subscribe() (HubSubscription, error) {
 		id:       h.nextID,
 		hub:      h,
 		messages: make(chan *hubMessage, h.limits.MaxQueuedEvents),
+		behindCh: make(chan struct{}),
 	}
 	h.clients[client.id] = client
 	return HubSubscription{

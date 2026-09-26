@@ -157,12 +157,17 @@ func (d *durable) pump(
 		select {
 		case <-ctx.Done():
 			return
+		case <-sub.Client.BehindSignal():
+			d.writeBehind(ctx, stream, hub, written)
+			return
 		case message, open := <-sub.Client.Messages():
 			if !open {
 				return
 			}
 			// The store already gave this one to the client, so the queue's copy is
-			// dropped rather than written twice.
+			// dropped rather than written twice. Either way the hub is told the message
+			// was read, because the bound is about what is waiting.
+			sub.Client.Took(message)
 			if message.Sequence <= written {
 				continue
 			}
@@ -183,26 +188,36 @@ func (d *durable) pump(
 			}
 		}
 		if sub.Client.Behind() {
-			// The client missed the bound. It is told where to resume, which the store
-			// can serve, rather than being sent a stream that arrives later and later.
-			// The cursor is complete: a client that reconnects with it resumes at the
-			// exact next sequence, and one that does not reconnect has lost nothing it
-			// cannot fetch by position.
-			installation, err := d.store.Installation(ctx)
-			if err == nil {
-				cursor := Cursor{
-					StoreID:    installation.StoreID,
-					RunKey:     hub.RunKey(),
-					Generation: installation.Generation,
-					Sequence:   written,
-				}
-				if token, encodeErr := cursor.Encode(); encodeErr == nil {
-					_ = stream.writeEvent("behind", CursorResponse{Token: token})
-				}
-			}
+			d.writeBehind(ctx, stream, hub, written)
 			return
 		}
 	}
+}
+
+// writeBehind ends a stream whose client fell behind, with a position to resume from.
+//
+// The cursor is complete: a client that reconnects with it resumes at the exact next
+// sequence, and one that does not reconnect has lost nothing it cannot fetch by
+// position. Ending the connection is the point, because the alternative is a stream
+// that arrives later and later while the client believes it is live.
+func (d *durable) writeBehind(ctx context.Context, stream *sseWriter, hub *DurableHub, written uint64) {
+	installation, err := d.store.Installation(ctx)
+	if err != nil {
+		_ = stream.writeEvent("error", map[string]string{"message": err.Error()})
+		return
+	}
+	cursor := Cursor{
+		StoreID:    installation.StoreID,
+		RunKey:     hub.RunKey(),
+		Generation: installation.Generation,
+		Sequence:   written,
+	}
+	token, err := cursor.Encode()
+	if err != nil {
+		_ = stream.writeEvent("error", map[string]string{"message": err.Error()})
+		return
+	}
+	_ = stream.writeEvent("behind", CursorResponse{Token: token})
 }
 
 // sseWriter writes server-sent events.

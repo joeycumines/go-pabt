@@ -171,7 +171,9 @@ func TestASlowClientIsDisconnectedRatherThanServedAnUnboundedQueue(t *testing.T)
 	// that is behind is never silently skipped records.
 	var seen []uint64
 	for range 2 {
-		seen = append(seen, (<-sub.Client.Messages()).Sequence)
+		message := <-sub.Client.Messages()
+		sub.Client.Took(message)
+		seen = append(seen, message.Sequence)
 	}
 	if len(seen) != 2 || seen[0] != 1 || seen[1] != 2 {
 		t.Errorf("the client received %v, want the first two in order", seen)

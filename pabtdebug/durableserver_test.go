@@ -21,6 +21,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -43,12 +44,21 @@ type durableFixture struct {
 
 func newDurableFixture(t *testing.T, records int) *durableFixture {
 	t.Helper()
+	return newDurableFixtureWith(t, records, DurableHubLimits{})
+}
+
+// newDurableFixtureWith builds the fixture with hub limits of its own, which is the
+// only way to exercise a bound: the hub is created when the server is first asked
+// something, so a limit changed afterwards would never be the one in force.
+func newDurableFixtureWith(t *testing.T, records int, hubLimits DurableHubLimits) *durableFixture {
+	t.Helper()
 	plan := newSessionFixture(t)
 	store := openTestStore(t, testStorePath(t))
 	identity := bootstrapTestStore(t, store)
 	key := RunKey{SessionID: identity.SessionID, PlanID: identity.PlanID, RunID: identity.RunID}
 	server, err := NewDurableServer(store, DurableServerConfig{
 		ReadyFile: filepath.Join(t.TempDir(), "ready"),
+		HubLimits: hubLimits,
 	})
 	if err != nil {
 		t.Fatalf("NewDurableServer: %v", err)
@@ -392,6 +402,11 @@ func TestTheStreamResumesAtTheExactNextSequence(t *testing.T) {
 		t.Fatalf("stream = %d", resp.StatusCode)
 	}
 	reader := bufio.NewReader(resp.Body)
+	if greeting, err := readSSE(reader); err != nil {
+		t.Fatalf("read the greeting: %v", err)
+	} else if greeting.name != "comment" {
+		t.Fatalf("the stream opened with %q, want a comment", greeting.name)
+	}
 	first, err := readSSE(reader)
 	if err != nil {
 		t.Fatalf("read the first event: %v", err)
@@ -437,7 +452,8 @@ type sseEvent struct {
 	data string
 }
 
-// readSSE reads one event, skipping comments.
+// readSSE reads one event. A comment is returned as a comment, because a stream opens
+// with one and a test that skipped it would wait for an event that had already gone.
 func readSSE(reader *bufio.Reader) (sseEvent, error) {
 	var out sseEvent
 	for {
@@ -448,7 +464,7 @@ func readSSE(reader *bufio.Reader) (sseEvent, error) {
 		line = strings.TrimRight(line, "\n")
 		switch {
 		case strings.HasPrefix(line, ":"):
-			continue
+			return sseEvent{name: "comment", data: strings.TrimSpace(line[1:])}, nil
 		case strings.HasPrefix(line, "id: "):
 			out.id = strings.TrimPrefix(line, "id: ")
 		case strings.HasPrefix(line, "event: "):
@@ -468,4 +484,259 @@ func firstLine(body []byte) string {
 		return string(body[:i])
 	}
 	return string(body)
+}
+
+func TestAnImportPublishesAndARefusedOneDoesNot(t *testing.T) {
+	f := newDurableFixture(t, 3)
+	f.waitReady(t)
+	before := f.generation(t)
+	beforeSession := f.key.SessionID
+
+	// A bundle the fixture already holds, exported over HTTP and posted back.
+	resp, bundle := f.get(t, "/debug/pabt/v2/export")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("export = %d: %s", resp.StatusCode, firstLine(bundle))
+	}
+	if got := resp.Header.Get("Content-Type"); got != bundleMediaType {
+		t.Errorf("the export is %q, want %q", got, bundleMediaType)
+	}
+	if resp.Header.Get("X-PABT-Bundle-SHA256") == "" {
+		t.Error("the export reported no bundle digest")
+	}
+	imported := postBundle(t, f, bundle)
+	if imported.Activation.Generation != before+1 {
+		t.Errorf("the import published generation %d, want %d",
+			imported.Activation.Generation, before+1)
+	}
+	if imported.Activation.SessionID == beforeSession {
+		t.Error("the import published the session it came from")
+	}
+	if imported.Activation.RecordCount == 0 {
+		t.Error("the import stored no records")
+	}
+	// The served state is the new history, not the old one with a new label on it.
+	resp, body := f.get(t, "/debug/pabt/v2/state")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("state = %d: %s", resp.StatusCode, body)
+	}
+	var state StateResponse
+	if err := json.Unmarshal(body, &state); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if state.Generation != before+1 {
+		t.Errorf("the server serves generation %d, want %d", state.Generation, before+1)
+	}
+	if state.ActiveSession != imported.Activation.SessionID {
+		t.Errorf("the server serves session %q, want the imported %q",
+			state.ActiveSession, imported.Activation.SessionID)
+	}
+	if state.Head.HeadSequence != imported.Activation.RecordCount {
+		t.Errorf("the imported head is at %d, want %d",
+			state.Head.HeadSequence, imported.Activation.RecordCount)
+	}
+
+	// A bundle that is not one is refused, and the store keeps serving what it was
+	// serving at the generation it was serving it at.
+	damaged := append([]byte(nil), bundle...)
+	damaged[len(damaged)/2] ^= 0xff
+	code, body := postBundleRaw(t, f, damaged)
+	if code == http.StatusOK {
+		t.Fatalf("a damaged bundle was imported: %s", firstLine(body))
+	}
+	after := f.generation(t)
+	if after != before+1 {
+		t.Errorf("a refused import moved the generation to %d, want %d", after, before+1)
+	}
+	installation, err := f.store.Installation(context.Background())
+	if err != nil {
+		t.Fatalf("Installation: %v", err)
+	}
+	if installation.ActiveSessionID != imported.Activation.SessionID {
+		t.Errorf("a refused import changed the served session to %q", installation.ActiveSessionID)
+	}
+}
+
+func postBundle(t *testing.T, f *durableFixture, bundle []byte) ImportResponse {
+	t.Helper()
+	code, body := postBundleRaw(t, f, bundle)
+	if code != http.StatusOK {
+		t.Fatalf("import = %d: %s", code, firstLine(body))
+	}
+	var out ImportResponse
+	if err := json.Unmarshal(body, &out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	return out
+}
+
+func postBundleRaw(t *testing.T, f *durableFixture, bundle []byte) (int, []byte) {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodPost,
+		"http://"+f.server.Addr()+"/debug/pabt/v2/import", bytes.NewReader(bundle))
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	req.Header.Set(capabilityHeader, f.server.Capability())
+	req.Header.Set("Content-Type", bundleMediaType)
+	resp, err := f.client.Do(req)
+	if err != nil {
+		t.Fatalf("do: %v", err)
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	_ = resp.Body.Close()
+	return resp.StatusCode, body
+}
+
+func TestAKeyframeIsNamedRatherThanResentAndIsRetrievable(t *testing.T) {
+	f := newDurableFixture(t, 4)
+	f.waitReady(t)
+	keyframes := 0
+	// What holds for every sequence: a keyframe is the whole tree and names nothing,
+	// and a delta names the base it applies to, retrievable by sequence, and applies.
+	for sequence := uint64(1); sequence <= 4; sequence++ {
+		resp, body := f.get(t, fmt.Sprintf("/debug/pabt/v2/representations/%d", sequence))
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("representation %d = %d: %s", sequence, resp.StatusCode, body)
+		}
+		var one RepresentationResponse
+		if err := json.Unmarshal(body, &one); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if one.Tree.EventUID == "" || one.Tree.Digest == "" {
+			t.Fatalf("the representation at %d carries no tree", sequence)
+		}
+		if one.Delta == nil {
+			keyframes++
+			if one.Base != nil {
+				t.Errorf("the keyframe at %d names a base at %d", sequence, one.Base.Sequence)
+			}
+			continue
+		}
+		if one.Base == nil {
+			t.Fatalf("the delta at %d names no base", sequence)
+		}
+		if one.Base.Digest != one.Delta.BaseDigest {
+			t.Errorf("the base reference digest %q is not the delta's %q",
+				one.Base.Digest, one.Delta.BaseDigest)
+		}
+		resp, body = f.get(t, fmt.Sprintf("/debug/pabt/v2/trees/%d", one.Base.Sequence))
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("the base tree = %d: %s", resp.StatusCode, body)
+		}
+		var base StoredTree
+		if err := CanonicalDecode(bytes.TrimSpace(body), &base); err != nil {
+			t.Fatalf("decode the base: %v", err)
+		}
+		if base.Digest != one.Base.Digest {
+			t.Errorf("the fetched base is %q, the reference named %q", base.Digest, one.Base.Digest)
+		}
+		// The delta, applied to the tree the route served, reproduces the tree the
+		// same route served. That is the whole point of serving the two together: a
+		// client can check it rather than trust it.
+		applied, err := ApplyExactDelta(base, *one.Delta)
+		if err != nil {
+			t.Fatalf("the delta at %d does not apply to the base the route served: %v", sequence, err)
+		}
+		if applied.Digest != one.Tree.Digest {
+			t.Errorf("the delta at %d reconstructs to %q, the tree is %q",
+				sequence, applied.Digest, one.Tree.Digest)
+		}
+	}
+	if keyframes == 0 {
+		t.Error("no sequence was a keyframe, so the resume path is untested")
+	}
+}
+
+func TestNoRouteReachesALivePlan(t *testing.T) {
+	f := newDurableFixture(t, 2)
+	f.waitReady(t)
+	// The durable server has no tracker at all, so the v1 routes, which do read a
+	// live plan, have nothing to read. That is the boundary stated rather than assumed.
+	if len(f.server.Trackers()) != 0 {
+		t.Errorf("the durable server holds %d trackers", len(f.server.Trackers()))
+	}
+	if _, found := f.server.Tracker("0"); found {
+		t.Error("the durable server resolved a tracker")
+	}
+	for _, path := range []string{"/debug/pabt/plans", "/debug/pabt/timeline", "/debug/pabt/dot"} {
+		req, err := http.NewRequest(http.MethodGet, "http://"+f.server.Addr()+path, nil)
+		if err != nil {
+			t.Fatalf("request: %v", err)
+		}
+		req.Header.Set(capabilityHeader, f.server.Capability())
+		resp, err := f.client.Do(req)
+		if err != nil {
+			t.Fatalf("do %s: %v", path, err)
+		}
+		body, _ := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if resp.StatusCode != http.StatusNotFound {
+			t.Errorf("%s = %d, want 404: a durable server has no live plan", path, resp.StatusCode)
+		}
+		if bytes.Contains(body, []byte("nodeType")) {
+			t.Errorf("%s returned tree content from a durable server", path)
+		}
+	}
+}
+
+func TestAStreamEndsWithAResumablePositionWhenAClientFallsBehind(t *testing.T) {
+	// A byte bound no record fits inside, so the first commit puts the client behind
+	// however fast it reads. That is the deterministic form of the case: a client whose
+	// queue cannot hold what is committed is told where to resume, and its connection
+	// ends, rather than being served a stream that arrives later and later.
+	f := newDurableFixtureWith(t, 0, DurableHubLimits{
+		MaxQueuedEvents: 8, MaxQueuedBytes: 1, KeepAlive: 15 * time.Second,
+	})
+	f.waitReady(t)
+	streaming := &http.Client{}
+	req, err := http.NewRequest(http.MethodGet,
+		"http://"+f.server.Addr()+"/debug/pabt/v2/stream", nil)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	req.Header.Set(capabilityHeader, f.server.Capability())
+	resp, err := streaming.Do(req)
+	if err != nil {
+		t.Fatalf("do: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	reader := bufio.NewReader(resp.Body)
+	if _, err := readSSE(reader); err != nil {
+		t.Fatalf("read the greeting: %v", err)
+	}
+	f.commit(t, 2)
+	event, err := readSSE(reader)
+	if err != nil {
+		t.Fatalf("read the event: %v", err)
+	}
+	if event.name != "behind" {
+		t.Fatalf("the stream ended with %q, want it to say the client fell behind", event.name)
+	}
+	var resume CursorResponse
+	if err := json.Unmarshal([]byte(event.data), &resume); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	cursor, err := DecodeCursor(resume.Token)
+	if err != nil {
+		t.Fatalf("the resume cursor does not decode: %v", err)
+	}
+	if err := cursor.CheckRefuses(f.store.StoreIdentity(), f.key, f.generation(t)); err != nil {
+		t.Errorf("the resume cursor is not usable against this history: %v", err)
+	}
+	// And it is usable: the store serves everything after the position it names, so
+	// nothing was lost by ending the connection.
+	page, err := f.store.RecordsSince(context.Background(), f.key, cursor.Sequence)
+	if err != nil {
+		t.Fatalf("RecordsSince: %v", err)
+	}
+	if len(page.Records) != 2 {
+		t.Errorf("the resume returned %d records, want the 2 after %d",
+			len(page.Records), cursor.Sequence)
+	}
+	if f.server.durable.hubOf(context.Background()).Overflowed() != 1 {
+		t.Error("the hub did not count the disconnects, so an operator would not learn the bound is too small")
+	}
 }
