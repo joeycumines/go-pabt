@@ -19,6 +19,7 @@ package pabtdebug
 import (
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"sort"
 	"strconv"
@@ -38,6 +39,20 @@ type Server struct {
 	primary  *Tracker
 	// tracker is retained for backward compatibility; it aliases primary.
 	tracker *Tracker
+
+	// listener is owned by the constructor when the server is durable, so the bound
+	// address is known before anything is served. A server built by NewServer has none
+	// and listens in Start, as it always has.
+	listener net.Listener
+
+	// durable is set when the server serves committed history. It is nil for a
+	// tracker-backed server, whose v1 routes read a live plan.
+	durable *durable
+
+	// v2 is the durable route set's own mux, mounted behind the capability check. It
+	// is separate from the server's handler so that a named route cannot be reached
+	// without passing the check.
+	v2 *http.ServeMux
 }
 
 // NewServer creates a new debug server for the given tracker at the specified address.
@@ -154,8 +169,23 @@ func (s *Server) resolveTracker(r *http.Request) (*Tracker, bool) {
 }
 
 // Start starts the HTTP server.
+//
+// A durable server already owns its listener, so Start serves on it rather than
+// binding a second time, and the address a caller was told is the one being served.
 func (s *Server) Start() error {
+	if s.listener != nil {
+		return s.server.Serve(s.listener)
+	}
 	return s.server.ListenAndServe()
+}
+
+// Addr returns the address the server is listening on, which for a durable server is
+// the one its constructor bound rather than the one it was asked for.
+func (s *Server) Addr() string {
+	if s.listener != nil {
+		return s.listener.Addr().String()
+	}
+	return s.addr
 }
 
 // Close gracefully shuts down the server, draining SSE connections first.
@@ -179,6 +209,9 @@ func (s *Server) Close() error {
 		}
 	}
 	s.mu.RUnlock()
+	if s.durable != nil {
+		s.durable.close()
+	}
 	return s.server.Close()
 }
 

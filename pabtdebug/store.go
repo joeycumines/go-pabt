@@ -737,6 +737,13 @@ func (s *SQLiteStore) Installation(ctx context.Context) (Installation, error) {
 	return out, nil
 }
 
+// StoreIdentity returns the store's own identity, which is what a cursor is bound to.
+func (s *SQLiteStore) StoreIdentity() StoreID {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.storeID
+}
+
 // randomID returns a fresh random identifier with the given prefix.
 func randomID(prefix string) (string, error) {
 	var b [16]byte
