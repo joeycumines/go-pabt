@@ -56,6 +56,14 @@ let stream = null;
 let position = "0";
 /** Whether the client is following the head, which a reader can switch off. */
 let following = true;
+/** Set when the page is going away, so a reconnect is not started into nothing. */
+let shuttingDown = false;
+/** The pending reconnect, so a second ending does not queue a second one. */
+let reconnectTimer = null;
+/** How long to wait before the first reconnect, and after each failure. */
+const RECONNECT_STEP_MS = 250;
+const RECONNECT_CEILING_MS = 4000;
+let reconnectDelay = RECONNECT_STEP_MS;
 
 /* ---------------- connect ---------------- */
 
@@ -164,13 +172,46 @@ async function follow() {
       handleRecord(record).catch((cause) => setConnection("refused", cause.message.slice(0, 80)));
     },
     onBehind: () => {
+      reconnectDelay = RECONNECT_STEP_MS;
       resume().catch((cause) => setConnection("refused", cause.message.slice(0, 80)));
     },
     onState: (state) => setConnection(state),
     onError: (cause) => setConnection("refused", cause.message.slice(0, 80)),
+    onEnded: (why) => scheduleReconnect(why),
   });
   stream.start(minted.token, position);
   setConnection("live", `from ${position}`);
+}
+
+/**
+ * Reconnects after the stream ended or failed, however it ended.
+ *
+ * Without this a dropped connection left the page showing a full and plausible
+ * history that was quietly stale: the connection was gone, nothing said so beyond a
+ * status word, and no amount of waiting would have brought the next record. The
+ * resume is a read, so the client catches up on whatever it missed rather than
+ * hoping the gap was empty, and the delay backs off so a server that is down is
+ * not hammered.
+ *
+ * @param {string} why
+ */
+function scheduleReconnect(why) {
+  if (shuttingDown || reconnectTimer !== null) return;
+  setConnection("reloading", why.slice(0, 60));
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = null;
+    if (shuttingDown) return;
+    resume()
+      .then(() => {
+        reconnectDelay = RECONNECT_STEP_MS;
+      })
+      .catch((cause) => {
+        // Still down. Wait longer and try again, up to a ceiling, and keep
+        // reporting rather than going quiet.
+        reconnectDelay = Math.min(reconnectDelay * 2, RECONNECT_CEILING_MS);
+        scheduleReconnect(cause.message);
+      });
+  }, reconnectDelay);
 }
 
 /**
@@ -478,6 +519,14 @@ document.getElementById("import").addEventListener("change", async (event) => {
 });
 
 /* ---------------- resume ---------------- */
+
+// A page that is going away must not start a reconnect into a store it is no
+// longer showing, and must not leave a timer holding the page open.
+window.addEventListener("pagehide", () => {
+  shuttingDown = true;
+  if (reconnectTimer !== null) clearTimeout(reconnectTimer);
+  if (stream) stream.stop();
+});
 
 const stored = sessionStorage.getItem(CAPABILITY_KEY);
 if (stored) {

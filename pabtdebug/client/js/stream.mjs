@@ -28,7 +28,8 @@ export class EventStream {
   /**
    * @param {import("./api.js").Api} api
    * @param {{onRecord: function(any): void, onBehind: function(string): void,
-   *          onState: function(string): void, onError: function(Error): void}} handlers
+   *          onState: function(string): void, onError: function(Error): void,
+   *          onEnded: function(string): void}} handlers
    */
   constructor(api, handlers) {
     this.api = api;
@@ -52,7 +53,11 @@ export class EventStream {
     this.closed = false;
     this.controller = new AbortController();
     this.pump(this.controller.signal).catch((cause) => {
-      if (!this.closed) this.handlers.onError(cause);
+      // An abort is this client stopping, not a failure, so it is not reported and
+      // it does not ask for a reconnect.
+      if (this.closed || cause.name === "AbortError") return;
+      this.handlers.onError(cause);
+      this.handlers.onEnded(cause.message);
     });
   }
 
@@ -81,10 +86,16 @@ export class EventStream {
       for (;;) {
         const { value, done } = await reader.read();
         if (done) {
-          // The store ended the connection. Whatever it was, the position the
-          // client holds is still the truth about what it has seen, so the
-          // reconnect uses it rather than assuming the last frame arrived whole.
-          if (!this.closed) this.handlers.onState("reloading");
+          // The store ended the connection, and so did a dropped one. Either way
+          // the position this client holds is the truth about what it has seen, so
+          // a reconnect resumes from it rather than assuming the last frame
+          // arrived whole. Ending is not the same as failing: a stream the server
+          // closed cleanly still has to be picked up again, or a client that was
+          // closed by a proxy comes back to a run that has moved on.
+          if (!this.closed) {
+            this.handlers.onState("reloading");
+            this.handlers.onEnded("the stream ended");
+          }
           return;
         }
         buffer += decoder.decode(value, { stream: true });

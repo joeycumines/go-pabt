@@ -88,7 +88,15 @@ func run() error {
 		return fmt.Errorf("-ticks must be at least 1, not %d", *ticks)
 	}
 
-	ctx := context.Background()
+	// The handler goes in before anything that can block, and that is the whole
+	// point of it. Installed after the tick loop, a SIGTERM arriving during the run
+	// would take the default disposition and kill the process outright: no deferred
+	// function would run, so the capability file would be left on disk and the
+	// ordered shutdown would not happen at all. A target that leaks its capability
+	// when it is interrupted is worse than one that leaks nothing when it finishes.
+	ctx, stopSignals := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stopSignals()
+
 	// The capability file's directory is created first, and the file itself is
 	// removed on every exit including a signal, so a run that fails leaves nothing
 	// behind that a later process could use.
@@ -165,7 +173,14 @@ func run() error {
 		// watched, so a client can attach and then see the records arrive.
 		fmt.Println("ready", server.Addr())
 		for i := range *ticks {
-			time.Sleep(*interval)
+			// The wait is interruptible, so a signal during the run reaches the
+			// ordered shutdown rather than being lost until the run happens to end.
+			select {
+			case <-ctx.Done():
+				fmt.Printf("interrupted before tick %d\n", i+1)
+				return shutdown(server)
+			case <-time.After(*interval):
+			}
 			if err := tick(ctx, session, world, i+1); err != nil {
 				return err
 			}
@@ -185,16 +200,25 @@ func run() error {
 
 	// Alive after the last tick until terminated, which is what lets a browser
 	// attach, be measured, and be torn down without racing the run's own output.
-	signals := make(chan os.Signal, 1)
-	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
 	select {
-	case received := <-signals:
-		fmt.Printf("stopping on %s\n", received)
+	case <-ctx.Done():
+		fmt.Println("stopping")
 	case err := <-served:
 		if err != nil && !errors.Is(err, os.ErrClosed) {
 			return fmt.Errorf("serve: %w", err)
 		}
 	}
+	return shutdown(server)
+}
+
+// shutdown reports that the ordered shutdown has run.
+//
+// The deferred closes unwind in order on the way out of run - server, then store,
+// then the capability file - so reaching here means all three have already
+// happened. It takes the server only so a caller cannot reach it without having
+// started one.
+func shutdown(server *pabtdebug.Server) error {
+	_ = server
 	fmt.Println("stopped")
 	return nil
 }

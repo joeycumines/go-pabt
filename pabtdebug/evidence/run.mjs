@@ -20,6 +20,7 @@
 */
 
 import { chromium } from "playwright";
+import fs from "node:fs";
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
@@ -58,14 +59,25 @@ const TICKS = 12;
 const TICK_INTERVAL_MS = 200;
 
 function parseArgs(argv) {
-  const options = { out: join(repoRoot, "scratch", "evidence"), keep: false };
+  const options = { out: join(repoRoot, "scratch", "evidence"), keep: false, failAt: "" };
   for (let i = 0; i < argv.length; i += 1) {
     if (argv[i] === "-out") options.out = resolve(argv[++i]);
     else if (argv[i] === "-keep") options.keep = true;
+    else if (argv[i] === "-fail-at") options.failAt = argv[++i];
     else throw new Error(`unknown flag ${argv[i]}`);
   }
   return options;
 }
+
+/**
+ * FAILPOINTS are the points at which a run can be told to fail on purpose.
+ *
+ * A teardown that has only ever been read is a teardown that has not been tested.
+ * Each of these throws with a target listening and a capability file on disk, which
+ * is the state a browser crash or a browser/target mismatch leaves behind, and the
+ * run's own teardown assertions then have to hold in spite of it.
+ */
+const FAILPOINTS = new Set(["after-launch", "after-measure", "before-teardown"]);
 
 /**
  * buildTarget compiles the evidence target from the current source.
@@ -130,6 +142,14 @@ function portFree(address) {
 async function main() {
   const options = parseArgs(process.argv.slice(2));
   mkdirSync(options.out, { recursive: true });
+  if (options.failAt && !FAILPOINTS.has(options.failAt)) {
+    throw new Error(`-fail-at must be one of ${[...FAILPOINTS].join(", ")}`);
+  }
+  const deliberatelyFailing = (where) => {
+    if (options.failAt === where) {
+      throw new Error(`deliberate failure at ${where}, for the teardown path`);
+    }
+  };
   const workDir = mkdtempSync(join(tmpdir(), "pabtdebug-evidence-"));
   const binary = buildTarget(options.out);
   const findings = [];
@@ -197,6 +217,8 @@ async function main() {
     };
 
     browser = await chromium.launch();
+    deliberatelyFailing("after-launch");
+
     const context = await browser.newContext();
     const consoleLog = [];
     const network = [];
@@ -248,6 +270,22 @@ async function main() {
     await page.click("#connect-form button[type=submit]");
     await page.waitForSelector("#app:not([hidden])", { timeout: 20000 });
     const connectedAt = await headSequence();
+
+    // A forced disconnect, with the run still going. The browser's own offline
+    // switch is the only way to drop a streaming response from outside, and it is
+    // the honest one: the client sees a transport failure, exactly as it would
+    // from a closed laptop. Records that commit while it is away are the gap, and
+    // the client has to close that gap by reading the store rather than by hoping
+    // it was empty.
+    await context.setOffline(true);
+    const offlineAt = await headSequence();
+    const missed = await waitFor(`${3} ticks to commit while the client is offline`, async () => {
+      const now = await headSequence();
+      return now >= offlineAt + 3 ? now : false;
+    }, 30000);
+    note(`the client was cut off at tick ${offlineAt} and ${missed - offlineAt} ticks committed while it was away`);
+    await context.setOffline(false);
+
     await waitFor(`the run to reach tick ${TICKS}`, async () =>
       (await headSequence()) >= TICKS ? true : false, 40000);
     // Asserted here, on this page, before anything reloads it. The viewport loop
@@ -263,8 +301,21 @@ async function main() {
       fail(`the page followed the stream to ${live.sequences.length} of ${TICKS} ticks: ` +
         `${live.sequences.join(",")} (connection: ${live.connection})`);
     } else {
-      note(`the page connected at tick ${connectedAt} and followed the stream to ${TICKS} over the live ` +
-        `path, crossing a digit boundary (connection: ${live.connection})`);
+      note(`the page connected at tick ${connectedAt}, was cut off, and reached ${TICKS} over the live path, ` +
+        `closing the gap it missed and crossing a digit boundary (connection: ${live.connection})`);
+    }
+    // The reconnect is only a real one if nothing was duplicated and nothing was
+    // skipped while the client was away, which is the property that makes a resume
+    // worth having.
+    const liveUnique = new Set(live.sequences);
+    if (liveUnique.size !== live.sequences.length) {
+      fail(`the page repeated a tick after the reconnect: ${live.sequences.join(",")}`);
+    }
+    for (let i = 1; i < live.sequences.length; i += 1) {
+      if (Number(live.sequences[i]) !== Number(live.sequences[i - 1]) + 1) {
+        fail(`the page's ticks are not consecutive after the reconnect: ${live.sequences.join(",")}`);
+        break;
+      }
     }
 
     for (const viewport of VIEWPORTS) {
@@ -365,6 +416,8 @@ async function main() {
       checkLayout(viewport, measured, fail);
     }
 
+    deliberatelyFailing("after-measure");
+
     // The evidence panel is checked by walking the whole tree and reading the
     // panel at every occurrence, not by reading the one the page happened to
     // select. A precondition belongs to the node that evaluates it, so asserting
@@ -431,31 +484,42 @@ async function main() {
       note("the recorded key is displayed as the characters it is, and created no element");
     }
 
-    // Nothing secret may be in anything the run captured.
-    const errors = consoleLog.filter((entry) => entry.type === "error" || entry.type === "pageerror");
+    // Nothing secret may be in anything the run captured, and the scan is over the
+    // files rather than a list of the ones this version remembers to write: a list
+    // falls behind a new artifact the moment one is added, which is the same shape
+    // of mistake as a test asserting a property the code stopped having.
+    // Every console error except the ones the runner itself caused. Going offline
+    // is meant to break the connection, and a browser reports a broken connection
+    // as a console error, so treating those as failures would mean the check could
+    // only ever pass by not testing a reconnect. The exclusion is the exact network
+    // error the forced disconnect produces and nothing else, because a wider one
+    // would silence the failures this is here to catch.
+    const causedByTheForcedDisconnect = (entry) =>
+      entry.text.includes("ERR_INTERNET_DISCONNECTED") || entry.text.includes("ERR_NETWORK_CHANGED");
+    const errors = consoleLog.filter(
+      (entry) => (entry.type === "error" || entry.type === "pageerror") && !causedByTheForcedDisconnect(entry),
+    );
+    const expected = consoleLog.filter(causedByTheForcedDisconnect);
     if (errors.length > 0) {
       fail(`the page reported ${errors.length} console errors: ${errors.map((e) => e.text).join(" | ")}`);
+    } else {
+      note(`no console errors beyond the ${expected.length} the forced disconnect caused`);
     }
-    for (const secret of PLANTED_SECRETS) {
-      if (measurements.desktop.secretInDom) fail("a planted secret is in the page text");
-      const inConsole = consoleLog.some((entry) => entry.text.includes(secret));
-      if (inConsole) fail(`a planted secret is in the console: ${secret}`);
-      const inNetwork = network.some((entry) => entry.url.includes(secret));
-      if (inNetwork) fail(`a planted secret is in a request URL: ${secret}`);
-      const inLog = log.some((line) => line.includes(secret));
-      if (inLog) fail(`a planted secret is in the target's output: ${secret}`);
-    }
-    // A capability in a URL is a capability in an access log.
+    if (measurements.desktop.secretInDom) fail("a planted secret is in the page text");
+    const inConsole = consoleLog.filter((entry) => PLANTED_SECRETS.some((secret) => entry.text.includes(secret)));
+    for (const entry of inConsole) fail(`a planted secret is in the console: ${entry.text.slice(0, 60)}`);
+    const inLog = log.filter((line) => PLANTED_SECRETS.some((secret) => line.includes(secret)));
+    for (const line of inLog) fail(`a planted secret is in the target's output: ${line.slice(0, 60)}`);
+    // A capability in a URL is a capability in an access log, and in any file the
+    // run writes.
     for (const entry of network) {
-      if (entry.url.includes(capability)) {
-        fail(`the capability appears in a request URL: ${entry.url}`);
-      }
+      if (entry.url.includes(capability)) fail(`the capability appears in a request URL: ${entry.url}`);
     }
     const withToken = network.filter((entry) => entry.url.includes("capability=") && !entry.url.includes("cursor="));
-    if (withToken.length > 0) {
-      fail(`a capability query parameter was sent: ${withToken[0].url}`);
-    }
+    if (withToken.length > 0) fail(`a capability query parameter was sent: ${withToken[0].url}`);
     note(`${network.length} requests observed, none carrying the capability in a URL`);
+
+    deliberatelyFailing("before-teardown");
 
     // The transfer controls, exercised through the page rather than around it.
     // The bundle is what leaves the machine, so it is scanned for the same
@@ -514,6 +578,10 @@ async function main() {
     writeFileSync(join(options.out, "manifest.json"), JSON.stringify(manifest, null, 2));
     writeFileSync(join(options.out, "dom.sha256"), digest(Buffer.from(dom)) + "  dom.html\n");
 
+    // The last check, over every file including the manifest, because a capture
+    // written after the earlier scans would otherwise escape them.
+    scanArtifacts(options.out, PLANTED_SECRETS, capability, fail, note);
+
     for (const entry of findings) {
       console.log(`${entry.level}: ${entry.message}`);
     }
@@ -524,8 +592,29 @@ async function main() {
     }
     console.log(`\nevidence written to ${options.out}`);
   } finally {
+    // The target's own account of the run is written here rather than at the end
+    // of the try, because the interesting case is the one that never got there.
+    try {
+      mkdirSync(options.out, { recursive: true });
+      writeFileSync(logFile, log.join("\n") + "\n");
+    } catch {
+      // A run that could not write its log is already reporting; do not mask it.
+    }
     if (browser) await browser.close().catch(() => {});
     await stopTarget(target, address, capabilityFile, fail);
+    if (options.failAt) {
+      // On the failure path the run still has to prove it left nothing behind,
+      // and it has to say whether it did rather than leaving it to be inferred
+      // from the exit code.
+      const leftBehind = findings.filter((entry) => entry.level === "FAIL");
+      if (leftBehind.length > 0) {
+        console.log(`FAIL: a failure at ${options.failAt} left something behind:`);
+        for (const entry of leftBehind) console.log(`  ${entry.message}`);
+      } else {
+        console.log(`INFO: a deliberate failure at ${options.failAt} left no listener on ` +
+          `${address || "the target's port"} and no capability file`);
+      }
+    }
     if (!options.keep) rmSync(workDir, { recursive: true, force: true });
     else note(`kept the work directory ${workDir}`);
     const failed = findings.some((entry) => entry.level === "FAIL");
@@ -605,6 +694,28 @@ function checkLayout(viewport, measured, fail) {
   if (JSON.stringify(sorted) !== JSON.stringify(sequences)) {
     fail(`${where}: the tick list is out of order: ${sequences.join(",")}`);
   }
+}
+
+/**
+ * scanArtifacts reads every file the run wrote and refuses one holding a planted
+ * secret or the capability.
+ */
+function scanArtifacts(outDir, secrets, capability, fail, note) {
+  const { readdirSync, statSync } = fs;
+  const scanned = [];
+  for (const name of readdirSync(outDir).sort()) {
+    if (name === "durable-target" || name === "findings.json") continue;
+    const path = join(outDir, name);
+    if (!statSync(path).isFile()) continue;
+    scanned.push(name);
+    const bytes = readFileSync(path);
+    const text = bytes.toString("latin1");
+    for (const secret of secrets) {
+      if (text.includes(secret)) fail(`a planted secret is in ${name}: ${secret}`);
+    }
+    if (text.includes(capability)) fail(`the capability is in ${name}`);
+  }
+  note(`scanned ${scanned.length} captured artifacts for planted secrets and the capability: none found`);
 }
 
 /**
