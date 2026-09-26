@@ -146,6 +146,10 @@ func NewDurableServer(store *SQLiteStore, cfg DurableServerConfig) (*Server, err
 	// pattern wins, so every named route would answer without ever reaching the check.
 	d.server(s)
 	mux.Handle("/debug/pabt/v2/", s.requireCapability(s.v2))
+	// The browser client is served outside that subtree, and the reason is in
+	// uiPrefix: it carries no data and no capability, and keeping it out is what
+	// leaves "every v2 route requires the capability" checkable as a property.
+	d.clientUI(mux)
 	if err := d.writeReady(listener.Addr().String()); err != nil {
 		_ = listener.Close()
 		return nil, err

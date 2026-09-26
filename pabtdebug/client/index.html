@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="icon" href="data:,">
+<title>PA-BT Debug</title>
+<link rel="stylesheet" href="/debug/pabt/ui/app.css">
+</head>
+<body>
+<!--
+  This document is served without the capability, on purpose: it holds no record
+  and no token, and every request it makes carries the token in a header. The
+  token is asked for below and kept in sessionStorage, which dies with the tab.
+  Nothing here is a secret, and nothing here is history.
+-->
+<div id="app" hidden>
+  <header id="header" data-region="header">
+    <h1>PA-BT Debug</h1>
+    <dl class="identity">
+      <div><dt>store</dt><dd id="identity-store">&mdash;</dd></div>
+      <div><dt>run</dt><dd id="identity-run">&mdash;</dd></div>
+      <div><dt>head</dt><dd id="identity-head">&mdash;</dd></div>
+      <div><dt>generation</dt><dd id="identity-generation">&mdash;</dd></div>
+    </dl>
+    <div class="header-actions">
+      <span id="connection" class="connection" role="status" aria-live="polite">connecting</span>
+      <button id="export" type="button">Export run</button>
+      <label class="import">
+        Import run
+        <input id="import" type="file" accept=".pabt,application/vnd.pabtdebug.bundle">
+      </label>
+    </div>
+  </header>
+
+  <nav id="breadcrumb" data-region="breadcrumb" aria-label="Path to the selected occurrence">
+    <ol id="breadcrumb-list"></ol>
+  </nav>
+
+  <section id="timeline" data-region="timeline" aria-label="Recorded ticks">
+    <h2 class="region-title">Ticks</h2>
+    <ol id="timeline-list" class="timeline-list"></ol>
+  </section>
+
+  <section id="canvas" data-region="canvas" aria-label="Occurrence tree">
+    <h2 class="region-title">Tree <span id="canvas-revision" class="muted"></span></h2>
+    <div id="tree-scroll" class="scroll">
+      <ul id="tree" role="tree" aria-label="Occurrence tree"></ul>
+    </div>
+  </section>
+
+  <section id="detail" data-region="detail" aria-label="Selected occurrence">
+    <h2 class="region-title">Occurrence</h2>
+    <div id="detail-body" class="scroll" tabindex="0"></div>
+  </section>
+
+  <footer id="scrub" data-region="scrub">
+    <label class="scrub-label" for="scrub-range">Tick</label>
+    <input id="scrub-range" type="range" min="1" max="1" step="1" value="1"
+           aria-label="Recorded tick" aria-valuetext="tick 1">
+    <output id="scrub-readout" for="scrub-range">1</output>
+  </footer>
+</div>
+
+<!--
+  The connect panel is the one place a token is entered, and it is a separate
+  screen rather than a dialog over the app: a debugger that cannot reach its
+  store has nothing to show, so saying so plainly beats an empty layout.
+-->
+<div id="connect" class="connect">
+  <form id="connect-form" class="card">
+    <h1>PA-BT Debug</h1>
+    <p class="lede">
+      This page reads a durable PA-BT run over a capability-gated local server.
+      Paste the capability the application issued.
+    </p>
+    <label for="capability">Capability</label>
+    <input id="capability" name="capability" type="password" autocomplete="off"
+           spellcheck="false" required>
+    <p class="note">
+      It is sent as the <code>X-PABT-Capability</code> request header, kept in this
+      tab's <code>sessionStorage</code>, and never placed in a URL. The
+      application prints it; the server writes it to no file.
+    </p>
+    <button type="submit">Connect</button>
+    <p id="connect-error" class="error" role="alert" hidden></p>
+  </form>
+</div>
+
+<script type="module" src="/debug/pabt/ui/js/app.mjs"></script>
+</body>
+</html>
