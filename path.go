@@ -48,6 +48,28 @@ type PathEntry[T Condition] struct {
 	effectsSummary   string
 }
 
+// isUnset reports whether an entry's optional condition reference was never set.
+//
+// It cannot be a comparison against nil, because a nil held in an interface is
+// only nil as an interface when T is itself the Condition interface. Over the
+// concrete condition pointer a plan is normally built with, an unset T is a
+// typed nil, which is not a nil interface: every entry without a condition - the
+// root included, since it is appended before the walk begins - read as having
+// one, and rendering it called a method on a nil receiver and panicked.
+// Comparing against the zero value of T is the one test that means the same
+// thing for both forms, and it keeps honouring an entry a caller built by hand,
+// which is a contract two tests in this file depend on.
+//
+// The two values are compared as any, so a T that is a slice, map, or function
+// panics on the comparison rather than on the method call that follows. A
+// Condition is a struct or a pointer in every use of this package, and the
+// alternative - asking the type through reflect - is not worth the cost on a
+// path walked once per rendered string.
+func isUnset[T any](v T) bool {
+	var zero T
+	return any(v) == any(zero)
+}
+
 // Path represents the execution path from root to the current active node.
 type Path[T Condition] []PathEntry[T]
 
@@ -241,7 +263,7 @@ func (p Path[T]) String() string {
 	for _, entry := range p {
 		s := entry.NodeType.String()
 		switch {
-		case any(entry.Condition) != nil:
+		case !isUnset(entry.Condition):
 			s += "(cond:" + entry.render(entry.Condition) + ")"
 		case len(entry.Effects) > 0:
 			if entry.effectsSummary != "" {
@@ -253,7 +275,7 @@ func (p Path[T]) String() string {
 				effectParts = append(effectParts, fmt.Sprintf("%v=%v", e.Key(), e.Value()))
 			}
 			s += "(" + strings.Join(effectParts, ",") + ")"
-		case any(entry.PostCondition) != nil:
+		case !isUnset(entry.PostCondition):
 			s += "(post:" + entry.render(entry.PostCondition) + ")"
 		}
 		parts = append(parts, s)

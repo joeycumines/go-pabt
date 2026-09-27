@@ -349,3 +349,81 @@ func TestPrinter_WithEffects(t *testing.T) {
 		t.Errorf("Printer output should contain x=done, got:\n%s", output)
 	}
 }
+
+// TestGetPathWithAConcreteConditionTypeRenders is the shape GetPath is called
+// with in real code, and it is not the shape the rest of this file tests.
+//
+// Every other case here goes through IPath, so T is the Condition interface and the
+// zero value is a nil interface, which a comparison against nil happens to catch.
+// A plan is normally built over a concrete condition pointer, where the zero value
+// is a typed nil: stored in an interface it is not nil, so the root entry - which
+// never had a condition at all - read as having one, and String called Key on a nil
+// receiver. The documented call, pabt.GetPath(plan).String(), panicked.
+func TestGetPathWithAConcreteConditionTypeRenders(t *testing.T) {
+	cond := &simpleCondition{key: "actor", value: "s5"}
+	variables := map[string]any{"actor": "s4"}
+	state := &concretePathState{variables: variables, apply: func() { variables["actor"] = "s5" }}
+	plan, err := New(state, []Conditions[*simpleCondition]{{cond}})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	for range 4 {
+		if status, tickErr := plan.Node().Tick(); tickErr == nil && status.String() == "Success" {
+			break
+		}
+	}
+	// The whole point: this must not panic, over a concrete T.
+	s := GetPath(plan).String()
+	if !strings.Contains(s, "GoalRoot") {
+		t.Errorf("Path.String() = %q, want it to contain GoalRoot", s)
+	}
+	// And a root entry with no condition must not claim one.
+	if strings.Contains(s, "cond:<nil>") {
+		t.Errorf("Path.String() = %q, rendered a nil condition as a declaration", s)
+	}
+}
+
+// concretePathState is a state for a plan over a concrete condition type.
+type concretePathState struct {
+	variables map[string]any
+	apply     func()
+}
+
+func (s *concretePathState) Variable(key any) (any, error) {
+	return s.variables[key.(string)], nil
+}
+
+func (s *concretePathState) Actions(failed *simpleCondition) ([]Action[*simpleCondition], error) {
+	return []Action[*simpleCondition]{&concretePathAction{state: s, failed: failed}}, nil
+}
+
+type concretePathEffect struct {
+	key   string
+	value any
+}
+
+func (e concretePathEffect) Key() any   { return e.key }
+func (e concretePathEffect) Value() any { return e.value }
+
+type concretePathAction struct {
+	state  *concretePathState
+	failed *simpleCondition
+}
+
+func (a *concretePathAction) Conditions() []Conditions[*simpleCondition] { return nil }
+
+func (a *concretePathAction) Effects() Effects {
+	return Effects{
+		concretePathEffect{key: "actor", value: "s5"},
+		concretePathEffect{key: "loc", value: "table"},
+	}
+}
+
+func (a *concretePathAction) Node() bt.Node {
+	return bt.New(func([]bt.Node) (bt.Status, error) {
+		if a.state.apply != nil {
+			a.state.apply()
+		}
+		return bt.Success, nil
+	})
+}
