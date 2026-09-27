@@ -750,13 +750,14 @@ func TestNewRemainsUncaptured(t *testing.T) {
 	if plan.capture.Load() != nil {
 		t.Error("a plan built with New published a capture")
 	}
-	// Ticking through the legacy entry point must still work unchanged.
+	// Ticking through Node, the entry point a plan built with New has always used,
+	// must still work unchanged.
 	tick, children := plan.Node()()
 	if tick == nil {
-		t.Fatal("legacy Node returned no tick")
+		t.Fatal("Node returned no tick")
 	}
 	if _, err := tick(children); err != nil {
-		t.Fatalf("legacy tick: %v", err)
+		t.Fatalf("tick: %v", err)
 	}
 }
 
