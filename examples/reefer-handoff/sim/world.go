@@ -214,43 +214,18 @@ func (w World) Occupant(n NodeID) (TractorID, bool) {
 	return "", false
 }
 
-// CheckExpectation reports why a command was decided against a world this one has
-// moved past, or ReasonNone when the command is still current.
-//
-// Only resource versions are a precondition. Expect.WorldSeq records what the
-// producer saw and is not a guard: in a busy world the sequence advances between
-// a plan pinning its frame and its command being reduced, so treating that as a
-// mismatch would refuse nearly every command. What must still hold is the version
-// of the specific thing the command acts on, because a placement aimed at a slot
-// whose plug was pulled, or a crossing of a lane whose topology moved, is acting
-// on a state that no longer exists.
-func (w World) CheckExpectation(c Command) Reason {
-	if c.Expect.WorldSeq > w.WorldSeq() {
-		return ReasonFromTheFuture
-	}
-	switch c.Kind {
-	case CmdPlace:
-		s, ok := w.Slot(c.Slot)
-		if !ok {
-			return ReasonUnknownEntity
-		}
-		if c.Expect.SlotVersion != s.Version {
-			return ReasonSlotMoved
-		}
-	case CmdMoveTo:
-		if c.Expect.LaneVersion != w.topology.Version() {
-			return ReasonLaneMoved
-		}
-	case CmdPickUp, CmdScanTag:
-		r, ok := w.Reefer(c.Reefer)
-		if !ok {
-			return ReasonUnknownEntity
-		}
-		if c.Expect.TagVersion != r.TagVersion {
-			return ReasonTagMoved
-		}
-	}
-	return ReasonNone
+// FromTheFuture reports a command that claims to have been framed against a world
+// this one has not reached. That is a transport fault and not a domain refusal:
+// nothing correct produces one, because a frame is taken from a world that
+// already exists. A command's expectation records the versions it was decided
+// against so a reader can see what it was reasoning over, but those versions are
+// not a precondition. The reducer re-reads the world as it stands when the
+// command is reduced and refuses anything it cannot act on, with a reason naming
+// the resource. Pre-filtering on the versions here would give the same physical
+// situation a different reason depending on when the command arrived, and a
+// refusal whose reason depends on timing is not a record.
+func (w World) FromTheFuture(c Command) bool {
+	return c.Expect.WorldSeq > w.WorldSeq()
 }
 
 // Route returns the lanes a tractor must cross to get from one node to another,

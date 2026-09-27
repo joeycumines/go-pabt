@@ -51,21 +51,27 @@ const startTimeout = 5 * time.Second
 
 // Result is what a producer learns about a command it submitted.
 //
-// Cancelled reports that the loop accepted the command and then withdrew it
-// because a cancel for the same key succeeded first.
+// Abandoned is set instead of a Receipt when the loop accepted the command and
+// then withdrew it without reducing it, either because a cancel arrived first or
+// because the run was torn down. It is deliberately not shaped like a receipt:
+// nothing was decided, so there is no outcome, no sequence, and nothing to record
+// in the world's ledger. A producer that gets one must not read it as a refusal
+// the world reached.
 type Result struct {
 	Receipt   Receipt
 	Events    []WorldEvent
-	Cancelled bool
+	Abandoned *Abandoned
 }
 
-// ErrNotStarted is returned by every entry point before Start has succeeded. A
-// task admitted to a loop that has not entered Run does not run on the callback
-// owner, so the loop refuses the work rather than quietly doing it elsewhere.
-var ErrNotStarted = errors.New("sim: world loop has not started")
+var (
+	// ErrNotStarted is returned by every entry point before Start has succeeded. A
+	// task admitted to a loop that has not entered Run does not run on the callback
+	// owner, so the loop refuses the work rather than quietly doing it elsewhere.
+	ErrNotStarted = errors.New("sim: world loop has not started")
 
-// ErrLoopTerminated is returned once the loop has stopped admitting.
-var ErrLoopTerminated = errors.New("sim: world loop has terminated")
+	// ErrLoopTerminated is returned once the loop has stopped admitting.
+	ErrLoopTerminated = errors.New("sim: world loop has terminated")
+)
 
 // WorldLoop is the single owner of the world.
 //
@@ -76,18 +82,22 @@ var ErrLoopTerminated = errors.New("sim: world loop has terminated")
 // is already buffered, so a callback can never be held up by a reader that has
 // gone away.
 //
-// Ordering is the loop's external task phase, which is first-in first-out. A
-// command is therefore reduced in the order it was admitted, and a command
-// submitted after another has been reduced sees the world the first one left.
+// The loop is the admission point, not a second authority. It does not decide
+// whether a command is acceptable: the reducer does, from the world as it stands
+// when the command is reduced, and its typed reasons are the ones a producer and
+// a debugger see. A transport-level pre-check that produced different reasons for
+// the same physical situation would make the reason for a refusal depend on
+// timing, which is the opposite of what a record is for.
 type WorldLoop struct {
 	loop *eventloop.Loop
 	mode Mode
 
 	// mu guards every field below, because producers on other goroutines read
 	// them. The owner takes it for the duration of the pure Reduce and the
-	// bookkeeping around it; a reader copies and releases. Nothing slow happens
-	// while it is held, so a callback cannot be blocked by an external reader for
-	// longer than one reduction.
+	// bookkeeping around it; a reader copies and releases.
+	//
+	// Nothing that blocks may run while it is held. A callback reduces a pure
+	// function and writes to a buffered channel, and that is all.
 	mu sync.Mutex
 
 	world World
@@ -105,15 +115,22 @@ type WorldLoop struct {
 	// it.
 	cancelled map[string]bool
 
-	// lastEvents holds what the most recent round boundary published. A boundary
-	// settles no command, so it has no channel and is read by draining.
-	lastEvents []WorldEvent
+	// events buffers what the round boundaries and the exogenous changes have
+	// published since the last drain. It is appended to, never replaced, so an
+	// event that ends the run is not thrown away by the next boundary that has
+	// nothing to say.
+	events []WorldEvent
 
 	running   bool
 	admitting bool
 	stopped   bool
+	runErr    error
 	timer     eventloop.TimerID
 	timed     bool
+
+	// drained closes once the loop's cleanup barrier has closed, so a second
+	// concurrent Shutdown joins the same teardown instead of returning early.
+	drained chan struct{}
 }
 
 // NewWorldLoop builds the loop. It admits nothing: a task handed to a loop that
@@ -131,6 +148,7 @@ func NewWorldLoop(mode Mode) (*WorldLoop, error) {
 		pending:   make(map[string]chan Result),
 		inFlight:  make(map[string]Command),
 		cancelled: make(map[string]bool),
+		drained:   make(chan struct{}),
 	}, nil
 }
 
@@ -147,28 +165,44 @@ func (w *WorldLoop) Start() error {
 	w.admitting = true
 	w.mu.Unlock()
 
-	go func() { _ = w.loop.Run(context.Background()) }()
+	runErr := make(chan error, 1)
+	go func() { runErr <- w.loop.Run(context.Background()) }()
 
 	// Wait for the owner rather than assume it. Run blocks until the loop exits,
 	// so a probe is the only way to know it started.
 	deadline := time.Now().Add(startTimeout)
 	for {
-		switch state := w.loop.State(); state {
+		switch w.loop.State() {
 		case eventloop.StateRunning, eventloop.StateSleeping:
-			w.started()
+			w.mu.Lock()
+			stopped, err := w.stopped, w.runErr
+			w.mu.Unlock()
+			if stopped {
+				// Run exited before it ever reached a running state, so the
+				// object must not go on reporting itself alive.
+				w.failStart(err)
+				return fmt.Errorf("sim: world loop exited before running: %v", err)
+			}
+			if w.mode == ModeRealtime {
+				w.armTimer()
+			}
 			return nil
 		}
 		if time.Now().After(deadline) {
+			w.failStart(fmt.Errorf("world loop did not reach the running state, last was %v", w.loop.State()))
 			return fmt.Errorf("sim: world loop did not reach the running state, last was %v", w.loop.State())
 		}
 		time.Sleep(time.Millisecond)
 	}
 }
 
-func (w *WorldLoop) started() {
-	if w.mode == ModeRealtime {
-		w.armTimer()
-	}
+// failStart puts the loop back into a state where it admits nothing, so a Start
+// that never reached an owner does not leave an object that looks alive.
+func (w *WorldLoop) failStart(err error) {
+	w.mu.Lock()
+	w.admitting = false
+	w.runErr = err
+	w.mu.Unlock()
 }
 
 // Submit admits a command from any goroutine and returns the channel its result
@@ -177,6 +211,10 @@ func (w *WorldLoop) started() {
 // Submitting a key that is already admitted and unsettled returns the same
 // channel rather than admitting the work twice, so a producer that retries
 // without waiting still ends up with one result.
+//
+// Ordering is the order in which Submit calls reach the loop, which is the order
+// the loop's external task phase drains. Two producers racing each other are not
+// ordered relative to one another, and nothing in this package promises they are.
 func (w *WorldLoop) Submit(c Command) (<-chan Result, error) {
 	w.mu.Lock()
 	switch {
@@ -201,7 +239,7 @@ func (w *WorldLoop) Submit(c Command) (<-chan Result, error) {
 	w.mu.Unlock()
 
 	if err := w.loop.Submit(func() { w.reduceOnOwner(c, ch) }); err != nil {
-		w.abandon(c.IdempotencyKey, ch)
+		w.abandon(c.IdempotencyKey, ch, ReasonAbandoned)
 	}
 	return ch, nil
 }
@@ -224,23 +262,40 @@ func (w *WorldLoop) Cancel(key string) bool {
 // channel that is already buffered.
 func (w *WorldLoop) reduceOnOwner(c Command, ch chan Result) {
 	if !w.loop.IsCallbackOwner() {
-		w.abandon(c.IdempotencyKey, ch)
+		w.abandon(c.IdempotencyKey, ch, ReasonAbandoned)
 		return
 	}
 
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
-	if w.cancelled[c.IdempotencyKey] {
-		delete(w.cancelled, c.IdempotencyKey)
-		w.finishLocked(c.IdempotencyKey, ch, Result{Cancelled: true})
+	// Once the loop has stopped admitting, a queued command is not reduced. The
+	// terminal drain still runs the tasks already queued, and without this the
+	// world would commit a change for a command its producer was already told
+	// never happened. Reconciliation has settled these keys by then, so the
+	// finishLocked guard below makes the two agree.
+	if !w.admitting {
 		return
 	}
 
-	// A command decided against a slot, lane, or tag that has since moved is
-	// refused here, before Reduce, so it cannot mutate anything.
-	if reason := w.world.CheckExpectation(c); reason != ReasonNone {
-		w.finishLocked(c.IdempotencyKey, ch, Result{Receipt: w.staleReceipt(c, reason)})
+	if w.cancelled[c.IdempotencyKey] {
+		delete(w.cancelled, c.IdempotencyKey)
+		w.finishLocked(c.IdempotencyKey, ch, Result{Abandoned: &Abandoned{
+			CommandID: c.ID, Reason: ReasonAbandoned,
+		}})
+		return
+	}
+
+	// Idempotency is Reduce's to answer. The loop does not pre-check it, because
+	// two owners of one rule is how they start disagreeing, and Reduce checks the
+	// ledger before anything else anyway.
+
+	// A command claiming to come from a world this one has not reached is a
+	// transport fault, not a domain refusal. Nothing correct produces one.
+	if w.world.FromTheFuture(c) {
+		w.finishLocked(c.IdempotencyKey, ch, Result{Abandoned: &Abandoned{
+			CommandID: c.ID, Reason: ReasonFromTheFuture,
+		}})
 		return
 	}
 
@@ -249,32 +304,16 @@ func (w *WorldLoop) reduceOnOwner(c Command, ch chan Result) {
 	w.finishLocked(c.IdempotencyKey, ch, Result{Receipt: receipt, Events: events})
 }
 
-// staleReceipt builds the receipt for a command the loop refused because the
-// state it was decided against has moved. It is counted in neither sequence: no
-// command reached the world, so there is nothing to order.
-func (w *WorldLoop) staleReceipt(c Command, reason Reason) Receipt {
-	return Receipt{
-		ID:             c.ID,
-		IdempotencyKey: c.IdempotencyKey,
-		Kind:           c.Kind,
-		Tractor:        c.Tractor,
-		WorldSeq:       w.world.WorldSeq(),
-		WorldRevision:  w.world.Revision(),
-		Outcome:        OutcomeRefused,
-		Reason:         reason,
-	}
-}
-
 // finishLocked removes a command from the in-flight set and delivers its result.
 // The caller holds the lock, and this is the channel's only writer, so the send
 // cannot block — with one exception that matters at shutdown.
 //
 // Reconciliation may have settled a key already, from the caller's goroutine,
-// before the owner's queued task gets its turn in the terminal drain. Sending
-// again would block forever on a channel whose single slot is already taken, and
-// the loop would never finish draining. So a key that is no longer outstanding is
-// dropped here rather than answered twice, which is what makes "settled exactly
-// once" hold across a teardown.
+// before the owner's queued task gets its turn. Sending again would block forever
+// on a channel whose single slot is already taken, and the loop would never finish
+// draining. So a key that is no longer outstanding is dropped here rather than
+// answered twice, which is what makes "settled exactly once" hold across a
+// teardown.
 func (w *WorldLoop) finishLocked(key string, ch chan Result, r Result) {
 	if _, outstanding := w.pending[key]; !outstanding {
 		return
@@ -285,23 +324,19 @@ func (w *WorldLoop) finishLocked(key string, ch chan Result, r Result) {
 }
 
 // abandon closes out a command that will never be reduced, so its producer is not
-// left waiting on a result that cannot arrive.
-func (w *WorldLoop) abandon(key string, ch chan Result) {
+// left waiting on a result that cannot arrive. It records no receipt: nothing was
+// decided, so there is nothing for the world's ledger to hold.
+func (w *WorldLoop) abandon(key string, ch chan Result, reason Reason) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	if _, still := w.pending[key]; !still {
 		return
 	}
-	r := Result{Receipt: Receipt{Outcome: OutcomeRefused, Reason: ReasonAbandoned}}
+	id := ""
 	if c, ok := w.inFlight[key]; ok {
-		r.Receipt.ID = c.ID
-		r.Receipt.IdempotencyKey = c.IdempotencyKey
-		r.Receipt.Kind = c.Kind
-		r.Receipt.Tractor = c.Tractor
+		id = c.ID
 	}
-	r.Receipt.WorldSeq = w.world.WorldSeq()
-	r.Receipt.WorldRevision = w.world.Revision()
-	w.finishLocked(key, ch, r)
+	w.finishLocked(key, ch, Result{Abandoned: &Abandoned{CommandID: id, Reason: reason}})
 }
 
 // Snapshot returns the world as it stands, copied under the lock, so a reader
@@ -325,13 +360,13 @@ func (w *WorldLoop) Abandoned() []Abandoned {
 	return out
 }
 
-// DrainRoundEvents returns and clears what the most recent round boundary
-// published. A boundary settles no command, so it has no result channel.
-func (w *WorldLoop) DrainRoundEvents() []WorldEvent {
+// DrainEvents returns and clears what the round boundaries and the exogenous
+// changes have published since the last drain.
+func (w *WorldLoop) DrainEvents() []WorldEvent {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	out := w.lastEvents
-	w.lastEvents = nil
+	out := w.events
+	w.events = nil
 	return out
 }
 
@@ -378,32 +413,37 @@ func (w *WorldLoop) beginRoundOnOwner() {
 	}
 	world, events := BeginRound(w.world)
 	w.world = world
-	// Appended, not replaced. A boundary that ends the run publishes the terminal
-	// event, and the boundary after it publishes nothing — replacing here would
-	// throw the end of the run away before a reader had drained it.
-	w.lastEvents = append(w.lastEvents, events...)
+	w.events = append(w.events, events...)
 }
 
-// Apply runs an exogenous change — the wind controller, the power desk — as a
-// world event on the owner. It is the same admission path a command takes, so an
-// exogenous change and a command are ordered against each other by the loop
-// rather than by whichever goroutine won a race.
-func (w *WorldLoop) Apply(change func(World) (World, []WorldEvent)) (<-chan []WorldEvent, error) {
+// Change is an exogenous world change: the wind controller closing a lane, the
+// power desk pulling a plug. It is admitted through the same path a command
+// takes, so an exogenous change and a command are ordered against each other by
+// the loop rather than by whichever goroutine won a race.
+//
+// The function runs on the owner with the loop's lock held, so it must be a pure
+// transition over the world. It must not block, perform I/O, or call back into
+// the loop: the lock is not reentrant.
+func (w *WorldLoop) Change(change func(World) (World, []WorldEvent)) (<-chan []WorldEvent, error) {
 	w.mu.Lock()
-	if !w.admitting {
+	switch {
+	case !w.running:
+		w.mu.Unlock()
+		return nil, ErrNotStarted
+	case !w.admitting:
 		w.mu.Unlock()
 		return nil, ErrLoopTerminated
 	}
 	w.mu.Unlock()
 
 	out := make(chan []WorldEvent, 1)
-	if err := w.loop.Submit(func() { w.applyOnOwner(change, out) }); err != nil {
+	if err := w.loop.Submit(func() { w.changeOnOwner(change, out) }); err != nil {
 		out <- nil
 	}
 	return out, nil
 }
 
-func (w *WorldLoop) applyOnOwner(change func(World) (World, []WorldEvent), out chan []WorldEvent) {
+func (w *WorldLoop) changeOnOwner(change func(World) (World, []WorldEvent), out chan []WorldEvent) {
 	if !w.loop.IsCallbackOwner() {
 		out <- nil
 		return
@@ -416,22 +456,34 @@ func (w *WorldLoop) applyOnOwner(change func(World) (World, []WorldEvent), out c
 	}
 	world, events := change(w.world)
 	w.world = world
-	w.lastEvents = events
+	w.events = append(w.events, events...)
 	out <- events
 }
 
 // Shutdown stops admitting, cancels the realtime timer, and reconciles anything
 // still in flight before the loop is closed. It returns once the loop's cleanup
-// barrier has closed, so a caller knows no work is outstanding afterwards.
+// barrier has closed, so a caller knows no work is outstanding afterwards — and a
+// second caller joins the same barrier rather than returning early, because "no
+// work is outstanding" is a claim about the whole teardown and not about the
+// caller that happened to arrive first.
 //
 // It is safe to call more than once, which matters because a test's cleanup and
-// its own teardown both want it and the second call must not fail on a loop that
-// has already terminated.
+// its own teardown both want it.
 func (w *WorldLoop) Shutdown(ctx context.Context) error {
 	w.mu.Lock()
-	if !w.running || w.stopped {
+	if !w.running {
 		w.mu.Unlock()
 		return nil
+	}
+	if w.stopped {
+		drained := w.drained
+		w.mu.Unlock()
+		select {
+		case <-drained:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
 	}
 	w.admitting = false
 	w.stopped = true
@@ -444,37 +496,44 @@ func (w *WorldLoop) Shutdown(ctx context.Context) error {
 		_ = w.loop.CancelTimer(timer)
 	}
 
+	// Reconcile before stopping the loop, so a producer is answered before the
+	// owner stops draining. The drain then finds every key already settled and
+	// reduces nothing.
 	w.reconcile()
 
 	if err := w.loop.Shutdown(ctx); err != nil {
+		w.closeDrained()
 		return fmt.Errorf("sim: shutting the world loop down: %w", err)
 	}
 	select {
 	case <-w.loop.Done():
 	case <-ctx.Done():
+		w.closeDrained()
 		return ctx.Err()
 	}
+	w.closeDrained()
 	return nil
 }
 
+func (w *WorldLoop) closeDrained() {
+	select {
+	case <-w.drained:
+	default:
+		close(w.drained)
+	}
+}
+
 // reconcile settles every command still in flight. Without this a producer would
-// wait on a result that cannot arrive, because the loop is about to stop
-// reducing. It runs on the caller's goroutine rather than a callback, because by
-// this point the loop is no longer admitting and a callback would not run.
+// wait on a result that cannot arrive, because the loop is no longer reducing.
 func (w *WorldLoop) reconcile() {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	for key, ch := range w.pending {
-		r := Result{Receipt: Receipt{Outcome: OutcomeRefused, Reason: ReasonAbandoned}}
+		id := ""
 		if c, ok := w.inFlight[key]; ok {
-			r.Receipt.ID = c.ID
-			r.Receipt.IdempotencyKey = c.IdempotencyKey
-			r.Receipt.Kind = c.Kind
-			r.Receipt.Tractor = c.Tractor
+			id = c.ID
 		}
-		r.Receipt.WorldSeq = w.world.WorldSeq()
-		r.Receipt.WorldRevision = w.world.Revision()
-		w.finishLocked(key, ch, r)
+		w.finishLocked(key, ch, Result{Abandoned: &Abandoned{CommandID: id, Reason: ReasonAbandoned}})
 	}
 	w.cancelled = make(map[string]bool)
 }

@@ -299,6 +299,20 @@ type Receipt struct {
 }
 ```
 
+The versions in `Expect` are **provenance, not a precondition.** A command is
+reduced against the world as it stands, and the reducer refuses anything it cannot
+act on with a reason naming the resource that moved. Pre-filtering on the versions
+at the transport would give one physical situation two different reasons depending
+on when the command arrived: a placement into a slot that was taken would be
+`SlotMoved` or `SlotOccupied` depending on timing, and one into a slot that lost
+power would be `SlotMoved` rather than `SlotUnpowered`. A refusal whose reason
+depends on timing is not a record. The versions are kept so a reader can see what
+world the runner was reasoning over.
+
+`WorldSeq` is the one exception: a command framed against a world this one has not
+reached is a transport fault rather than a domain refusal, and is withdrawn rather
+than refused.
+
 `Outcome` has no stale or abandoned member, because a command that is not reduced
 is not a receipt at all — see reconciliation below.
 
@@ -311,16 +325,37 @@ a refusal is visible in the receipt ledger with the sequence it did not move.
 
 **Fencing.** A receipt is discarded, and can neither mutate state nor report
 success, when its `PlanID` or `Generation` is not the runner's current generation,
-when its `ActionID` is not present in the current tree, or when any `Expect` field
-no longer matches the world. A fenced receipt is counted and shown as fenced; it
-is not silently dropped.
+when its `ActionID` is not present in the current tree, or when its
+`Expect.WorldSeq` is ahead of the world. The resource versions in `Expect` are not
+a fence, for the reason given above. A fenced receipt is counted and shown as
+fenced; it is not silently dropped.
+
+**One authority.** The transport admits, orders, and reconciles. It does not decide
+whether a command is acceptable. The reducer does that, from the world as it stands
+when the command is reduced, and its typed reasons are the ones a producer and a
+debugger see. Once a command has been reduced, a replay of its key returns the
+receipt that already exists, and the reducer owns that rule alone.
 
 **Reconciliation.** An admitted command that is never reduced would leave a runner
 waiting on a receipt that does not exist, and section 9 records a measured case
-where that happens. So shutdown reconciliation publishes an explicit
-`Abandoned(id)` for every admitted command with no receipt, and a runner holding an
-in-flight command with no receipt at reconciliation enters its `Blocked` state and
-names the command. It never waits forever.
+where that happens. So shutdown stops admitting, then settles every admitted
+command with no receipt as `Abandoned`, and a runner holding an in-flight command
+with no receipt enters its `Blocked` state and names the command. It never waits
+forever.
+
+`Abandoned` is deliberately not a receipt. Nothing was decided, so there is no
+outcome, no sequence, and nothing for the world's ledger to hold, and a runner that
+read it as a refusal would be reading a decision the world never made. The same
+marker covers a command withdrawn by a cancel and a command framed against a world
+that has not happened.
+
+**A withdrawn command changes nothing.** Once the loop has stopped admitting, a
+command still sitting in the loop's queue is not reduced, even though the loop's
+terminal drain runs queued work. Without that rule the world would commit a change
+for a command its producer had already been told never happened, and the ledger
+would hold an applied receipt beside the abandoned one. A key is settled exactly
+once across a teardown: reconciliation fills the result, and the drained task
+finds the key already gone and answers nothing.
 
 **Progress and its limits.** A pabt tick returns a `bt.Status` — `bt.Success`,
 `bt.Failure`, or `bt.Running` — plus a separate error. The runner's own states

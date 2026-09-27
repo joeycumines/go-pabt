@@ -135,12 +135,9 @@ const (
 	ReasonWorldComplete Reason = "WorldComplete"
 	ReasonWorldCutoff   Reason = "WorldCutoff"
 
-	// A command whose Expectation no longer matches the world. These are refused
-	// by the loop before the reducer sees them, so they change nothing and enter
-	// neither sequence.
-	ReasonSlotMoved     Reason = "SlotMoved"
-	ReasonLaneMoved     Reason = "LaneMoved"
-	ReasonTagMoved      Reason = "TagMoved"
+	// ReasonFromTheFuture is a transport fault rather than a domain refusal: a
+	// command framed against a world that has not happened. It is withdrawn and
+	// settled with an Abandoned marker, so it reaches no sequence and no ledger.
 	ReasonFromTheFuture Reason = "FromTheFuture"
 
 	// ReasonUnknownEntity names a command addressed to something the world does
@@ -220,10 +217,13 @@ type WorldEvent struct {
 	CauseCommand string
 }
 
-// Abandoned marks a command the world admitted and then never reduced, which
-// happens when an immediate close discards admitted work. A runner waiting on a
-// receipt that will never arrive reads this instead of waiting forever, and it
-// is published during shutdown reconciliation rather than by Reduce.
+// Abandoned marks a command the loop admitted and then withdrew without reducing:
+// a cancel that arrived first, a teardown that reconciled it, an immediate close
+// that discarded it, or a command framed against a world that has not happened.
+//
+// It is deliberately not a Receipt. Nothing was decided, so there is no outcome,
+// no sequence, and nothing for the world's ledger to hold, and a runner that
+// treated it as a refusal would be reading a decision the world never made.
 type Abandoned struct {
 	CommandID string
 	Reason    Reason
