@@ -1135,6 +1135,61 @@ func TestACustomRouteUnderTheDurableSetIsStillBehindTheCapability(t *testing.T) 
 		})
 	}
 
+	// The spellings the completion gate's probe tried beyond the three above. Each is
+	// a way of writing the namespace, or of a path through it, that a raw prefix test
+	// reads differently from the mux: an escape on the first segment, an escape on the
+	// last, an escape on the separator, a wildcard that could match a leading segment,
+	// a doubled separator, and a dot segment that cleans back into the namespace.
+	// None may answer with the handler's body and no capability.
+	for _, spelling := range []struct{ pattern, request string }{
+		{"/%44ebug/pabt/control", "/debug/pabt/control"},
+		{"/debug/pabt%2Fescaped", "/debug/pabt/escaped"},
+		{"/%64ebug/pabt/", "/debug/pabt/anything"},
+		{"/debug//pabt/doubled", "/debug//pabt/doubled"},
+		{"/debug/pabt/../pabt/dotted", "/debug/pabt/dotted"},
+	} {
+		t.Run("spelling "+spelling.pattern, func(t *testing.T) {
+			f := newDurableFixture(t, 1)
+			f.waitReady(t)
+			func() {
+				defer func() { _ = recover() }()
+				f.server.HandleFunc(spelling.pattern, planted)
+			}()
+			resp, body := f.getUnauthenticated(t, spelling.request)
+			if resp.StatusCode == http.StatusOK && strings.Contains(string(body), "planted") {
+				t.Errorf("%s answered %s with the handler's body and no capability: %d %s",
+					spelling.pattern, spelling.request, resp.StatusCode, body)
+			}
+		})
+	}
+
+	// A pattern that only *contains* the namespace is not in it, and the guard must not
+	// pretend otherwise. "/{any}/debug/pabt/wild" serves "/X/debug/pabt/wild", which is
+	// a path the namespace does not cover, so that route is the caller's own and the
+	// boundary does not speak to it. What matters is the other half: such a pattern
+	// must not become a way to read anything inside the namespace, which is asserted
+	// here rather than left to the reader's trust in the precedence rules.
+	t.Run("a pattern outside the namespace cannot reach inside it", func(t *testing.T) {
+		f := newDurableFixture(t, 1)
+		f.waitReady(t)
+		f.server.HandleFunc("/{any}/debug/pabt/wild", planted)
+
+		// Its own path is outside the guard, and that is the intended shape.
+		resp, body := f.getUnauthenticated(t, "/X/debug/pabt/wild")
+		if resp.StatusCode != http.StatusOK || !strings.Contains(string(body), "planted") {
+			t.Errorf("the caller's own route = %d %s", resp.StatusCode, body)
+		}
+		// A real data route is still refused without the token. The subtree guard is
+		// more specific than a leading wildcard, so a catch-all cannot shadow it.
+		for _, path := range []string{"/debug/pabt/custom", "/debug/pabt/records/1", "/debug/pabt"} {
+			resp, body := f.getUnauthenticated(t, path)
+			if resp.StatusCode == http.StatusOK && strings.Contains(string(body), "planted") {
+				t.Errorf("a pattern containing the namespace answered %s without the capability: %d %s",
+					path, resp.StatusCode, body)
+			}
+		}
+	})
+
 	// An escaped spelling of a route the server already owns is a duplicate, and the
 	// guard is what turns that into a refusal rather than a second way in. Sending it
 	// to the outer mux would register it there as well, and the panic would never
