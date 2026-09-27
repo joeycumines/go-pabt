@@ -52,7 +52,6 @@ type HUDState struct {
 	Scenario    string
 	SearchMode  bool
 	SearchQuery string
-	SearchCount int
 	Toast       string
 	ToastUntil  time.Time
 }
@@ -239,25 +238,28 @@ func RenderTopBar(screen tcell.Screen, harbor *hsim.Harbor) {
 		}
 		screen.SetContent(x, 0, ch, nil, titleStyle)
 	}
-	// Actor status: fixed-width columns for 4 actors
+	// One column per actor, showing where it is. A carrier's tick status and its
+	// plan's node count used to be read out of a live tree; nothing in this process
+	// knows either of them, so they are not on screen. A column reading "idle" and
+	// "N=0" forever is a number nobody computed, which is worse than a missing one.
 	actorStyle := tcell.StyleDefault.Foreground(tcell.NewRGBColor(180, 200, 220)).Background(tcell.NewRGBColor(30, 30, 70))
 	colX := len(title)
 	for i, sp := range actors {
 		if i >= 4 || colX >= 78 {
 			break
 		}
-		status := "idle"
-		nodeCount := 0
-		tickCount := int(state.Tick)
 		// Short ID: CRANE-0 -> C0, HUMAN -> HF
 		shortID := sp.ID
 		if len(shortID) > 6 {
 			shortID = shortID[:6]
 		}
-		part := fmt.Sprintf(" %s:%-4s N=%-4d T=%-4d", shortID, status, nodeCount, tickCount)
+		held := ""
+		if sp.HeldItem != nil {
+			held = " +"
+		}
+		part := fmt.Sprintf(" %s(%2d,%2d)%s", shortID, int(sp.X), int(sp.Y), held)
 		partStyle := actorStyle
-		// Highlight active actors
-		if status != "idle" && status != "Fail" {
+		if sp.HeldItem != nil {
 			partStyle = partStyle.Foreground(tcell.NewRGBColor(255, 220, 100))
 		}
 		for _, ch := range part {
@@ -275,7 +277,9 @@ func RenderTopBar(screen tcell.Screen, harbor *hsim.Harbor) {
 	}
 }
 
-// RenderBottomHUD draws delta/overflow/timeline/breakpoint info plus sparkline and command deck state.
+// RenderBottomHUD draws the scenario state, the sparkline, and the command deck. Every field
+// on it comes from the harbor or from the key that was pressed; the metrics that used
+// to sit here were read out of a live tree and have no source in this process.
 func RenderBottomHUD(screen tcell.Screen, harbor *hsim.Harbor, sparkline []int, hud *HUDState) {
 	yBase := 1 + HarborHeight
 	// line 1: metrics strip with structured layout
@@ -377,7 +381,8 @@ func RenderBottomHUD(screen tcell.Screen, harbor *hsim.Harbor, sparkline []int, 
 	}
 	// line 3: keybindings with visual grouping
 	helpItems := []struct{ key, desc string }{
-		{"q", "quit"}, {"p", "pause"}, {"s", "step"}, {"+/-", "spd"}, {"c", "scen"}, {"r", "rank"}, {"B", "bel"}, {"b", "bp"}, {"/", "find"},
+		{"q", "quit"}, {"p", "pause"}, {"s", "step"}, {"+/-", "spd"},
+		{"c", "scen"}, {"r", "rank"}, {"B", "bel"},
 	}
 	hx := 0
 	keyStyle := tcell.StyleDefault.Foreground(tcell.NewRGBColor(200, 200, 220)).Bold(true)
@@ -417,7 +422,7 @@ func RenderBottomHUD(screen tcell.Screen, harbor *hsim.Harbor, sparkline []int, 
 	}
 	if hud != nil && hud.SearchMode {
 		searchStyle := tcell.StyleDefault.Foreground(tcell.NewRGBColor(255, 255, 200)).Background(tcell.NewRGBColor(40, 40, 80)).Bold(true)
-		prompt := fmt.Sprintf(" /%s█ %d ", hud.SearchQuery, hud.SearchCount)
+		prompt := fmt.Sprintf(" /%s█ ", hud.SearchQuery)
 		for i, ch := range prompt {
 			if i < 80 {
 				screen.SetContent(i, yBase+1, ch, nil, searchStyle)
@@ -519,7 +524,6 @@ func runWithScreen(ctx context.Context, screen tcell.Screen, harbor *hsim.Harbor
 				if hud.SearchMode && (ev.Key() == tcell.KeyEnter || ev.Key() == tcell.KeyEscape) {
 					hud.SearchMode = false
 					hud.SearchQuery = ""
-					hud.SearchCount = 0
 					break
 				}
 				switch ev.Key() {
@@ -591,7 +595,6 @@ func runWithScreen(ctx context.Context, screen tcell.Screen, harbor *hsim.Harbor
 					case '/':
 						hud.SearchMode = true
 						hud.SearchQuery = ""
-						hud.SearchCount = 0
 					}
 				}
 			case *tcell.EventResize:

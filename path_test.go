@@ -427,3 +427,60 @@ func (a *concretePathAction) Node() bt.Node {
 		return bt.Success, nil
 	})
 }
+
+// sliceFieldCondition is a condition that cannot be compared.
+//
+// A struct holding a slice is just as uncomparable as a slice is, and far more
+// ordinary as a type for an application to write. isUnset used to compare two
+// values with ==, so a plan over this type panicked in String() rather than
+// rendering. The comparison now goes through sameValue, which reports "not the
+// same" for a pair it cannot compare.
+type sliceFieldCondition struct {
+	key    string
+	values []string
+}
+
+func (c sliceFieldCondition) Key() any       { return c.key }
+func (c sliceFieldCondition) Match(any) bool { return false }
+
+// uncomparablePathState is a state whose condition type cannot be compared.
+//
+// The condition is held and passed BY VALUE, which is the whole point: a pointer is
+// always comparable, so a test over *sliceFieldCondition would exercise the case
+// that works and prove nothing about the case that does not.
+type uncomparablePathState struct{ variables map[string]any }
+
+func (s *uncomparablePathState) Variable(key any) (any, error) {
+	return s.variables[key.(string)], nil
+}
+
+func (s *uncomparablePathState) Actions(sliceFieldCondition) (
+	[]Action[sliceFieldCondition], error,
+) {
+	return nil, nil
+}
+
+func TestPathStringOverAnUncomparableConditionType(t *testing.T) {
+	variables := map[string]any{"actor": "s4"}
+	state := &uncomparablePathState{variables: variables}
+	plan, err := New[sliceFieldCondition](state, []Conditions[sliceFieldCondition]{
+		{sliceFieldCondition{key: "actor", values: []string{"s5"}}},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	for range 4 {
+		if status, tickErr := plan.Node().Tick(); tickErr == nil && status.String() == "Success" {
+			break
+		}
+	}
+	// A comparison here is a run-time panic on an uncomparable type, so before
+	// sameValue this call took the process down rather than returning a string.
+	s := GetPath(plan).String()
+	if s == "" {
+		t.Error("Path.String() is empty")
+	}
+	if !strings.Contains(s, "GoalRoot") {
+		t.Errorf("Path.String() = %q, want it to contain GoalRoot", s)
+	}
+}

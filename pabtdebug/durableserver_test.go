@@ -1039,62 +1039,134 @@ func TestABadParameterOrAnUnreachableSequenceIsABadRequest(t *testing.T) {
 }
 
 func TestACustomRouteUnderTheDurableSetIsStillBehindTheCapability(t *testing.T) {
-	f := newDurableFixture(t, 1)
-	f.waitReady(t)
-	// Registering a handler is an in-process mistake waiting to happen: on the outer
-	// mux a named pattern wins over the subtree guard, so the route would answer
-	// without the capability. The registration goes on the guarded set instead.
 	planted := func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"secret":"planted"}`))
 	}
-	// Three spellings, because the decision is a string test and each one can go wrong
-	// on its own: inside the subtree, the bare prefix, and a path beside the prefix.
-	// The fourth is host-qualified, where the pattern does not begin with the path at
-	// all, and a caller that registers the durable namespace under another host would
-	// otherwise answer without the check.
-	for _, pattern := range []string{
-		"/debug/pabt/custom",
-		"/debug/pabt",
-		"/debug/pabtbeside",
-		f.server.Addr() + "/debug/pabt/hosted",
+	// Four spellings on one server, because each is a route of its own: inside the
+	// subtree, the bare prefix, a path beside the prefix, and one named for a host.
+	// A path beside the prefix is the case a prefix test gets wrong in the other
+	// direction - it is outside the subtree, so the guard does not cover it, and it
+	// has to be registered wrapped rather than dropped.
+	t.Run("distinct routes", func(t *testing.T) {
+		f := newDurableFixture(t, 1)
+		f.waitReady(t)
+		for _, path := range []string{"/debug/pabt/custom", "/debug/pabt", "/debug/pabtbeside"} {
+			f.server.HandleFunc(path, planted)
+		}
+		for _, path := range []string{"/debug/pabt/custom", "/debug/pabt", "/debug/pabtbeside"} {
+			resp, body := f.getUnauthenticated(t, path)
+			if resp.StatusCode != http.StatusUnauthorized {
+				t.Errorf("%s answered without the capability: %d %s", path, resp.StatusCode, body)
+			}
+		}
+		// And each one works for a caller that presents the token, or registering it
+		// would have been useless rather than merely unsafe.
+		resp, body := f.get(t, "/debug/pabt/custom")
+		if resp.StatusCode != http.StatusOK || !strings.Contains(string(body), "planted") {
+			t.Errorf("an authenticated custom route = %d %s", resp.StatusCode, body)
+		}
+		resp, body = f.get(t, "/debug/pabtbeside")
+		if resp.StatusCode != http.StatusOK || !strings.Contains(string(body), "planted") {
+			t.Errorf("an authenticated route beside the prefix = %d %s", resp.StatusCode, body)
+		}
+	})
+
+	// A host-qualified pattern never matches a request, because the mux compares the
+	// pattern's host against the request's with the port stripped. The property worth
+	// asserting is therefore not that the host is handled but that naming a host
+	// cannot become a way past the guard: asked for, authenticated, it is not a
+	// route, and the request is not refused by a route that would have answered
+	// without the token.
+	t.Run("host qualified", func(t *testing.T) {
+		f := newDurableFixture(t, 1)
+		f.waitReady(t)
+		f.server.HandleFunc(f.server.Addr()+"/debug/pabt/hosted", planted)
+		resp, body := f.get(t, "/debug/pabt/hosted")
+		if resp.StatusCode != http.StatusNotFound {
+			t.Errorf("a host-qualified pattern answered %d, want 404: %s", resp.StatusCode, body)
+		}
+	})
+
+	// The decision cannot be made on the pattern as written, because the mux does not
+	// read it as written: net/http percent-decodes both a registered literal segment
+	// and a request path before matching them. "/%64ebug/pabt/custom" is a route in
+	// the namespace while containing no literal "/debug/pabt/" for a prefix test to
+	// find, and a named pattern is more specific than the subtree guard - so sent to
+	// the outer mux it answers without the capability.
+	//
+	// Each spelling gets its own server, because each one IS a route the server
+	// already has: they are the same routes written with an escape, and registering
+	// both spellings is a duplicate the mux rejects. The bypass being guarded
+	// against is a caller who writes the namespace that way and does not write the
+	// plain way.
+	for _, spelling := range []struct{ pattern, request string }{
+		{"/%64ebug/pabt/custom", "/debug/pabt/custom"},
+		{"/debug%2fpabt/custom", "/debug/pabt/custom"},
+		{"//debug/pabt/custom", "/debug/pabt/custom"},
 	} {
-		f.server.HandleFunc(pattern, planted)
-		path := pattern
-		if slash := strings.IndexByte(path, '/'); slash > 0 {
-			path = path[slash:]
-		}
-		req, err := http.NewRequest(http.MethodGet, "http://"+f.server.Addr()+path, nil)
-		if err != nil {
-			t.Fatalf("request %s: %v", pattern, err)
-		}
-		resp, err := f.client.Do(req)
-		if err != nil {
-			t.Fatalf("do %s: %v", pattern, err)
-		}
-		body, _ := io.ReadAll(resp.Body)
-		_ = resp.Body.Close()
-		if resp.StatusCode != http.StatusUnauthorized {
-			t.Errorf("%s answered without the capability: %d %s", pattern, resp.StatusCode, body)
-		}
+		t.Run("escaped "+spelling.pattern, func(t *testing.T) {
+			f := newDurableFixture(t, 1)
+			f.waitReady(t)
+			f.server.HandleFunc(spelling.pattern, planted)
+			resp, body := f.getUnauthenticated(t, spelling.request)
+			if resp.StatusCode != http.StatusUnauthorized {
+				t.Errorf("%s answered %s without the capability: %d %s",
+					spelling.pattern, spelling.request, resp.StatusCode, body)
+			}
+			// Authenticated, the answer depends on whether the mux can still match the
+			// pattern. Escaping one character leaves the segment structure intact, so
+			// that route answers. Escaping the separator or doubling it introduces a
+			// segment the canonical path does not have, so the pattern is registered
+			// and unreachable. Both are safe outcomes; what must never happen is the
+			// planted body appearing at all without the token, which is the assertion
+			// above.
+			resp, body = f.get(t, spelling.request)
+			switch resp.StatusCode {
+			case http.StatusOK:
+				if !strings.Contains(string(body), "planted") {
+					t.Errorf("%s authenticated served %q, want the handler", spelling.pattern, body)
+				}
+			case http.StatusNotFound:
+			default:
+				t.Errorf("%s authenticated = %d, want 200 or 404: %s",
+					spelling.pattern, resp.StatusCode, body)
+			}
+		})
 	}
-	// And the route still works for a caller that presents the token, or registering it
-	// would have been useless rather than merely unsafe.
-	req, err := http.NewRequest(http.MethodGet,
-		"http://"+f.server.Addr()+"/debug/pabt/custom", nil)
-	if err != nil {
-		t.Fatalf("request: %v", err)
-	}
-	req.Header.Set(capabilityHeader, f.server.Capability())
-	resp, err := f.client.Do(req)
-	if err != nil {
-		t.Fatalf("do: %v", err)
-	}
-	body, _ := io.ReadAll(resp.Body)
-	_ = resp.Body.Close()
-	if resp.StatusCode != http.StatusOK || !strings.Contains(string(body), "planted") {
-		t.Errorf("an authenticated custom route = %d %s", resp.StatusCode, body)
-	}
+
+	// An escaped spelling of a route the server already owns is a duplicate, and the
+	// guard is what turns that into a refusal rather than a second way in. Sending it
+	// to the outer mux would register it there as well, and the panic would never
+	// happen - two handlers for one path, and no warning which of them answers.
+	t.Run("escaped spelling of an owned route is refused", func(t *testing.T) {
+		f := newDurableFixture(t, 1)
+		f.waitReady(t)
+		defer func() {
+			if recover() == nil {
+				t.Error("registering an escaped spelling of an owned route did not refuse")
+			}
+		}()
+		f.server.HandleFunc("/%64ebug/pabt/records/{sequence}", planted)
+	})
+
+	// The shell prefix is the other side of the same coin: the outer mux owns it, so
+	// a handler registered there can never be reached, with or without a token. A
+	// registration that silently does nothing is worse than one that says so.
+	t.Run("the shell prefix is refused", func(t *testing.T) {
+		for _, pattern := range []string{"/debug/pabt/ui", "/debug/pabt/ui/extra"} {
+			func() {
+				defer func() {
+					if recover() == nil {
+						t.Errorf("registering %q did not refuse", pattern)
+					}
+				}()
+				f := newDurableFixture(t, 0)
+				f.waitReady(t)
+				f.server.HandleFunc(pattern, planted)
+			}()
+		}
+	})
 }
 
 // A representation row for a record that committed no tree is a contradiction the

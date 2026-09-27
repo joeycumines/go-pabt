@@ -56,18 +56,39 @@ type PathEntry[T Condition] struct {
 // typed nil, which is not a nil interface: every entry without a condition - the
 // root included, since it is appended before the walk begins - read as having
 // one, and rendering it called a method on a nil receiver and panicked.
-// Comparing against the zero value of T is the one test that means the same
-// thing for both forms, and it keeps honouring an entry a caller built by hand,
-// which is a contract two tests in this file depend on.
+// Comparing against the zero value of T is the one test that means the same thing
+// for both forms, and it keeps honouring an entry a caller built by hand, which
+// is a contract two tests in this file depend on.
 //
-// The two values are compared as any, so a T that is a slice, map, or function
-// panics on the comparison rather than on the method call that follows. A
-// Condition is a struct or a pointer in every use of this package, and the
-// alternative - asking the type through reflect - is not worth the cost on a
-// path walked once per rendered string.
+// A T that cannot be compared has no such test. That is not only a slice, map, or
+// function type: a struct holding one of those fields is just as uncomparable, and
+// a struct-valued condition with a slice field is far more ordinary than a
+// slice-valued one. Comparing it panics, and this function used to be a
+// comparison. So the comparison is made through sameValue, which reports "not the
+// same" for a type it cannot compare rather than taking the process down with it.
+//
+// The fallback is "set", which is what a comparison against nil already said for
+// every one of those types. A condition that has no comparable form is an
+// application's own shape to make sense of, and this function's job is to stop
+// reporting a typed nil as a value - not to decide what a struct's zero field
+// means. Asking the type through reflect would answer it, and would cost a
+// reflect.Value on a path walked once per rendered string.
 func isUnset[T any](v T) bool {
 	var zero T
-	return any(v) == any(zero)
+	return sameValue(any(v), any(zero))
+}
+
+// sameValue reports whether two values are equal, and reports false for a pair it
+// cannot compare.
+//
+// Comparing two any values whose dynamic type is uncomparable is a run-time panic
+// in net/http's own idiom and in this one's: a struct with a slice field, a slice,
+// a map, a function. The recover is what makes the question answerable rather than
+// fatal, and it is here rather than at the call site because the caller cannot
+// tell which T it was handed.
+func sameValue(a, b any) (same bool) {
+	defer func() { _ = recover() }()
+	return a == b
 }
 
 // Path represents the execution path from root to the current active node.

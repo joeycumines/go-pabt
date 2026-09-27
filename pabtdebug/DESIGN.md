@@ -216,6 +216,11 @@ two-viewports-tall body described in section 5.
   cried wolf on every move. A dropped connection left the page frozen with a
   plausible but stale history. Each is now pinned by a test that fails against the
   code it replaced.
+- **2026-09-27 (`cd41f6b`):** The route namespace lost its version suffix, so
+  `js/api.mjs`'s base is `/debug/pabt` and the shell, the guard, and the eight
+  modules moved with it. The client's own layout, tokens, and evidence rendering
+  are unchanged, which is the claim to check: a route rename that altered a pixel
+  would have been a layout change wearing a rename's clothes.
 - **2026-09-26, later the same day (`fd77480`):** The planner stopped formatting effect *values*
   into an action's name. A name is plain text: no codec, no redaction walk, no
   diagnostic sanitizer. A value in one is a secret in every record that mentions

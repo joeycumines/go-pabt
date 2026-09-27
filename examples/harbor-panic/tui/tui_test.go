@@ -318,9 +318,13 @@ func screenRow(t *testing.T, screen tcell.Screen, y int) string {
 	return sb.String()
 }
 
-// TestTuiSparklineRealData verifies the sparkline tracks the harbor's own tick
-// rather than being a flat line. It reads the value the run loop appends, so it
-// fails if the loop stops feeding it, not merely if the append is non-empty.
+// TestTuiSparklineRealData verifies the quantity the sparkline plots - the
+// harbor's own tick - advances rather than sitting flat.
+//
+// It builds the series itself rather than reading the run loop's, so what it
+// establishes is that the plotted quantity is the advancing one. That the loop
+// appends it is established by TestTuiHeadlessRendering, which renders the HUD
+// after the loop has run.
 func TestTuiSparklineRealData(t *testing.T) {
 	harbor := hsim.NewHarbor(0, 0, 42)
 	actors := harbor.State().Actors()
@@ -460,7 +464,6 @@ func TestTuiRenderBottomHUDModes(t *testing.T) {
 	// Search overlay renders on the HUD's second line when active.
 	hud.SearchMode = true
 	hud.SearchQuery = "Action"
-	hud.SearchCount = 3
 	screen.Clear()
 	RenderBottomHUD(screen, harbor, []int{2, 4, 6}, hud)
 	screen.Show()

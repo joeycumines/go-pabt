@@ -3,9 +3,9 @@
 
    Every request carries the capability in a header and nowhere else. That is the
    server's boundary, not a habit: a token in a query string is a token in an
-   access log, in a referrer, and in a shell history, and the server's route test refuses
-   a token offered any other way. The same reason rules out EventSource, which
-   cannot set a header, which is why the stream in stream.js reads the body.
+   access log, in a referrer, and in a shell history, and the server's route test
+   refuses a token offered any other way. The same reason rules out EventSource,
+   which cannot set a header, which is why stream.mjs reads the body off fetch.
 */
 
 import { parseJSON } from "./lossless.mjs";
