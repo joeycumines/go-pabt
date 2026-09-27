@@ -131,9 +131,17 @@ const (
 	ReasonTagReadable     Reason = "TagReadable"
 
 	// Phase. Both terminal phases refuse every command, which is what makes them
-	// terminal rather than advisory.
+	// terminal and not advisory.
 	ReasonWorldComplete Reason = "WorldComplete"
 	ReasonWorldCutoff   Reason = "WorldCutoff"
+
+	// A command whose Expectation no longer matches the world. These are refused
+	// by the loop before the reducer sees them, so they change nothing and enter
+	// neither sequence.
+	ReasonSlotMoved     Reason = "SlotMoved"
+	ReasonLaneMoved     Reason = "LaneMoved"
+	ReasonTagMoved      Reason = "TagMoved"
+	ReasonFromTheFuture Reason = "FromTheFuture"
 
 	// ReasonUnknownEntity names a command addressed to something the world does
 	// not have, and is the refusal for a command kind outside the closed set.

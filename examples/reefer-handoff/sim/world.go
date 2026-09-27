@@ -214,6 +214,45 @@ func (w World) Occupant(n NodeID) (TractorID, bool) {
 	return "", false
 }
 
+// CheckExpectation reports why a command was decided against a world this one has
+// moved past, or ReasonNone when the command is still current.
+//
+// Only resource versions are a precondition. Expect.WorldSeq records what the
+// producer saw and is not a guard: in a busy world the sequence advances between
+// a plan pinning its frame and its command being reduced, so treating that as a
+// mismatch would refuse nearly every command. What must still hold is the version
+// of the specific thing the command acts on, because a placement aimed at a slot
+// whose plug was pulled, or a crossing of a lane whose topology moved, is acting
+// on a state that no longer exists.
+func (w World) CheckExpectation(c Command) Reason {
+	if c.Expect.WorldSeq > w.WorldSeq() {
+		return ReasonFromTheFuture
+	}
+	switch c.Kind {
+	case CmdPlace:
+		s, ok := w.Slot(c.Slot)
+		if !ok {
+			return ReasonUnknownEntity
+		}
+		if c.Expect.SlotVersion != s.Version {
+			return ReasonSlotMoved
+		}
+	case CmdMoveTo:
+		if c.Expect.LaneVersion != w.topology.Version() {
+			return ReasonLaneMoved
+		}
+	case CmdPickUp, CmdScanTag:
+		r, ok := w.Reefer(c.Reefer)
+		if !ok {
+			return ReasonUnknownEntity
+		}
+		if c.Expect.TagVersion != r.TagVersion {
+			return ReasonTagMoved
+		}
+	}
+	return ReasonNone
+}
+
 // Route returns the lanes a tractor must cross to get from one node to another,
 // and whether such a route exists over open lanes.
 //
