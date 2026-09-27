@@ -31,7 +31,14 @@ delivery contends for it.
 ### Topology
 
 Seven nodes. Seven lanes. Lanes are undirected; a tractor moves one lane per
-`MoveTo`.
+`MoveTo`. A route is a breadth-first search in the order the table below declares
+its lanes, which is what makes the apron-to-bay route go by the western approach
+first. That ordering is load-bearing: the wind lockout closes the western
+approach, and if the search preferred the eastern one the closure would change
+nothing a plan was doing. A reefer destination is never a tractor destination, so
+no route ends in a slot — a tractor hands a box over from the bay and does not
+enter the slot itself. `sim/path.go` owns this table and nothing else may
+hard-code a lane name.
 
 | Node | Kind | Capacity |
 |---|---|---|
@@ -51,8 +58,7 @@ Seven nodes. Seven lanes. Lanes are undirected; a tractor moves one lane per
 | `lane-slot-3` | `BAY` – `SLOT-3` |
 
 Two approach lanes exist so that closing one forces a real re-route rather than
-making the goal unreachable. `sim/path.go` owns this table and nothing else may
-hard-code a lane name.
+making the goal unreachable.
 
 ### Slots
 
@@ -138,14 +144,16 @@ staged rating rejection that the script does not produce.
 | `SLOT-1` | tractors placing a reefer | one winner; loser gets `SlotOccupied` |
 | `SLOT-2` | as above, until round 40 | after round 40 every placement is `SlotUnpowered` |
 | `SLOT-3` | as above | one winner; loser gets `SlotOccupied` |
-| the job queue | the three `ClaimJob` commands | one winner per job; loser gets `JobTaken` |
+| the job queue | the three `ClaimJob` commands | each claim is awarded a distinct job in manifest order; the only refusal is a drained queue |
 
 The bay and the slots are contended by a **single atomic command**, not by a
 reservation followed by a commit. There is no lease, no hold duration, and no
 release ordering to get wrong. Contention is decided when the command is reduced.
 
-The job queue is contended in exactly the same way as any other resource, and it
-is listed here for that reason.
+The job queue is not a loser-takes-all resource. With three jobs and three
+tractors, every claim is awarded a job no one else holds, and the queue's only
+refusal is that it has run dry. There is no `JobTaken` reason, because nothing in
+this manifest can produce one.
 
 ## 5. Plan and job relationship
 
@@ -210,11 +218,20 @@ never reads another's state:
 
 | Command | Refused when |
 |---|---|
-| `ClaimJob(tractor)` | the queue is empty, or a job was already awarded |
-| `ScanTag(tractor, reefer)` | the tractor does not hold or stand beside the reefer, or the tag already reads |
-| `PickUp(tractor, reefer)` | no custody, the tag is unconfirmed, or the tractor is not at the reefer's node |
-| `MoveTo(tractor, node)` | the lane is locked, or the destination node is at capacity |
-| `Place(tractor, reefer, slot)` | no custody, the tractor is not at `BAY`, the slot is unpowered or under-rated, or the slot is occupied |
+| `ClaimJob(tractor)` | the tractor already holds a job, or the queue has run dry |
+| `ScanTag(tractor, reefer)` | the tractor is not at the reefer, or the tag already reads |
+| `PickUp(tractor, reefer)` | the tractor's hands are full, the reefer is already held, the tractor is not at the reefer, or the tag is unconfirmed |
+| `MoveTo(tractor, node)` | the destination is a slot, no lane joins the two nodes, the lane is closed, or the node is already taken |
+| `Place(tractor, reefer, slot)` | the tractor does not hold that reefer, the tractor is not at the bay, the slot is unpowered, the slot is under-rated, or the slot is occupied |
+
+**The job-to-cargo binding is a planner convention, not a domain invariant.**
+Nothing stops a tractor from picking up and placing a reefer it never claimed,
+and doing so completes the job of whichever tractor did claim it and releases that
+tractor. The closed command table above is what makes that so: there is no
+job-match refusal, because the world has no opinion about which tractor ought to
+be moving which box. Section 5's one-generation-per-job rule is what keeps a plan
+from relying on it, and P4 must hold a plan to its leased job. This is recorded
+here so the omission is a decision and not an oversight.
 
 ## 6. Frame-bound ticking
 
@@ -225,6 +242,15 @@ opens a `StateViewPreTick` view over an immutable snapshot labelled
 Every condition read and every action list for that tick comes from that one
 frame, so a tick cannot see half of one world and half of another. Effects are
 read from a separate `StateViewPostAction` view opened after the action returns.
+
+The immutability is not free and not automatic. `sim.World` holds slices, so a
+world value shares its backing array with every copy of it, and the reducer's
+transitions write through those slices by index. Every mutation path therefore
+clones before it writes, and `World.clone` is the only thing standing between a
+caller's world and a reducer that changed it underneath them. Without that, a TUI
+or a debugger record holding a world per published event would serve the newest
+state for every earlier record, and section 8's "a reader sees the old record or
+the new one" would be false in the way that matters.
 
 The other two options are not optional extras. `WithExecutionObserver` is the only
 source of an observed value — a value the planner merely declared is not an
@@ -276,6 +302,13 @@ type Receipt struct {
 `Outcome` has no stale or abandoned member, because a command that is not reduced
 is not a receipt at all — see reconciliation below.
 
+**Every receipt is kept, applied or refused.** A refusal is a fact a reader has to
+be able to find later with no world effect attached, and a ledger holding only
+successes could not show that. The consequence is that an idempotency key is
+spent by its first reduction: a genuine retry after a replan is a new action
+instance and mints a new key. A world sequence counts only committed mutations, so
+a refusal is visible in the receipt ledger with the sequence it did not move.
+
 **Fencing.** A receipt is discarded, and can neither mutate state nor report
 success, when its `PlanID` or `Generation` is not the runner's current generation,
 when its `ActionID` is not present in the current tree, or when any `Expect` field
@@ -306,21 +339,34 @@ ticked again.
 
 ## 7. Success and failure
 
-Both are functions of a round counter, so both are testable.
+Both are functions of the round counter, so both are testable.
 
 **Success:** at or before round 120, all three jobs are delivered — every reefer
-in a powered, correctly rated slot. The world enters `Complete`.
+standing in a powered, correctly rated slot. The world enters `Complete`.
+
+The condition is evaluated against the physical state on every change, not
+against a latch recording that a job was once carried out. The power desk may
+take a plug out of a slot that already holds a reefer, and a latch would leave
+the run claiming a delivery it no longer has.
 
 **Failure:** round 120 passes with any job undelivered. The world enters `Cutoff`
-and names the shortfall by reefer and by the reason its last placement was
-refused.
+and `World.Shortfall` names the reefers it missed, in manifest order.
 
 A refused command is neither success nor failure. It is a receipt with a reason,
 and its whole effect is to make the next tick re-expand. The retired fixture had no
 failure condition at all, which is why nothing in it could be shown to recover.
 
-**Round pacing.** One round is one world revision. In deterministic mode the host
-drives rounds; in realtime mode a round is 200 ms, so cutoff is 24 s in.
+**Rounds and world sequences are different domains.** A round is a host tick and
+is advanced only by `BeginRound`. A world sequence counts committed mutations
+only. A round may therefore contain several mutations or none, a refused command
+and a round boundary both leave the sequence alone, and entering a terminal phase
+is a derivation of the state that already advanced rather than a mutation of its
+own — so a phase event rides at the sequence already reached. Tying a round to a
+world revision instead would make the cutoff a statement about how much the world
+happened to churn, which is not what a vessel's cutoff is.
+
+**Round pacing.** In deterministic mode the host calls `BeginRound` once per
+round; in realtime mode it does so on a 200 ms timer, so cutoff is 24 s in.
 
 ## 8. Debugger proof
 
@@ -348,6 +394,12 @@ Each record names its cause explicitly:
 - a **receipt** carries `commandID` and its idempotency key, the outcome, the
   `worldSeq` it was reduced at, and, on refusal, the reason and the current holder;
 - a **tree change** carries the receipt that caused it.
+
+A refusal publishes no world event. It changed nothing, so it has a receipt and no
+event, and that absence is precisely what tells a reader the difference between a
+command that was turned down and a change that happened. Entering `Complete` or
+`Cutoff` is a world event, because a reader following the run has to see the run
+end rather than infer it from the ledger going quiet.
 
 Readers never traverse a live plan. pabtdebug serves committed published records,
 and a tree that was not captured is reported as absent rather than reconstructed.
@@ -428,18 +480,21 @@ depends on. The directive is one line and reversible if that cost is judged wors
 
 Everything here is behind `//go:build example`, so `go build ./...` and
 `go test ./...` at the root are untouched and the example needs the tag to build,
-run, or test. The directories do not exist until the first file lands in them.
+run, or test. `sim/` exists; the rest lands with the task that needs it.
 
 ```
 examples/reefer-handoff/
   DESIGN.md        this record
   main.go          manifest, world loop, runners, TUI, debugger session
   sim/
-    manifest.go    jobs, slots, reefer temperatures, lanes, cutoff round
+    manifest.go    reefers, slots, tractors, jobs, nodes, the cutoff round
     events.go      world events, the five commands, receipts, reasons
-    observation.go agent-facing snapshot and belief
-    path.go        the node and lane table, lane locking
-    reducer.go     pure transactional transitions
+    observation.go the agent-facing frame and the variable keys
+    path.go        the lane table, lane locking, and routing
+    world.go       the world value and its canonical renderings
+    reducer.go     Reduce, its properties, and the terminal phases
+    transitions.go the five atomic transitions
+    incident.go    the exogenous changes and the scripted incident
     world_loop.go  go-eventloop owner, admission, command lifecycle
   logic/
     plan.go        the State/Condition/Action implementation
@@ -450,8 +505,8 @@ examples/reefer-handoff/
     monitor.go     the operations monitor
 ```
 
-`reducer.go` is a function from `(state, command)` to
-`(state, receipt, worldEvents)` and touches no clock, no goroutine, and no I/O —
+`reducer.go` is a function from `(world, command)` to
+`(world, receipt, worldEvents)` and touches no clock, no goroutine, and no I/O —
 that purity is what makes the invariants in section 4 testable without a loop.
 `world_loop.go` is the only file that imports `go-eventloop`. The `logic` package
 never imports `go-eventloop` and never mutates the world. The debugger is written
