@@ -13,7 +13,6 @@ import (
 	"github.com/joeycumines/go-pabt"
 	"github.com/joeycumines/go-pabt/examples/harbor-panic/logic"
 	hsim "github.com/joeycumines/go-pabt/examples/harbor-panic/sim"
-	"github.com/joeycumines/go-pabt/pabtdebug"
 )
 
 func init() {
@@ -142,9 +141,8 @@ func TestTuiHeadlessRendering(t *testing.T) {
 
 	// top bar and HUD render without panic
 	screen.Clear()
-	tracker := pabtdebug.NewTrackerWithID(nil, "harbor-bot-0")
-	RenderTopBar(screen, harbor, []*pabtdebug.Tracker{tracker})
-	RenderBottomHUD(screen, harbor, []*pabtdebug.Tracker{tracker}, []int{1, 5, 3, 8, 2}, nil)
+	RenderTopBar(screen, harbor)
+	RenderBottomHUD(screen, harbor, []int{1, 5, 3, 8, 2}, nil)
 	screen.Show()
 
 	// Trail rendering: advance harbor to build trail history, verify '.' glyphs
@@ -247,7 +245,7 @@ func TestTuiHeadlessRendering(t *testing.T) {
 		time.Sleep(100 * time.Millisecond)
 		screen2.InjectKey(tcell.KeyRune, 'q', tcell.ModNone)
 	}()
-	_ = RunWithScreen(ctx2, screen2, harbor5, nil, Options{})
+	_ = RunWithScreen(ctx2, screen2, harbor5, Options{})
 }
 
 func TestGlyphMapping(t *testing.T) {
@@ -320,8 +318,9 @@ func screenRow(t *testing.T, screen tcell.Screen, y int) string {
 	return sb.String()
 }
 
-// TestTuiSparklineRealData verifies the sparkline is populated with real
-// delta payload sizes after 10 simulation steps.
+// TestTuiSparklineRealData verifies the sparkline tracks the harbor's own tick
+// rather than being a flat line. It reads the value the run loop appends, so it
+// fails if the loop stops feeding it, not merely if the append is non-empty.
 func TestTuiSparklineRealData(t *testing.T) {
 	harbor := hsim.NewHarbor(0, 0, 42)
 	actors := harbor.State().Actors()
@@ -330,33 +329,29 @@ func TestTuiSparklineRealData(t *testing.T) {
 	}
 	ctx := context.Background()
 	result := logic.HarborPlan(ctx, harbor, actors[0].ID)
-	tracker := pabtdebug.NewTrackerWithID(result.Plan, "harbor-bot-0")
 
 	sparkline := make([]int, 0, 40)
 	for i := 0; i < 10; i++ {
 		harbor.Step(ctx)
-		status, err := result.Node.Tick()
-		tracker.Track(status, err)
-		v := computeDeltaSize([]*pabtdebug.Tracker{tracker})
-		sparkline = append(sparkline, v)
+		if _, err := result.Node.Tick(); err != nil {
+			t.Fatalf("tick %d: %v", i, err)
+		}
+		sparkline = append(sparkline, int(harbor.State().Tick))
 	}
 
-	if len(sparkline) == 0 {
-		t.Fatal("expected sparkline len > 0 after 10 steps")
+	if len(sparkline) != 10 {
+		t.Fatalf("sparkline len = %d, want 10", len(sparkline))
 	}
-	hasNonZero := false
-	for _, v := range sparkline {
-		if v > 0 {
-			hasNonZero = true
-			break
+	// Each step advances the harbor, so the series must be strictly increasing.
+	// A flat line means the loop is reading a tick that does not move.
+	for i := 1; i < len(sparkline); i++ {
+		if sparkline[i] <= sparkline[i-1] {
+			t.Fatalf("sparkline is not advancing: %v", sparkline)
 		}
-	}
-	if !hasNonZero {
-		t.Error("expected sparkline to have non-zero values (not flat)")
 	}
 }
 
-// TestTuiCommandDeckKeys simulates the c/r/B/+/-/b// key bindings and asserts
+// TestTuiCommandDeckKeys simulates the c/r/B/+/-// key bindings and asserts
 // the HUD reflects the toggled state after the run loop processes them.
 func TestTuiCommandDeckKeys(t *testing.T) {
 	logic.SetRankByCost(false)
@@ -369,8 +364,7 @@ func TestTuiCommandDeckKeys(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	result := logic.HarborPlan(ctx, harbor, actors[0].ID)
-	tracker := pabtdebug.NewTrackerWithID(result.Plan, "harbor-bot-0")
+	_ = logic.HarborPlan(ctx, harbor, actors[0].ID)
 
 	screen := tcell.NewSimulationScreen("UTF-8")
 	if err := screen.Init(); err != nil {
@@ -391,8 +385,6 @@ func TestTuiCommandDeckKeys(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 		screen.InjectKey(tcell.KeyRune, '-', tcell.ModNone) // speed down
 		time.Sleep(20 * time.Millisecond)
-		screen.InjectKey(tcell.KeyRune, 'b', tcell.ModNone) // set breakpoint
-		time.Sleep(20 * time.Millisecond)
 		screen.InjectKey(tcell.KeyRune, '/', tcell.ModNone) // open search overlay
 		time.Sleep(20 * time.Millisecond)
 		screen.InjectKey(tcell.KeyEnter, 0, tcell.ModNone)  // close search overlay
@@ -400,7 +392,7 @@ func TestTuiCommandDeckKeys(t *testing.T) {
 		screen.InjectKey(tcell.KeyRune, 'q', tcell.ModNone) // quit
 	}()
 
-	if err := RunWithScreen(ctx, screen, harbor, []*pabtdebug.Tracker{tracker}, Options{}); err != nil {
+	if err := RunWithScreen(ctx, screen, harbor, Options{}); err != nil {
 		t.Fatalf("RunWithScreen: %v", err)
 	}
 
@@ -420,9 +412,6 @@ func TestTuiCommandDeckKeys(t *testing.T) {
 	}
 	if !harbor.BeliefEnabled() {
 		t.Error("expected belief enabled after 'B'")
-	}
-	if len(tracker.Breakpoints()) == 0 {
-		t.Error("expected breakpoint set after 'b'")
 	}
 }
 
@@ -444,7 +433,7 @@ func TestTuiRenderBottomHUDModes(t *testing.T) {
 	defer harbor.EnableBelief(false)
 
 	hud := &HUDState{Scenario: "maze", Toast: "RANK:COST", ToastUntil: time.Now().Add(time.Second)}
-	RenderBottomHUD(screen, harbor, nil, []int{2, 4, 6}, hud)
+	RenderBottomHUD(screen, harbor, []int{2, 4, 6}, hud)
 	screen.Show()
 
 	row := screenRow(t, screen, 1+HarborHeight)
@@ -457,11 +446,15 @@ func TestTuiRenderBottomHUDModes(t *testing.T) {
 	if !strings.Contains(row, "BEL:ON") {
 		t.Errorf("expected BEL:ON, got %q", row)
 	}
-	if !strings.Contains(row, "PROF:") {
-		t.Errorf("expected PROF metric in HUD, got %q", row)
-	}
-	if !strings.Contains(row, "/1000") {
-		t.Errorf("expected TL timeline cap /1000 in HUD, got %q", row)
+	// The metrics the HUD carries are the ones the harbor itself knows. The
+	// profile timing, timeline length, and breakpoint count it also used to show
+	// came from the retired in-memory tracker, and a metric no source can supply
+	// is worse than a missing one: it would sit on screen as a number nobody
+	// computed.
+	for _, gone := range []string{"PROF:", "OVF:", "TL:", "BP:"} {
+		if strings.Contains(row, gone) {
+			t.Errorf("HUD still shows %q, which nothing supplies: %q", gone, row)
+		}
 	}
 
 	// Search overlay renders on the HUD's second line when active.
@@ -469,49 +462,11 @@ func TestTuiRenderBottomHUDModes(t *testing.T) {
 	hud.SearchQuery = "Action"
 	hud.SearchCount = 3
 	screen.Clear()
-	RenderBottomHUD(screen, harbor, nil, []int{2, 4, 6}, hud)
+	RenderBottomHUD(screen, harbor, []int{2, 4, 6}, hud)
 	screen.Show()
 	overlayRow := screenRow(t, screen, 1+HarborHeight+1)
 	if !strings.Contains(overlayRow, "Action") {
 		t.Errorf("expected search query in overlay, got %q", overlayRow)
-	}
-}
-
-// TestTuiOverflowCounterIncrements drives real evictions through Track() with a
-// small maxEvents window and asserts overflowLineCount grows as lines hit disk.
-func TestTuiOverflowCounterIncrements(t *testing.T) {
-	dir := t.TempDir()
-	path := dir + "/overflow.jsonl"
-
-	harbor := hsim.NewHarbor(0, 0, 42)
-	actors := harbor.State().Actors()
-	if len(actors) == 0 {
-		t.Fatal("no actors")
-	}
-	ctx := context.Background()
-	result := logic.HarborPlan(ctx, harbor, actors[0].ID)
-	tracker := pabtdebug.NewTrackerWithID(result.Plan, "harbor-bot-0").WithMaxEvents(5)
-	if err := tracker.SetOverflowFile(path); err != nil {
-		t.Fatalf("SetOverflowFile: %v", err)
-	}
-	defer tracker.CloseOverflow()
-
-	trackers := []*pabtdebug.Tracker{tracker}
-
-	before := overflowLineCount(trackers)
-	if before != 0 {
-		t.Fatalf("expected 0 overflow lines initially, got %d", before)
-	}
-
-	for i := 0; i < 10; i++ {
-		harbor.Step(ctx)
-		status, err := result.Node.Tick()
-		tracker.Track(status, err)
-	}
-
-	after := overflowLineCount(trackers)
-	if after <= before {
-		t.Errorf("expected overflow counter to increment, before=%d after=%d", before, after)
 	}
 }
 

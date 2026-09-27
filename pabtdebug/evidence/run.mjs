@@ -209,7 +209,7 @@ async function main() {
      * count would be a second way to be wrong about it.
      */
     const headSequence = async () => {
-      const response = await fetch(`http://${address}/debug/pabt/v2/state`, {
+      const response = await fetch(`http://${address}/debug/pabt/state`, {
         headers: { "X-PABT-Capability": capability },
       });
       if (!response.ok) return 0;
@@ -730,7 +730,7 @@ function scanArtifacts(outDir, secrets, capability, fail, note) {
  * means the run's shape changed, which is the thing worth knowing.
  */
 async function runDigest(address, capability) {
-  const response = await fetch(`http://${address}/debug/pabt/v2/records?after=0`, {
+  const response = await fetch(`http://${address}/debug/pabt/records?after=0`, {
     headers: { "X-PABT-Capability": capability },
   });
   if (!response.ok) throw new Error(`read the run: ${response.status}`);

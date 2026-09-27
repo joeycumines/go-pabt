@@ -301,7 +301,7 @@ func TestTheRepresentationNamesItsBaseExactlyWhenItCarriesADelta(t *testing.T) {
 	f.waitReady(t)
 	sawDelta, sawKeyframe := false, false
 	for sequence := uint64(1); sequence <= 4; sequence++ {
-		resp, body := f.get(t, "/debug/pabt/v2/representations/"+strconv.FormatUint(sequence, 10))
+		resp, body := f.get(t, "/debug/pabt/representations/"+strconv.FormatUint(sequence, 10))
 		if resp.StatusCode != http.StatusOK {
 			t.Fatalf("representation %d = %d: %s", sequence, resp.StatusCode, body)
 		}

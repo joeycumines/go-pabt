@@ -18,9 +18,7 @@
 package tui
 
 import (
-	"bufio"
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"sync/atomic"
@@ -29,7 +27,6 @@ import (
 	"github.com/gdamore/tcell/v2"
 	"github.com/joeycumines/go-pabt/examples/harbor-panic/logic"
 	hsim "github.com/joeycumines/go-pabt/examples/harbor-panic/sim"
-	"github.com/joeycumines/go-pabt/pabtdebug"
 )
 
 const (
@@ -41,8 +38,6 @@ const (
 type Options struct {
 	TickMs          int
 	Paused          *atomic.Bool
-	DebugAddr       string
-	OverflowPath    string
 	SpeedMultiplier *atomic.Value
 	StepCh          chan struct{}
 	PauseCh         chan bool
@@ -54,13 +49,12 @@ var scenarioOrder = []string{"calm", "stormy", "maze"}
 
 // HUDState tracks command deck state for rendering in the bottom HUD.
 type HUDState struct {
-	Scenario      string
-	SearchMode    bool
-	SearchQuery   string
-	SearchCount   int
-	SearchResults []pabtdebug.SearchResult
-	Toast         string
-	ToastUntil    time.Time
+	Scenario    string
+	SearchMode  bool
+	SearchQuery string
+	SearchCount int
+	Toast       string
+	ToastUntil  time.Time
 }
 
 // Glyph mapping per spec: walls #, berths !, containers R,G,B,Y,M,C, cranes 0-3, human H
@@ -233,7 +227,7 @@ func RenderHarbor(screen tcell.Screen, harbor *hsim.Harbor, highlightGhost bool,
 }
 
 // RenderTopBar draws actor status line.
-func RenderTopBar(screen tcell.Screen, harbor *hsim.Harbor, trackers []*pabtdebug.Tracker) {
+func RenderTopBar(screen tcell.Screen, harbor *hsim.Harbor) {
 	state := harbor.State()
 	actors := state.Actors()
 	// Title section with intentional spacing
@@ -255,21 +249,6 @@ func RenderTopBar(screen tcell.Screen, harbor *hsim.Harbor, trackers []*pabtdebu
 		status := "idle"
 		nodeCount := 0
 		tickCount := int(state.Tick)
-		if i < len(trackers) && trackers[i] != nil {
-			tree := trackers[i].BuildTree()
-			if tree != nil {
-				nodeCount = countNodes(tree)
-			}
-			evs := trackers[i].Events()
-			if len(evs) > 0 {
-				st := evs[len(evs)-1].Status.String()
-				if len(st) > 4 {
-					st = st[:4]
-				}
-				status = st
-				tickCount = evs[len(evs)-1].Iteration
-			}
-		}
 		// Short ID: CRANE-0 -> C0, HUMAN -> HF
 		shortID := sp.ID
 		if len(shortID) > 6 {
@@ -297,7 +276,7 @@ func RenderTopBar(screen tcell.Screen, harbor *hsim.Harbor, trackers []*pabtdebu
 }
 
 // RenderBottomHUD draws delta/overflow/timeline/breakpoint info plus sparkline and command deck state.
-func RenderBottomHUD(screen tcell.Screen, harbor *hsim.Harbor, trackers []*pabtdebug.Tracker, sparkline []int, hud *HUDState) {
+func RenderBottomHUD(screen tcell.Screen, harbor *hsim.Harbor, sparkline []int, hud *HUDState) {
 	yBase := 1 + HarborHeight
 	// line 1: metrics strip with structured layout
 	metricsStyle := tcell.StyleDefault.Foreground(tcell.NewRGBColor(160, 170, 190))
@@ -315,11 +294,6 @@ func RenderBottomHUD(screen tcell.Screen, harbor *hsim.Harbor, trackers []*pabtd
 	if harbor.BeliefEnabled() {
 		beliefLabel = "ON"
 	}
-	profileMs := measureProfileMs(trackers)
-	profileColor := tcell.ColorGreen
-	if profileMs >= 10 {
-		profileColor = tcell.ColorYellow
-	}
 	metrics := []struct {
 		label string
 		value string
@@ -328,10 +302,6 @@ func RenderBottomHUD(screen tcell.Screen, harbor *hsim.Harbor, trackers []*pabtd
 		{"RANK", rankMode, tcell.ColorDefault},
 		{"SCEN", scenLabel, tcell.ColorDefault},
 		{"BEL", beliefLabel, tcell.ColorDefault},
-		{"PROF", fmt.Sprintf("%.1fms", profileMs), profileColor},
-		{"OVF", fmt.Sprintf("%dL", overflowLineCount(trackers)), tcell.ColorDefault},
-		{"TL", fmt.Sprintf("%d/1000", len(trackersLatestTimeline(trackers))), tcell.ColorDefault},
-		{"BP", fmt.Sprintf("%d", countBreakpoints(trackers)), tcell.ColorDefault},
 	}
 	mx := 0
 	for _, m := range metrics {
@@ -456,39 +426,11 @@ func RenderBottomHUD(screen tcell.Screen, harbor *hsim.Harbor, trackers []*pabtd
 	}
 }
 
-func countNodes(n *pabtdebug.TreeNode) int {
-	if n == nil {
-		return 0
-	}
-	c := 1
-	for i := range n.Children {
-		c += countNodes(&n.Children[i])
-	}
-	return c
-}
-
-func trackersLatestTimeline(trackers []*pabtdebug.Tracker) []pabtdebug.TimelineEntry {
-	if len(trackers) == 0 || trackers[0] == nil {
-		return nil
-	}
-	return trackers[0].Timeline()
-}
-
-func countBreakpoints(trackers []*pabtdebug.Tracker) int {
-	c := 0
-	for _, t := range trackers {
-		if t != nil {
-			c += len(t.Breakpoints())
-		}
-	}
-	return c
-}
-
 // Run starts the TUI loop blocking until quit or context cancel.
 // Command deck: c cycles scenario, r toggles rank-by-cost, B toggles belief,
-// +/- speed, b toggles breakpoint, / search overlay, q quit, p pause, s step.
+// +/- speed, q quit, p pause, s step.
 // If screen init fails, it returns error and caller should fallback to headless.
-func Run(ctx context.Context, harbor *hsim.Harbor, trackers []*pabtdebug.Tracker, opts Options) error {
+func Run(ctx context.Context, harbor *hsim.Harbor, opts Options) error {
 	if harbor == nil {
 		return fmt.Errorf("nil harbor")
 	}
@@ -504,15 +446,15 @@ func Run(ctx context.Context, harbor *hsim.Harbor, trackers []*pabtdebug.Tracker
 	}
 	defer screen.Fini()
 	screen.Clear()
-	return runWithScreen(ctx, screen, harbor, trackers, opts)
+	return runWithScreen(ctx, screen, harbor, opts)
 }
 
 // RunWithScreen is exported for SimulationScreen tests.
-func RunWithScreen(ctx context.Context, screen tcell.Screen, harbor *hsim.Harbor, trackers []*pabtdebug.Tracker, opts Options) error {
-	return runWithScreen(ctx, screen, harbor, trackers, opts)
+func RunWithScreen(ctx context.Context, screen tcell.Screen, harbor *hsim.Harbor, opts Options) error {
+	return runWithScreen(ctx, screen, harbor, opts)
 }
 
-func runWithScreen(ctx context.Context, screen tcell.Screen, harbor *hsim.Harbor, trackers []*pabtdebug.Tracker, opts Options) error {
+func runWithScreen(ctx context.Context, screen tcell.Screen, harbor *hsim.Harbor, opts Options) error {
 	if screen == nil {
 		return fmt.Errorf("nil screen")
 	}
@@ -549,9 +491,9 @@ func runWithScreen(ctx context.Context, screen tcell.Screen, harbor *hsim.Harbor
 	ticker := time.NewTicker(50 * time.Millisecond)
 	defer ticker.Stop()
 	// initial render
-	RenderTopBar(screen, harbor, trackers)
+	RenderTopBar(screen, harbor)
 	RenderHarbor(screen, harbor, true, trails)
-	RenderBottomHUD(screen, harbor, trackers, sparkline, &hud)
+	RenderBottomHUD(screen, harbor, sparkline, &hud)
 	screen.Show()
 	for {
 		select {
@@ -565,21 +507,18 @@ func runWithScreen(ctx context.Context, screen tcell.Screen, harbor *hsim.Harbor
 			case *tcell.EventKey:
 				if hud.SearchMode && ev.Key() == tcell.KeyRune {
 					hud.SearchQuery += string(ev.Rune())
-					executeSearch(trackers, &hud)
 					break
 				}
 				if hud.SearchMode && (ev.Key() == tcell.KeyBackspace || ev.Key() == tcell.KeyBackspace2) {
 					runes := []rune(hud.SearchQuery)
 					if len(runes) > 0 {
 						hud.SearchQuery = string(runes[:len(runes)-1])
-						executeSearch(trackers, &hud)
 					}
 					break
 				}
 				if hud.SearchMode && (ev.Key() == tcell.KeyEnter || ev.Key() == tcell.KeyEscape) {
 					hud.SearchMode = false
 					hud.SearchQuery = ""
-					hud.SearchResults = nil
 					hud.SearchCount = 0
 					break
 				}
@@ -649,12 +588,9 @@ func runWithScreen(ctx context.Context, screen tcell.Screen, harbor *hsim.Harbor
 						}
 						hud.Toast = "BELIEF:" + state
 						hud.ToastUntil = time.Now().Add(2 * time.Second)
-					case 'b':
-						toggleBreakpoint(trackers, &hud)
 					case '/':
 						hud.SearchMode = true
 						hud.SearchQuery = ""
-						hud.SearchResults = nil
 						hud.SearchCount = 0
 					}
 				}
@@ -664,18 +600,17 @@ func runWithScreen(ctx context.Context, screen tcell.Screen, harbor *hsim.Harbor
 		case <-ticker.C:
 			// update trails every tick
 			updateTrails(trails, harbor)
-			// update sparkline every 200ms with real delta payload size
+			// update sparkline every 200ms with the harbor's own tick
 			if time.Since(lastSparkUpdate) > 200*time.Millisecond {
 				lastSparkUpdate = time.Now()
-				v := computeDeltaSize(trackers)
-				sparkline = append(sparkline, v)
+				sparkline = append(sparkline, int(harbor.State().Tick))
 				if len(sparkline) > 40 {
 					sparkline = sparkline[1:]
 				}
 			}
-			RenderTopBar(screen, harbor, trackers)
+			RenderTopBar(screen, harbor)
 			RenderHarbor(screen, harbor, true, trails)
-			RenderBottomHUD(screen, harbor, trackers, sparkline, &hud)
+			RenderBottomHUD(screen, harbor, sparkline, &hud)
 			// paused indicator
 			if paused {
 				msg := " PAUSED "
@@ -733,98 +668,4 @@ func cycleScenario(current string) string {
 		}
 	}
 	return scenarioOrder[0]
-}
-
-func toggleBreakpoint(trackers []*pabtdebug.Tracker, hud *HUDState) {
-	for _, t := range trackers {
-		if t == nil {
-			continue
-		}
-		bps := t.Breakpoints()
-		if len(bps) > 0 {
-			for _, bp := range bps {
-				t.RemoveBreakpoint(bp.NodePath)
-			}
-			hud.Toast = "BP:CLEARED"
-		} else {
-			t.SetBreakpoint(pabtdebug.Breakpoint{
-				NodePath: "0",
-				Enabled:  true,
-			})
-			hud.Toast = "BP:0"
-		}
-		hud.ToastUntil = time.Now().Add(2 * time.Second)
-		return
-	}
-}
-
-func executeSearch(trackers []*pabtdebug.Tracker, hud *HUDState) {
-	if hud.SearchQuery == "" {
-		hud.SearchResults = nil
-		hud.SearchCount = 0
-		return
-	}
-	for _, t := range trackers {
-		if t == nil {
-			continue
-		}
-		results := t.Search(hud.SearchQuery)
-		hud.SearchResults = results
-		hud.SearchCount = len(results)
-		return
-	}
-}
-
-func computeDeltaSize(trackers []*pabtdebug.Tracker) int {
-	if len(trackers) == 0 || trackers[0] == nil {
-		return 0
-	}
-	evs := trackers[0].Events()
-	if len(evs) == 0 {
-		return 0
-	}
-	latestIter := evs[len(evs)-1].Iteration
-	delta, ok := trackers[0].DeltaForIteration(latestIter)
-	if !ok || delta == nil {
-		return 0
-	}
-	b, err := json.Marshal(delta)
-	if err != nil {
-		return 0
-	}
-	return len(b)
-}
-
-func measureProfileMs(trackers []*pabtdebug.Tracker) float64 {
-	if len(trackers) == 0 || trackers[0] == nil {
-		return 0
-	}
-	start := time.Now()
-	_ = trackers[0].Profile()
-	return float64(time.Since(start).Microseconds()) / 1000.0
-}
-
-func overflowLineCount(trackers []*pabtdebug.Tracker) int {
-	for _, t := range trackers {
-		if t == nil {
-			continue
-		}
-		p := t.OverflowPath()
-		if p == "" {
-			continue
-		}
-		f, err := os.Open(p)
-		if err != nil {
-			continue
-		}
-		defer f.Close()
-		count := 0
-		scanner := bufio.NewScanner(f)
-		scanner.Buffer(make([]byte, 0, 64*1024), 20<<20)
-		for scanner.Scan() {
-			count++
-		}
-		return count
-	}
-	return 0
 }

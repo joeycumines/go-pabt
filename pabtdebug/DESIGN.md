@@ -1,226 +1,224 @@
 # pabtdebug Debug UI — Design Specification
 
-**Living document.** Maintenance contract: every change to the embedded UI in `ui.go`
-must update this file in the same commit (tokens, rules, change log). The `:root` block
-in `ui.go` carries a pointer comment back to this file. If the two ever disagree, stop
-and reconcile before proceeding — drift between spec and implementation is a defect.
+The debugger's user interface is the browser client in `pabtdebug/client/`:
+`index.html`, `app.css`, and eight ES modules, embedded and served by
+`NewDurableServer` at `/debug/pabt/ui`. This document specifies it.
+
+**Maintenance contract.** A change to the client updates this file in the same
+commit: the tokens and rules it changes, and the change log. The `:root` block in
+`client/app.css` carries a pointer comment back to this file. If the spec and the
+implementation ever disagree, stop and reconcile before proceeding — drift
+between spec and implementation is a defect.
+
+**What is not a specification.** `docs/research/` is constraint input, not
+evidence. A retired prose architecture and its screenshots are historical.
+Neither establishes what the code does; the code does.
 
 ## 1. Purpose and audience
 
-A developer debugging **live PA-BT planning trees** (go-pabt + pabtdebug). The UI must
+A developer reading a PA-BT run that has already happened. The client must
 answer, in priority order:
 
-1. **What is executing right now**, in which plan? (active path)
-2. **Why** is it executing? (conditions / post-conditions on that path)
-3. **What will it change?** (effects)
-4. **Where is the plan degenerate or bloated?** (chain compression + depth readout)
-5. **What changed** between ticks or iterations? (timeline, diff)
+1. **What happened** — which tick, in which run, recorded by which store.
+2. **What the tree was** at that tick, occurrence-keyed, as the planner built it.
+3. **What governed an occurrence** — the preconditions, post-conditions, actions,
+   and effects around it, each with its evidence.
+4. **What it set** — effect values, and whether a value the application declared
+   secret is redacted.
 
-Anything not serving these five questions is chrome, and chrome must stay quiet.
+Anything not serving those four questions is chrome, and chrome stays quiet.
 
-## 2. Aesthetic direction — "Harbor Mission Control"
+The client reads **history, not a live plan**. No route it calls reads a live
+tree, because a live read while a tick runs races with the writes expansion
+performs. Everything on screen is a record the store committed.
 
-A night-shift port control room: deep navy void, phosphor-cyan instrumentation,
-monospace data readouts, uppercase letter-spaced geometric-sans chrome labels.
-Chosen because the showcase domain is a harbor simulation, because high-contrast dark
-suits long debugging sessions, and because it is unmistakably not generic dashboard
-slop. Atmosphere comes from a layered background: a radial cyan glow at the top right
-plus 32px instrument grid lines over the void colour — depth without noise.
-
-## 3. Colour tokens
+## 2. Colour tokens
 
 | Token | Hex | Usage |
 |---|---|---|
-| `--bg-main` | `#04070d` | canvas void |
-| `--bg-panel` | `#0a111d` | side panels, header, footer |
-| `--bg-card` | `#101a29` | raised surfaces, inputs, node cards |
-| `--border` | `#1c2a3d` | hairline dividers |
+| `--bg` | `#04070d` | canvas void |
+| `--panel` | `#0a111d` | side panels, header, footer |
+| `--card` | `#101a29` | raised surfaces, inputs, node rows |
+| `--line` | `#1c2a3d` | hairline dividers |
 | `--divider` | `#14202f` | subtle inner separators |
-| `--text-primary` | `#dbe7f4` | primary ink |
-| `--text-secondary` | `#8296ad` | secondary ink, labels |
-| `--text-oncolor` | `#ffffff` | text on saturated fills |
+| `--text` | `#dbe7f4` | primary ink |
+| `--muted` | `#8296ad` | secondary ink, labels |
 | `--accent` | `#53d8fb` | instrumentation accent, focus, live |
 | `--success` | `#46d68c` | Success status |
 | `--failure` | `#f0566a` | Failure status |
 | `--running` | `#f5a524` | Running status |
+| `--pre` | `#2dd4bf` | precondition evidence |
+| `--warn` | `#c792ea` | post-condition and uncertainty |
 
-Type hues (node-card top border + type label, never the only signal):
-Goal `#5aa2ff` · PPA `#c792ea` · ActionSelector/ActionRoot `#ff9e64` ·
-ActionNode `#46d68c` · Preconditions `#2dd4bf` · Unknown `#50627a`.
-
-Status is encoded by colour **and** shape: Running = pulsing dot, Success = filled
-square, Failure = ring. Never colour alone.
-
-Contrast (re-verify with the WCAG formula on any token change):
+Contrast, measured with the WCAG formula and re-verified on any token change:
 ink/void ≈ 15.4:1 · secondary/panel ≈ 6.9:1 · accent/panel ≈ 9.8:1 ·
 running/panel ≈ 8.6:1 · failure/panel ≈ 5.9:1 — all ≥ AA.
 
-## 4. Typography
+Status is encoded by colour **and** shape. A status conveyed by colour alone is
+a status a reader who cannot see that colour does not have.
 
-- **Chrome** (labels, buttons, headers): `Futura, 'Avenir Next', 'Trebuchet MS', sans-serif`,
-  uppercase, letter-spacing 0.08em (controls) to 0.14em (section labels).
-- **Data** (node names, conditions, effects, numbers): `'SF Mono', 'JetBrains Mono', Menlo, monospace`.
-- Scale: 8.5 captions/badges · 10 controls · 10.5 node names · 11 body · 13 panel titles · 15 brand.
+## 3. Typography
+
+- **Chrome** (labels, buttons, headers): `system-ui, -apple-system, 'Segoe UI', sans-serif`.
+- **Data** (node names, conditions, effects, numbers): `ui-monospace, 'SF Mono', Menlo, Consolas, monospace`.
 - **Banned:** Inter, Roboto, Arial, Space Grotesk (user directive).
 
-## 5. Spacing and geometry
+The chrome stack asks for the platform's own interface font. A local debugger
+runs on whatever machine the operator is sitting at, and a named face is absent on
+most of them, so a stack that leads with one silently falls through to its last
+entry and the chrome becomes a different face on every host. The ban list is a
+directive about which faces read as generic web defaults, and `system-ui` is not
+one of them.
 
-4px base grid. Panel padding 12/16. Node card 210×54, radius 6, column pitch 274,
-row pitch 70. Gaps: 8 inline / 16 stacked / 24 between regions.
+## 4. Spacing and geometry
 
-## 6. Layout regions
+4px base grid. Panel padding 12/16. Gaps: 8 inline / 16 stacked.
 
-Header 40px (brand · connection · search · actions). Timeline left 220px.
-Canvas centre with its own toolbar (Fit / Reset / Expand all / Collapse all · stats
-readout · zoom) — the readout lives there because it proves compression exactly where
-the tree is visible. Inspector right 280px. Footer 60px (profile strip + status
-legend). The canvas itself is transparent so the body's instrument-grid and radial
-glow (§2) read through behind the tree; all other regions keep opaque panel fills.
+## 5. Layout regions
 
-## 7. Tree rendering rules
+Six grid areas, declared in `app.css`:
 
-- Horizontal, left → right (depth = column).
-- **Chain compression:** maximal single-child runs longer than 2 render as ONE card
-  labelled `×N` showing the active member's name; clicking its pill unwinds one link.
-- **Collapse by default:** branch nodes collapsed unless on the active path
-  (root → Running leaf) or at depth < 1.
-- Pills: `+N` collapsed branch · `×N` compressed chain · `−` expanded.
-- Active path auto-expanded on every render.
-- Viewport culling retained (`isBboxVisible`).
-- The stats readout proves compression visibly (raw depth vs rendered cards).
+```css
+grid-template-columns: minmax(0, 210px) minmax(0, 1fr) minmax(0, 370px);
+grid-template-rows: auto auto minmax(150px, 1fr) auto;
+grid-template-areas:
+  "header     header    header"
+  "breadcrumb breadcrumb breadcrumb"
+  "timeline   canvas    detail"
+  "scrub      scrub     scrub";
+```
 
-## 8. Motion
+| Region | Element | What it holds |
+|---|---|---|
+| header | `#header` | store, run, head, generation, connection state, export, import |
+| breadcrumb | `#breadcrumb` | the path to the selected occurrence |
+| timeline | `#timeline` | the recorded ticks |
+| canvas | `#canvas` | the occurrence tree |
+| detail | `#detail` | the selected occurrence's evidence |
+| scrub | `#scrub` | the tick scrubber |
 
-CSS-only: staggered card reveal on structure change (`animation-delay` ∝ depth, capped
-240ms), pulsing Running dot (1.4s), dash-scroll on the active edge.
-`@media (prefers-reduced-motion: reduce)` disables all of it.
+**The `minmax(0, …)` on every track is load-bearing.** A bare `210px` track
+cannot shrink below its content, so a long breadcrumb widened the grid past the
+viewport and forced horizontal scrolling. Three of the four layout defects found
+in the first autopsy were this one shape: breadcrumb overflow, detail compressed
+at 700px, and a scrub strip with no usable height.
 
-## 9. Accessibility
+Below 760px the grid collapses to one column with fixed timeline and detail rows.
+The header keeps its row and drops its secondary fields rather than wrapping into
+the grid.
 
-Status = colour + shape. Focus ring = 2px accent. All controls keyboard-reachable with
-visible focus. ARIA tree roles land with the keyboard-navigation task.
+`#app` and `#connect` are not both in the document flow. The connect screen is a
+fixed overlay, because a `display` on these two overrides the user agent's
+`[hidden]` rule and both in flow makes the body two viewports tall — which
+`overflow: hidden` does not prevent a programmatic scroll from reaching.
 
-## 10. Harness invariants (must survive every UI edit)
+## 6. Evidence rendering
 
-`verify_ui_invariants.sh` greps: `buildLayoutMap` ≥3 · `requestAnimationFrame` ≥4 ·
-`isBboxVisible` ≥2 · `showSaveFilePicker|showOpenFilePicker` ≥2 · `node._level =` == 0 ·
-`setInterval` == 0.
+A selected occurrence shows its preconditions with four separately labelled
+fields: **expected**, **current**, **observed**, and **uncertainty**.
 
-## 11. Queued steps (blueprint tasks, landed incrementally)
+An expected value the application did not declare renders as *unavailable*,
+carrying the record's own reason. It is never inferred from the condition's key.
+A key-only inference is a false statement, and a client that shows one number
+under a heading the reader takes for "what was required" reinstates the guess at
+the last possible layer, where nothing can correct it.
 
-Horizontal chain-compressed layout · collapse pills + active path · 404-gated timeline
-history · multi-plan selector · inspector upgrade · keyboard map · minimap · responsive
-breakpoints. Each lands as one verifiable step with a vision check and a change-log
-entry here.
+## 7. Numbers are strings
 
-## 12. Change log
+Every integer in the client's model is a decimal string, including the small
+ones, rather than a number below 2^53 and a string above it. One type per field
+makes the hazard impossible to write. A field with two possible types forces
+every reader to handle both, and the one who eventually handles only one is the
+bug.
 
-- **v1 — 2026-09-16:** Tokens, typography stacks, and the layered instrument-grid
-  background landed in `ui.go` (`:root` / `body`). Legacy palette (`#0f0f23`,
-  `#1a1a2e`, `#00d4ff`, monospace-only) retired as the "baseline slop" reference.
-  Behaviour unchanged; visual tokens only.
-- **v2 — 2026-09-16:** Component layer consumes the tokens. Node cards become
-  `--bg-card` surfaces with a type-hue left bar + uppercase letter-spaced type label
-  (candy fills retired). Status is shape+colour everywhere: Running = pulsing dot,
-  Success = filled square, Failure = ring (legend, timeline rows, node glyphs,
-  status bar). `TYPE_COLORS`/`STATUS_COLORS`/profile bars/diff overlay/detail badges
-  all read `:root` via `cssVar()` — zero hard-coded legacy hexes remain. Fixed the
-  profile-strip Success-as-red inversion at its source. Themed browser surfaces
-  (selection, scrollbars, focus-visible). Brand chrome "PA-BT // DEBUG".
-- **v3 — 2026-09-16 (same commit as v2):** Horizontal chain-compressed tree layout.
-  `buildViewModel()` collapses maximal single-child runs longer than 2 into ONE card
-  labelled `×N` showing the active member's name; click its pill to unwind one link
-  (`unwoundHeads` Set). Branch nodes collapsed by default unless on the active path
-  (root → Running leaf) or at depth < 1 (`isCollapsedView` with user override Sets
-  `userExpanded`/`userCollapsed`, `searchReveal`, `expandAllMode`). Active path
-  auto-expanded on every render. Layout: `NODE_W=210 NODE_H=54 COL_W=274 ROW_H=70`,
-  horizontal left→right (`absX = level * COL_W`). Expand-all / Collapse-all buttons
-  wired. Stats readout proves compression (rendered cards vs raw depth). Harness
-  invariants intact: buildLayoutMap 5, rAF 7, isBboxVisible 4, pickers 4,
-  node._level= 0, setInterval 0. Still outstanding (next increments): 404-gated
-  timeline (serverOldestIter), multi-plan selector dropdown, connection-resilience
-  indicator (reconnect logic exists but chrome incomplete).
-- **v4 — 2026-09-16:** Canvas occlusion fix + spec reconciliation. `#main` painted an
-  opaque `--bg-main` sheet over the body's instrument-grid / radial glow, so the §2
-  atmosphere never showed behind the tree; the canvas is now transparent (its toolbar
-  keeps `--bg-panel`). §6 geometry corrected to the measured values (header 40px,
-  timeline 220px, inspector 280px, footer 60px) and the stats readout's home
-  documented as the canvas toolbar, where it proves compression next to the tree.
-  Vision-verified; no behavioural change.
-- **v5 — 2026-09-16:** Initial-view auto-fit + Reset recentering. The layout centres
-  the root at y=0, so the default viewBox (pan 0,0 at zoom 1) clipped the top of the
-  tree — the root card sat half off-canvas. The first render now auto-fits once
-  (`fitToTree`) unless the user has already panned/zoomed (`userAdjustedView`), and
-  Reset recentres the tree bounding box at zoom 1 instead of returning to the
-  clipping origin. Drag/wheel interactions set `userAdjustedView` so live re-renders
-  never fight the user's viewport.
-- **v6 — 2026-09-16:** 404-gated timeline (sliding-window eviction floor). The server
-  now advertises its oldest retained iteration on every SSE event (`oldestIteration`
-  on `SSEEvent`, additive/omitempty); the UI tracks it as `serverOldestIter`, primes
-  it from the initial `/timeline` load, and clamps older-history fetches to that floor
-  instead of probing down to iteration 1 and silently dropping 404s. A dashed,
-  non-interactive gap row (`.tl-row.tl-gap`) marks evicted ranges with a "Load to
-  restore" hint, and a one-time console notice replaces silent null returns on a 404.
-  Committed @ e77798b; build/vet/`go test -race` green.
-- **v7 — 2026-09-16:** Multi-plan selector. A `<select id="plan-select">` in the header
-  lists every registered plan (fed by `/plans`); four per-plan activity dots
-  (`#plan-activity .plan-dot`, pulsing when a plan's `eventCount` advances) sit beside
-  it and are also clickable. Selecting a plan calls `switchPlan()`: closes the old SSE,
-  clears timeline/tree/detail/profile/eviction state, resets `initialFitDone` so the v5
-  auto-fit re-runs for the new tree, reconnects SSE + refetches the timeline scoped to
-  the chosen plan, and retains per-plan scroll position + selected node across switches.
-  All eleven legacy fetches now route through `planPath()` (`/plans/{id}/...`) instead
-  of the primary-only routes. `connect()` resolves the plan list first, then issues the
-  plan-scoped history fetch — fixing a defect where the initial fetch hit `/plans/0/...`
-  before `currentPlanId` was known (guaranteed 404 on harbor). Activity probing uses a
-  `setTimeout` chain (no `setInterval`) to preserve the `setInterval == 0` harness
-  invariant. Vision-verified switching harbor-bot-0 → harbor-bot-2; zero non-favicon
-  console errors.
-- **v8 — 2026-09-17:** Search match navigation keys. ArrowDown / ArrowUp now cycle
-  matches in addition to Enter / Shift+Enter (the search-results acceptance requires
-  arrow-key cycling); Escape clears and blurs. Count badge, prev/next buttons and
-  live recompute-on-render unchanged from v7-era landing.
+## 8. Continuity is claimed only when it was checked
 
-- **v9 — 2026-09-18:** Bounded hover disclosure. The canvas tooltip is deliberately
-  secondary to the tree: it is capped at 240px wide and 120px tall, with overflow
-  clipped so dense node metadata cannot become a second panel over neighboring cards.
-  Full node detail remains in the inspector. This is a presentation-only increment;
-  no tree geometry or governance markers change. Hover placement prefers the open
-  space above/left of the pointer and only falls back inward at viewport edges.
+A representation response carries the target tree as well as the delta, so a
+client could display what it was sent and check nothing. The client applies the
+delta to the base it holds and compares the result with the tree the store served,
+and says nothing about continuity when the base is not held.
 
-- **v10 — 2026-09-18:** Tree hover is non-obscuring. Node hover no longer opens an
-  absolutely positioned diagnostic panel over neighboring cards; click selects the node
-  and the inspector remains the authoritative full-detail surface. Profile/timeline hover
-  disclosures remain available where they do not cover the tree canvas.
+It does not recompute the store's canonical form. That would be a second
+implementation of a digest and a second thing to be wrong. The identity that
+matters is checked against the digest the store itself wrote.
 
-- **v11 — 2026-09-18:** Selected-node rationale strip. When a selected node carries a
-  condition or post-condition, a single compact `PRE`/`POST` strip appears immediately
-  below the event narration and above the canvas. It is empty for structural nodes, keeps
-  the tree geometry unchanged, and makes action eligibility visible without painting labels
-  onto every card. The inspector remains the full-detail surface.
+## 9. Motion
 
-- **v12 — 2026-09-18:** Narrow-window header containment. At widths below 768px the
-  header stays on one 40px row, preserves the plan/search controls, and hides only the
-  secondary Save/Load/Export/Diff actions rather than wrapping them into the fixed grid
-  row. This prevents chrome from covering the timeline and canvas; the full actions remain
-  available at desktop width.
+CSS-only, and every rule is disabled under `@media (prefers-reduced-motion:
+reduce)`. Motion may carry emphasis; it may not carry information on its own.
 
-- **v13 — 2026-09-18:** Rationale lookup follows the raw tree. Selecting or deep-linking
-  to an `ActionNode` now collects its sibling `PreconditionLeaf` values from the retained
-  raw snapshot, even when the canvas is compressed. The strip remains bounded to the
-  selected action and does not alter card geometry.
+## 10. Accessibility
 
-- **v14 — 2026-09-18:** Deep-link selection uses the retained raw snapshot as a fallback
-  when compression has removed the requested action from the rendered view. This keeps
-  the rationale strip and inspector reachable without forcing every hidden branch into
-  the canvas.
+Status is colour plus shape. Focus ring is 2px accent. All controls are
+keyboard-reachable with a visible focus ring. The tree is one tab stop
+(`role="tree"` with roving focus), not one stop per node — a 400-node tree with
+400 tab stops is not keyboard-navigable, it is keyboard-hostile. The connection
+state is a `role="status"` live region, and a connect failure is a `role="alert"`.
 
-- **v15 — 2026-09-18:** Pending deep-link selections are applied after every rendered
-  snapshot, including the live SSE path. A compressed action can therefore populate the
-  inspector/rationale strip once its raw snapshot arrives instead of being lost during the
-  initial connection race.
+## 11. Module split
 
-- **v16 — 2026-09-18:** Search-to-node centering waits for the asynchronous tree render.
-  Search reveals can trigger a worker/layout pass; the first result's world position is
-  applied from the completed layout map instead of trying to pan against a stale or culled
-  DOM element. This is interaction plumbing only and does not change tree geometry.
+| Module | Responsibility |
+|---|---|
+| `js/lossless.mjs` | exact-integer reader |
+| `js/api.mjs` | the transport, and the only place a URL is built |
+| `js/stream.mjs` | the SSE reader |
+| `js/delta.mjs` | exact-delta application |
+| `js/model.mjs` | the client's state |
+| `js/render.mjs` | the regions |
+| `js/detail.mjs` | the evidence panel |
+| `js/app.mjs` | the wiring |
+
+The `.mjs` extension is load-bearing: node runs these with no `package.json`, so
+the pure modules are testable without a bundler. `pabtdebug/clienttest/` holds the
+node tests over the pure ones.
+
+`EventSource` cannot set a request header, which is why the stream is read off
+`fetch` rather than an `EventSource`. The capability has to travel in a header.
+
+## 12. Evidence standard
+
+A change to the client is verified by `node pabtdebug/evidence/run.mjs`, run from
+`pabtdebug/evidence`, against the exact binary built from the current tree, with
+Playwright pinned to 1.63.0. An unpinned browser can lay a page out differently,
+which makes a layout change indistinguishable from a browser change.
+
+The runner builds the binary, authenticates, measures the six regions at three
+viewports, walks the whole tree reading the panel at every occurrence, forces a
+disconnect and a gap, reloads to prove a resume, exercises the export and import
+controls, scans every captured artifact for a planted secret and for the
+capability, and exercises the target's failure path at three points to confirm a
+failure leaves no listener and no capability file. Artifacts land in
+`scratch/evidence`.
+
+**Measured, not asserted.** At 1200×762, 1024×768, and 700×700: no horizontal
+overflow, `scrollY` 0, no overlapping region rectangles, detail 640/640/260
+against a floor of 180, canvas 640/442/186 against 150, scrub 44 against 24, and
+one tab stop in the tree.
+
+A check that cannot fail is not a check. Four defects in this project were found
+by a test the author wrote against their own code, and three of the client's
+defects were only ever findable in a browser: a stream URL built with the base
+already prefixed, so every connection 404'd; a `request` that accepted an abort
+signal and dropped it, on the one request that has to be cancellable; and the
+two-viewports-tall body described in section 5.
+
+## 13. Change log
+
+- **2026-09-25 (`ee9dda2`):** The client. `index.html`, `app.css`, and
+  eight modules; the six grid areas with `minmax(0)` tracks; a delta applied and
+  compared only when the base is held; integers as decimal strings throughout;
+  the four evidence fields labelled separately, with an undeclared expectation
+  rendered as unavailable and the record's own reason. The record format moved to
+  version 2 to carry the linkage a selected occurrence needs.
+- **2026-09-26 (`563ad85`):** Three defects the author's own checks could not
+  see. A lexicographic comparison of decimal sequences stopped following a run at
+  tick 9. A continuity check compared a digest the client cannot recompute, and
+  cried wolf on every move. A dropped connection left the page frozen with a
+  plausible but stale history. Each is now pinned by a test that fails against the
+  code it replaced.
+- **2026-09-26, later the same day (`fd77480`):** The planner stopped formatting effect *values*
+  into an action's name. A name is plain text: no codec, no redaction walk, no
+  diagnostic sanitizer. A value in one is a secret in every record that mentions
+  the node, every digest over those records, and every export containing them.
+  The evidence run found a planted secret in an exported bundle sixteen times,
+  every one inside a name field.

@@ -83,9 +83,9 @@ func TestTheDurableSubtreeIsEntirelyBehindTheCapability(t *testing.T) {
 	f := newDurableFixture(t, 1)
 	f.waitReady(t)
 	for _, p := range []string{
-		"/debug/pabt/v2/",
-		"/debug/pabt/v2/nothing-is-registered-here",
-		"/debug/pabt/v2/records/not-a-number",
+		"/debug/pabt/",
+		"/debug/pabt/nothing-is-registered-here",
+		"/debug/pabt/records/not-a-number",
 	} {
 		resp, _ := f.getUnauthenticated(t, p)
 		if resp.StatusCode != http.StatusUnauthorized {
@@ -96,7 +96,7 @@ func TestTheDurableSubtreeIsEntirelyBehindTheCapability(t *testing.T) {
 	// never reaches a handler at all. What matters is only that it serves
 	// nothing: a 404 from path cleaning is as good as a 401 for this purpose, and
 	// a 200 would not be.
-	resp, body := f.getUnauthenticated(t, "/debug/pabt/v2/../../etc/passwd")
+	resp, body := f.getUnauthenticated(t, "/debug/pabt/../../etc/passwd")
 	if resp.StatusCode == http.StatusOK {
 		t.Errorf("a traversal through the durable subtree served %d: %s", resp.StatusCode, body)
 	}
@@ -136,20 +136,35 @@ func TestEveryClientAssetIsServed(t *testing.T) {
 // TestAClientAssetThatIsNotListedIsNotServed refuses a name the map does not
 // carry. The lookup is a map rather than a path join, so a traversal cannot be
 // spelled, and this test says so rather than leaving it to inspection.
+//
+// The two groups are separate properties and are checked separately. A name that
+// stays under the shell prefix reaches the asset handler, so it proves the map
+// refuses it — and it proves the shell is reachable without a capability, which
+// is the design. A name that escapes the prefix is cleaned by the mux into the
+// guarded namespace before any handler sees it, so it is asked for
+// authenticated: without the token the guard answers first and the map is never
+// consulted, which would make the case pass for the wrong reason.
 func TestAClientAssetThatIsNotListedIsNotServed(t *testing.T) {
 	f := newDurableFixture(t, 1)
 	f.waitReady(t)
 	for _, name := range []string{
 		"nope.js",
 		"js/nope.mjs",
-		"../client/js/api.mjs",
 		"..%2fclient%2fjs%2fapi.mjs",
-		"js/../../record.go",
 		"index.html.bak",
 	} {
 		resp, _ := f.getUnauthenticated(t, uiPrefix+"/"+name)
 		if resp.StatusCode != http.StatusNotFound {
 			t.Errorf("%s = %d, want 404", name, resp.StatusCode)
+		}
+	}
+	for _, name := range []string{
+		"../client/js/api.mjs",
+		"js/../../record.go",
+	} {
+		resp, _ := f.get(t, uiPrefix+"/"+name)
+		if resp.StatusCode != http.StatusNotFound {
+			t.Errorf("%s = %d, want 404 once past the shell prefix", name, resp.StatusCode)
 		}
 	}
 }

@@ -154,7 +154,7 @@ func (f *durableFixture) waitReady(t *testing.T) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
-		req, err := http.NewRequest(http.MethodGet, "http://"+f.server.Addr()+"/debug/pabt/v2/state", nil)
+		req, err := http.NewRequest(http.MethodGet, "http://"+f.server.Addr()+"/debug/pabt/state", nil)
 		if err != nil {
 			t.Fatalf("request: %v", err)
 		}
@@ -179,14 +179,14 @@ func TestEveryRequestCarriesTheCapabilityAndNothingElseDoes(t *testing.T) {
 		t.Fatal("the server issued no capability")
 	}
 	for _, path := range []string{
-		"/debug/pabt/v2/state",
-		"/debug/pabt/v2/stream",
-		"/debug/pabt/v2/records",
-		"/debug/pabt/v2/records/1",
-		"/debug/pabt/v2/trees/1",
-		"/debug/pabt/v2/representations/1",
-		"/debug/pabt/v2/cursor?after=0",
-		"/debug/pabt/v2/export",
+		"/debug/pabt/state",
+		"/debug/pabt/stream",
+		"/debug/pabt/records",
+		"/debug/pabt/records/1",
+		"/debug/pabt/trees/1",
+		"/debug/pabt/representations/1",
+		"/debug/pabt/cursor?after=0",
+		"/debug/pabt/export",
 	} {
 		req, err := http.NewRequest(http.MethodGet, "http://"+f.server.Addr()+path, nil)
 		if err != nil {
@@ -228,7 +228,7 @@ func TestEveryRequestCarriesTheCapabilityAndNothingElseDoes(t *testing.T) {
 	// The import route is a write, so it is checked with a body and by a method that
 	// would reach the store rather than the method check.
 	post, err := http.NewRequest(http.MethodPost,
-		"http://"+f.server.Addr()+"/debug/pabt/v2/import", bytes.NewReader([]byte("not a bundle")))
+		"http://"+f.server.Addr()+"/debug/pabt/import", bytes.NewReader([]byte("not a bundle")))
 	if err != nil {
 		t.Fatalf("request: %v", err)
 	}
@@ -257,7 +257,7 @@ func TestEveryRequestCarriesTheCapabilityAndNothingElseDoes(t *testing.T) {
 		t.Errorf("the ready file says %q, want the bound address %q", ready, f.server.Addr())
 	}
 	// With the token, the same route answers.
-	resp, body := f.get(t, "/debug/pabt/v2/state")
+	resp, body := f.get(t, "/debug/pabt/state")
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("state = %d: %s", resp.StatusCode, body)
 	}
@@ -304,7 +304,7 @@ func TestAResumeIsExactAcrossARestart(t *testing.T) {
 	f := newDurableFixture(t, 3)
 	f.waitReady(t)
 	// A client reads two records and takes a cursor for where it is.
-	resp, body := f.get(t, "/debug/pabt/v2/records?after=0")
+	resp, body := f.get(t, "/debug/pabt/records?after=0")
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("records = %d: %s", resp.StatusCode, body)
 	}
@@ -357,7 +357,7 @@ func TestAResumeIsExactAcrossARestart(t *testing.T) {
 	f.waitReady(t)
 	streaming := &http.Client{}
 	resumeReq, err := http.NewRequest(http.MethodGet,
-		"http://"+f.server.Addr()+"/debug/pabt/v2/stream?cursor="+token, nil)
+		"http://"+f.server.Addr()+"/debug/pabt/stream?cursor="+token, nil)
 	if err != nil {
 		t.Fatalf("request: %v", err)
 	}
@@ -420,7 +420,7 @@ func TestACursorFromAnotherHistoryIsRefused(t *testing.T) {
 			if err != nil {
 				t.Fatalf("encode: %v", err)
 			}
-			resp, body := f.get(t, "/debug/pabt/v2/stream?cursor="+token)
+			resp, body := f.get(t, "/debug/pabt/stream?cursor="+token)
 			if resp.StatusCode == http.StatusOK {
 				// The stream is a long response, so a refusal has to arrive as a status
 				// rather than as an event inside a 200.
@@ -435,7 +435,7 @@ func TestACursorFromAnotherHistoryIsRefused(t *testing.T) {
 		})
 	}
 	// A token that is not one of ours is refused rather than interpreted.
-	resp, _ := f.get(t, "/debug/pabt/v2/stream?cursor=not-a-cursor")
+	resp, _ := f.get(t, "/debug/pabt/stream?cursor=not-a-cursor")
 	if resp.StatusCode != http.StatusConflict {
 		t.Errorf("a token that is not a cursor = %d, want 409", resp.StatusCode)
 	}
@@ -454,7 +454,7 @@ func TestTheStreamResumesAtTheExactNextSequence(t *testing.T) {
 		t.Fatalf("encode: %v", err)
 	}
 	req, err := http.NewRequest(http.MethodGet,
-		"http://"+f.server.Addr()+"/debug/pabt/v2/stream?cursor="+token, nil)
+		"http://"+f.server.Addr()+"/debug/pabt/stream?cursor="+token, nil)
 	if err != nil {
 		t.Fatalf("request: %v", err)
 	}
@@ -562,7 +562,7 @@ func TestAnImportPublishesAndARefusedOneDoesNot(t *testing.T) {
 	beforeSession := f.key.SessionID
 
 	// A bundle the fixture already holds, exported over HTTP and posted back.
-	resp, bundle := f.get(t, "/debug/pabt/v2/export")
+	resp, bundle := f.get(t, "/debug/pabt/export")
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("export = %d: %s", resp.StatusCode, firstLine(bundle))
 	}
@@ -584,7 +584,7 @@ func TestAnImportPublishesAndARefusedOneDoesNot(t *testing.T) {
 		t.Error("the import stored no records")
 	}
 	// The served state is the new history, not the old one with a new label on it.
-	resp, body := f.get(t, "/debug/pabt/v2/state")
+	resp, body := f.get(t, "/debug/pabt/state")
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("state = %d: %s", resp.StatusCode, body)
 	}
@@ -641,7 +641,7 @@ func postBundle(t *testing.T, f *durableFixture, bundle []byte) ImportResponse {
 func postBundleRaw(t *testing.T, f *durableFixture, bundle []byte) (int, []byte) {
 	t.Helper()
 	req, err := http.NewRequest(http.MethodPost,
-		"http://"+f.server.Addr()+"/debug/pabt/v2/import", bytes.NewReader(bundle))
+		"http://"+f.server.Addr()+"/debug/pabt/import", bytes.NewReader(bundle))
 	if err != nil {
 		t.Fatalf("request: %v", err)
 	}
@@ -666,7 +666,7 @@ func TestAKeyframeIsNamedRatherThanResentAndIsRetrievable(t *testing.T) {
 	// What holds for every sequence: a keyframe is the whole tree and names nothing,
 	// and a delta names the base it applies to, retrievable by sequence, and applies.
 	for sequence := uint64(1); sequence <= 4; sequence++ {
-		resp, body := f.get(t, fmt.Sprintf("/debug/pabt/v2/representations/%d", sequence))
+		resp, body := f.get(t, fmt.Sprintf("/debug/pabt/representations/%d", sequence))
 		if resp.StatusCode != http.StatusOK {
 			t.Fatalf("representation %d = %d: %s", sequence, resp.StatusCode, body)
 		}
@@ -691,7 +691,7 @@ func TestAKeyframeIsNamedRatherThanResentAndIsRetrievable(t *testing.T) {
 			t.Errorf("the base reference digest %q is not the delta's %q",
 				one.Base.Digest, one.Delta.BaseDigest)
 		}
-		resp, body = f.get(t, fmt.Sprintf("/debug/pabt/v2/trees/%d", one.Base.Sequence))
+		resp, body = f.get(t, fmt.Sprintf("/debug/pabt/trees/%d", one.Base.Sequence))
 		if resp.StatusCode != http.StatusOK {
 			t.Fatalf("the base tree = %d: %s", resp.StatusCode, body)
 		}
@@ -722,14 +722,10 @@ func TestAKeyframeIsNamedRatherThanResentAndIsRetrievable(t *testing.T) {
 func TestNoRouteReachesALivePlan(t *testing.T) {
 	f := newDurableFixture(t, 2)
 	f.waitReady(t)
-	// The durable server has no tracker at all, so the v1 routes, which do read a
-	// live plan, have nothing to read. That is the boundary stated rather than assumed.
-	if len(f.server.Trackers()) != 0 {
-		t.Errorf("the durable server holds %d trackers", len(f.server.Trackers()))
-	}
-	if _, found := f.server.Tracker("0"); found {
-		t.Error("the durable server resolved a tracker")
-	}
+	// The server holds no plan at all, so there is nothing for a route to read live.
+	// The paths that once served a live tree are not routes now, and the boundary
+	// this states is that none of them answers with tree content - a name or a node
+	// type in the body is a live read whatever the status code says.
 	for _, path := range []string{"/debug/pabt/plans", "/debug/pabt/timeline", "/debug/pabt/dot"} {
 		req, err := http.NewRequest(http.MethodGet, "http://"+f.server.Addr()+path, nil)
 		if err != nil {
@@ -743,10 +739,10 @@ func TestNoRouteReachesALivePlan(t *testing.T) {
 		body, _ := io.ReadAll(resp.Body)
 		_ = resp.Body.Close()
 		if resp.StatusCode != http.StatusNotFound {
-			t.Errorf("%s = %d, want 404: a durable server has no live plan", path, resp.StatusCode)
+			t.Errorf("%s = %d, want 404: the server has no live plan", path, resp.StatusCode)
 		}
 		if bytes.Contains(body, []byte("nodeType")) {
-			t.Errorf("%s returned tree content from a durable server", path)
+			t.Errorf("%s returned tree content", path)
 		}
 	}
 }
@@ -762,7 +758,7 @@ func TestAStreamEndsWithAResumablePositionWhenAClientFallsBehind(t *testing.T) {
 	f.waitReady(t)
 	streaming := &http.Client{}
 	req, err := http.NewRequest(http.MethodGet,
-		"http://"+f.server.Addr()+"/debug/pabt/v2/stream", nil)
+		"http://"+f.server.Addr()+"/debug/pabt/stream", nil)
 	if err != nil {
 		t.Fatalf("request: %v", err)
 	}
@@ -821,7 +817,7 @@ func TestAnOutOfBandImportStopsTheStreamAnnouncingTheOldRun(t *testing.T) {
 	// never went through the route would. The server hears nothing, so the only thing
 	// that can stop its stream from announcing the old run is revalidating the hub on
 	// use rather than caching one forever.
-	resp, bundle := f.get(t, "/debug/pabt/v2/export")
+	resp, bundle := f.get(t, "/debug/pabt/export")
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("export = %d: %s", resp.StatusCode, firstLine(bundle))
 	}
@@ -837,7 +833,7 @@ func TestAnOutOfBandImportStopsTheStreamAnnouncingTheOldRun(t *testing.T) {
 		SessionID: activated.SessionID, PlanID: activated.PlanID, RunID: activated.RunID,
 	}
 	streaming := &http.Client{}
-	req, err := http.NewRequest(http.MethodGet, "http://"+f.server.Addr()+"/debug/pabt/v2/stream", nil)
+	req, err := http.NewRequest(http.MethodGet, "http://"+f.server.Addr()+"/debug/pabt/stream", nil)
 	if err != nil {
 		t.Fatalf("request: %v", err)
 	}
@@ -920,7 +916,7 @@ func TestARepresentationThatDisagreesWithTheChainIsRefused(t *testing.T) {
 		encoded, mustHex(digest), f.key.SessionID, f.key.RunID); err != nil {
 		t.Fatalf("rewrite: %v", err)
 	}
-	resp, body := f.get(t, "/debug/pabt/v2/representations/1")
+	resp, body := f.get(t, "/debug/pabt/representations/1")
 	if resp.StatusCode == http.StatusOK {
 		t.Fatalf("a representation that disagrees with the record was served: %s", firstLine(body))
 	}
@@ -928,7 +924,7 @@ func TestARepresentationThatDisagreesWithTheChainIsRefused(t *testing.T) {
 		t.Errorf("the refusal says %q, want it to name the corruption", firstLine(body))
 	}
 	// The tree route refuses it too, and says the same thing: one rule, not two.
-	resp, body = f.get(t, "/debug/pabt/v2/trees/1")
+	resp, body = f.get(t, "/debug/pabt/trees/1")
 	if resp.StatusCode == http.StatusOK {
 		t.Errorf("the tampered tree was served: %s", firstLine(body))
 	}
@@ -991,14 +987,14 @@ func TestABadParameterOrAnUnreachableSequenceIsABadRequest(t *testing.T) {
 	f.waitReady(t)
 	huge := strconv.FormatUint(math.MaxUint64, 10)
 	for _, path := range []string{
-		"/debug/pabt/v2/records/after=" + "abc",
-		"/debug/pabt/v2/records?after=abc",
-		"/debug/pabt/v2/records?after=" + huge,
-		"/debug/pabt/v2/records/" + huge,
-		"/debug/pabt/v2/trees/" + huge,
-		"/debug/pabt/v2/representations/" + huge,
-		"/debug/pabt/v2/records/0",
-		"/debug/pabt/v2/records/-1",
+		"/debug/pabt/records/after=" + "abc",
+		"/debug/pabt/records?after=abc",
+		"/debug/pabt/records?after=" + huge,
+		"/debug/pabt/records/" + huge,
+		"/debug/pabt/trees/" + huge,
+		"/debug/pabt/representations/" + huge,
+		"/debug/pabt/records/0",
+		"/debug/pabt/records/-1",
 	} {
 		resp, body := f.get(t, path)
 		if resp.StatusCode != http.StatusBadRequest {
@@ -1010,13 +1006,13 @@ func TestABadParameterOrAnUnreachableSequenceIsABadRequest(t *testing.T) {
 	}
 	// A position the run has not reached is a conflict, not an empty page whose cursor
 	// reads zero and would send a paging client back to the start.
-	resp, body := f.get(t, "/debug/pabt/v2/records?after=9999")
+	resp, body := f.get(t, "/debug/pabt/records?after=9999")
 	if resp.StatusCode != http.StatusConflict {
 		t.Errorf("a position past the head = %d, want 409: %s", resp.StatusCode, firstLine(body))
 	}
 	// A write method on a read route is refused, so every route answers the same way.
 	for _, path := range []string{"/records/1", "/trees/1", "/representations/1"} {
-		req, err := http.NewRequest(http.MethodPost, "http://"+f.server.Addr()+"/debug/pabt/v2"+path, nil)
+		req, err := http.NewRequest(http.MethodPost, "http://"+f.server.Addr()+"/debug/pabt"+path, nil)
 		if err != nil {
 			t.Fatalf("request: %v", err)
 		}
@@ -1036,7 +1032,7 @@ func TestABadParameterOrAnUnreachableSequenceIsABadRequest(t *testing.T) {
 	if err != nil {
 		t.Fatalf("encode: %v", err)
 	}
-	resp, body = f.get(t, "/debug/pabt/v2/stream?cursor="+token)
+	resp, body = f.get(t, "/debug/pabt/stream?cursor="+token)
 	if bytes.Contains(body, []byte("script")) {
 		t.Errorf("the refusal quotes the cursor it was sent: %s", firstLine(body))
 	}
@@ -1058,10 +1054,10 @@ func TestACustomRouteUnderTheDurableSetIsStillBehindTheCapability(t *testing.T) 
 	// all, and a caller that registers the durable namespace under another host would
 	// otherwise answer without the check.
 	for _, pattern := range []string{
-		"/debug/pabt/v2/custom",
-		"/debug/pabt/v2",
-		"/debug/pabt/v2beside",
-		f.server.Addr() + "/debug/pabt/v2/hosted",
+		"/debug/pabt/custom",
+		"/debug/pabt",
+		"/debug/pabtbeside",
+		f.server.Addr() + "/debug/pabt/hosted",
 	} {
 		f.server.HandleFunc(pattern, planted)
 		path := pattern
@@ -1085,7 +1081,7 @@ func TestACustomRouteUnderTheDurableSetIsStillBehindTheCapability(t *testing.T) 
 	// And the route still works for a caller that presents the token, or registering it
 	// would have been useless rather than merely unsafe.
 	req, err := http.NewRequest(http.MethodGet,
-		"http://"+f.server.Addr()+"/debug/pabt/v2/custom", nil)
+		"http://"+f.server.Addr()+"/debug/pabt/custom", nil)
 	if err != nil {
 		t.Fatalf("request: %v", err)
 	}
@@ -1166,7 +1162,7 @@ func TestARowForARecordThatCommittedNoTreeIsRefused(t *testing.T) {
 	if _, _, _, err := f.store.Representation(ctx, f.key, treeless); !errors.Is(err, ErrStoreCorrupt) {
 		t.Errorf("a representation for a record with no tree = %v, want a corruption report", err)
 	}
-	resp, body := f.get(t, fmt.Sprintf("/debug/pabt/v2/representations/%d", treeless))
+	resp, body := f.get(t, fmt.Sprintf("/debug/pabt/representations/%d", treeless))
 	if resp.StatusCode == http.StatusOK {
 		t.Errorf("the route served a representation for a record with no tree: %s", firstLine(body))
 	}
@@ -1217,8 +1213,8 @@ func TestARecordWithNoTreeIsAbsentRatherThanCorrupt(t *testing.T) {
 		t.Errorf("Representation = %v, want not found", err)
 	}
 	for _, path := range []string{
-		fmt.Sprintf("/debug/pabt/v2/trees/%d", treeless),
-		fmt.Sprintf("/debug/pabt/v2/representations/%d", treeless),
+		fmt.Sprintf("/debug/pabt/trees/%d", treeless),
+		fmt.Sprintf("/debug/pabt/representations/%d", treeless),
 	} {
 		resp, body := f.get(t, path)
 		if resp.StatusCode != http.StatusNotFound {
@@ -1227,7 +1223,7 @@ func TestARecordWithNoTreeIsAbsentRatherThanCorrupt(t *testing.T) {
 	}
 	// And a run holding one is still exportable, which is how a history leaves the
 	// process.
-	resp, body := f.get(t, "/debug/pabt/v2/export")
+	resp, body := f.get(t, "/debug/pabt/export")
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("export = %d, want 200: %s", resp.StatusCode, firstLine(body))
 	}
@@ -1363,7 +1359,7 @@ func TestARunWithNoDeltasStillExportsAndImports(t *testing.T) {
 	// run is a history that can never leave the process.
 	f := newDurableFixture(t, 1)
 	f.waitReady(t)
-	resp, bundle := f.get(t, "/debug/pabt/v2/export")
+	resp, bundle := f.get(t, "/debug/pabt/export")
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("export = %d: %s", resp.StatusCode, firstLine(bundle))
 	}

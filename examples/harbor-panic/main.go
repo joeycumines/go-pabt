@@ -19,14 +19,11 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
-	"net/http"
 	"os"
 	"os/signal"
-	"runtime/debug"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -35,42 +32,33 @@ import (
 	"github.com/joeycumines/go-pabt/examples/harbor-panic/logic"
 	hsim "github.com/joeycumines/go-pabt/examples/harbor-panic/sim"
 	"github.com/joeycumines/go-pabt/examples/harbor-panic/tui"
-	"github.com/joeycumines/go-pabt/pabtdebug"
 )
 
 func main() {
 	var (
-		debugAddr     string
-		tickMs        int
-		overflowPath  string
-		stormEvery    int
-		humanSpeed    float64
-		headless      bool
-		burst         int
-		seedBP        string
-		ticks         int
-		useTUI        bool
-		scenario      string
-		rankByCost    bool
-		beliefFlag    bool
-		snapshotEvery int
-		fleetFlag     bool
-		tuiAudit      bool
+		tickMs     int
+		stormEvery int
+		humanSpeed float64
+		headless   bool
+		burst      int
+		ticks      int
+		useTUI     bool
+		scenario   string
+		rankByCost bool
+		beliefFlag bool
+		fleetFlag  bool
+		tuiAudit   bool
 	)
-	flag.StringVar(&debugAddr, "debug", "", "start debug server at address (e.g. :8080)")
 	flag.IntVar(&tickMs, "tick-ms", 80, "milliseconds between ticks")
-	flag.StringVar(&overflowPath, "overflow", "", "path for overflow JSONL persistence file")
 	flag.IntVar(&stormEvery, "storm-every", 120, "ticks between goal relocations (0=disabled)")
 	flag.Float64Var(&humanSpeed, "human-speed", 3.1, "human forklift speed per tick")
 	flag.BoolVar(&headless, "headless", false, "run without tcell UI")
 	flag.IntVar(&burst, "burst", 0, "rapidly tick N times then stop (implies --headless)")
-	flag.StringVar(&seedBP, "seed-breakpoint", "", "pre-seed breakpoint node path (e.g. 0.0.1)")
 	flag.IntVar(&ticks, "ticks", 0, "max ticks to run (0=infinite)")
 	flag.BoolVar(&useTUI, "tui", false, "run interactive tcell TUI (auto-disables with --headless/--burst or missing TERM)")
 	flag.StringVar(&scenario, "scenario", "", "harbor scenario: calm|stormy|maze (overrides storm/human defaults)")
 	flag.BoolVar(&rankByCost, "rank-by-cost", false, "rank harbor Actions by explicit cost model (demo of accidental ordering)")
 	flag.BoolVar(&beliefFlag, "belief", false, "enable belief partial-observability (hidden containers with sensing)")
-	flag.IntVar(&snapshotEvery, "snapshot-every", 1, "record a debug snapshot every Nth tick (1=every tick; >1 cuts per-tick Track CPU/RSS for sustained UI sessions)")
 	flag.BoolVar(&fleetFlag, "fleet", false, "spawn 3 harbors x 4 actors = 12 concurrent plans for fleet stress")
 	flag.BoolVar(&tuiAudit, "tui-audit", false, "print TUI design token audit table and exit")
 	flag.Parse()
@@ -124,75 +112,13 @@ func main() {
 		}
 	}
 
-	if debugAddr != "" {
-		// Cap RSS for sustained debug sessions: trade GC CPU for a bounded heap.
-		debug.SetGCPercent(50)
-		debug.SetMemoryLimit(256 << 20)
-	}
-
-	var debugServer *pabtdebug.Server
-	var trackers []*pabtdebug.Tracker
 	var planNodes []bt.Node
 
-	planIdx := 0
-	for harborIdx, h := range harbors {
-		for i, actor := range h.State().Actors() {
-			var planID string
-			if fleetFlag {
-				planID = hsim.FleetPlanID(harborIdx, i)
-			} else {
-				planID = fmt.Sprintf("harbor-bot-%d", i)
-			}
+	for _, h := range harbors {
+		for _, actor := range h.State().Actors() {
 			result := logic.HarborPlan(ctx, h, actor.ID)
-			planNode := result.Node
-
-			tracker := pabtdebug.NewTrackerWithID(result.Plan, planID)
-			if overflowPath != "" {
-				tracker.SetOverflowFile(fmt.Sprintf("%s.%s", overflowPath, planID))
-				tracker.WithKeyframeInterval(20)
-				tracker.WithMaxEvents(1000)
-				tracker.WithMaxTrees(100)
-			}
-			if seedBP != "" && planIdx == 0 {
-				tracker.SetBreakpoint(pabtdebug.Breakpoint{
-					NodePath:  seedBP,
-					Condition: "Running",
-					Enabled:   true,
-				})
-			}
-			trackers = append(trackers, tracker)
-			planNodes = append(planNodes, planNode)
-
-			if debugAddr != "" {
-				if planIdx == 0 {
-					debugServer = pabtdebug.NewServer(tracker, debugAddr)
-					go func() {
-						log.Printf("debug server: %s", debugServer.Start())
-					}()
-				} else {
-					debugServer.RegisterTracker(tracker)
-				}
-			}
-			planIdx++
+			planNodes = append(planNodes, result.Node)
 		}
-	}
-
-	// Safety endpoint: exposes live safety counters for verify_safety.sh
-	if debugAddr != "" && debugServer != nil {
-		debugServer.HandleFunc("/debug/pabt/safety", func(w http.ResponseWriter, r *http.Request) {
-			var sv, cy, de int
-			for _, h := range harbors {
-				sv += h.SafetyViolations()
-				cy += h.Cycles()
-				de += h.DeadEnds()
-			}
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(map[string]any{
-				"safetyViolations": sv,
-				"cycles":           cy,
-				"deadEnds":         de,
-			})
-		})
 	}
 
 	// Manager + tickers for non-burst mode; burst mode uses linearized synchronous pipeline
@@ -229,9 +155,10 @@ func main() {
 						log.Printf("harbor step error: %v", err)
 					}
 				}
-				for idx, pn := range planNodes {
-					status, err := pn.Tick()
-					trackers[idx].Track(status, err)
+				for _, pn := range planNodes {
+					if _, err := pn.Tick(); err != nil {
+						log.Printf("plan tick error: %v", err)
+					}
 				}
 				ticked++
 				if ticked%500 == 0 {
@@ -255,27 +182,15 @@ func main() {
 			wg.Wait()
 			close(wgDone)
 		}()
-		for idx := range planNodes {
-			pID := trackers[idx].ID()
-			tr := trackers[idx]
-			pn := planNodes[idx]
-			origNode := pn
-			var snapCount int64
-			wrappedNode := bt.New(func(children []bt.Node) (bt.Status, error) {
-				status, err := origNode.Tick()
-				snapCount++
-				if snapshotEvery <= 1 || snapCount%int64(snapshotEvery) == 0 {
-					tr.Track(status, err)
-				}
-				return status, err
-			})
+		for idx, pn := range planNodes {
+			pID := fmt.Sprintf("plan-%d", idx)
 			ticker := bt.NewTicker(ctx, time.Duration(tickMs)*time.Millisecond, bt.New(
 				bt.Not(bt.All),
 				bt.New(
 					bt.Selector,
 					bt.New(
 						bt.Sequence,
-						wrappedNode,
+						pn,
 						bt.New(func([]bt.Node) (bt.Status, error) {
 							return bt.Success, nil
 						}),
@@ -364,14 +279,14 @@ func main() {
 	}
 	if !headless && !useTUIEffective {
 		fmt.Println("Harbor Panic running. Press Ctrl+C to stop.")
-		fmt.Printf("Plans: %d, Debug: %q\n", len(planNodes), debugAddr)
+		fmt.Printf("Plans: %d\n", len(planNodes))
 	}
 
 	if useTUIEffective {
 		fmt.Println("Harbor Panic TUI mode: press q to quit, p pause, s step, +/- speed")
 		tuiCtx, tuiCancel := context.WithCancel(ctx)
 		defer tuiCancel()
-		if err := tui.Run(tuiCtx, harbors[0], trackers, tui.Options{TickMs: tickMs, Paused: &simPaused, StepCh: stepCh, SpeedMultiplier: &simSpeed, DebugAddr: debugAddr, OverflowPath: overflowPath, Scenario: scenario}); err != nil {
+		if err := tui.Run(tuiCtx, harbors[0], tui.Options{TickMs: tickMs, Paused: &simPaused, StepCh: stepCh, SpeedMultiplier: &simSpeed, Scenario: scenario}); err != nil {
 			log.Printf("tui error: %v, falling back to headless wait", err)
 			useTUIEffective = false
 		} else {
@@ -381,12 +296,6 @@ func main() {
 
 	if burst > 0 {
 		<-ctx.Done()
-		if debugServer != nil {
-			debugServer.Close()
-		}
-		for _, tr := range trackers {
-			tr.CloseOverflow()
-		}
 		return
 	}
 
@@ -405,10 +314,4 @@ func main() {
 	}
 	<-managerDone
 	<-wgDone
-	if debugServer != nil {
-		debugServer.Close()
-	}
-	for _, tr := range trackers {
-		tr.CloseOverflow()
-	}
 }

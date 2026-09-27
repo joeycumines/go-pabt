@@ -112,6 +112,23 @@ Output format:
 [frame1 effects:actor=s5,loc=table]  ActionNode | mypackage.pickup
 ```
 
+The `effects:` line is a live display of the action's effect rows and does show
+their values. Two different strings are involved, and they are not the same one.
+
+The name the planner derives for an action — `NodeInfo.Name`, and the name the
+durable record stores as `StoredAction.Name` — names the *keys* the action
+touches: `actor, loc`. It never carries the values, in a captured plan or an
+uncaptured one. The reason is that a name is plain text: it passes through no
+codec, no redaction walk, and no diagnostic sanitizer, so a value formatted into
+one would be written into every record that mentions the node, into every digest
+over those records, and into every export containing them, with nothing recorded
+that would let a later reader tell it had been there. The values live in the
+effect rows, where a value the application declared secret is redacted.
+
+So the display above is safe to read and is not safe to store, and the two are
+distinguished by which string you are looking at. See `effectName` in `util.go`
+for the name and `formatEffects` in `printer.go` for the display.
+
 ## Node Status Tracking
 
 `NodeStatus` tracks tick counts and the last status result for a node. Use
@@ -140,80 +157,181 @@ for i, entry := range path {
     fmt.Printf("Step %d: %s\n", i, entry.NodeType)
     if len(entry.Effects) > 0 {
         for _, e := range entry.Effects {
-            fmt.Printf("  Effect: %s = %v\n", e.Key(), e.Value())
+            // Key is an any, not a string, so it needs %v rather than %s.
+            fmt.Printf("  Effect: %v = %v\n", e.Key(), e.Value())
         }
     }
 }
 ```
 
+The parenthesised part of `String()` is the same live display the printer emits
+above: an action reads as `key=value` pairs from its effect rows, and a
+precondition or post-condition reads as the condition's own rendering. `String()`
+is a display, not storage — nothing it produces reaches a record, a digest, or an
+export.
+
+`GetPath` walks the live plan, so it is an opt-in read. The durable server never
+calls it: every route it serves answers from a committed record, so a browser
+reading history cannot race a tick that is still expanding the tree.
+
 ## Debug Server
 
-The `pabtdebug` package provides a full HTTP debug server for live introspection
-of PA-BT planning trees. It records tick events, exposes the plan tree over
-HTTP, and streams real-time updates via Server-Sent Events (SSE).
+The `pabtdebug` package serves a plan's recorded history over HTTP and to a
+browser. It records every tick into a store on disk, so the history survives a
+restart, is reconstructable, and can be exported and imported as a verified
+bundle. No route on it reads a live plan.
 
 ### Setup
 
-Create a `Tracker` and wrap your plan. Pass the tracker to `NewServer`:
-
 ```go
-import "github.com/joeycumines/go-pabt/pabtdebug"
+ctx := context.Background()
 
-tracker := pabtdebug.NewTracker(plan)
+store, err := pabtdebug.OpenSQLiteStore(ctx, pabtdebug.SQLiteStoreConfig{
+    Path: "run.db",
+})
+if err != nil {
+    return err
+}
+defer store.Close()
 
-// After each tick, record the event:
-status, err := plan.Node().Tick()
-tracker.Track(status, err)
+identity, err := store.Bootstrap(ctx, pabtdebug.BootstrapRequest{
+    PlanID: "my-plan",
+    RunID:  "my-run",
+    Title:  "My run",
+})
+if err != nil {
+    return err
+}
 
-// Start the debug server:
-server := pabtdebug.NewServer(tracker, ":8080")
-go server.Start()
+// A captured planner is what the session drives. NewCaptured is opt-in; a plan
+// built with New behaves exactly as it always did. The goal is a slice of
+// condition groups, not a flat list: each element is the set of conditions that
+// must all hold for one goal.
+planner, err := pabt.NewCaptured[MyCondition](state, goal)
+if err != nil {
+    return err
+}
+
+server, err := pabtdebug.NewDurableServer(store, pabtdebug.DurableServerConfig{
+    Addr: "127.0.0.1:0", // empty port asks the kernel for one
+})
+if err != nil {
+    return err
+}
 defer server.Close()
-```
 
-### HTTP Endpoints
+session, err := pabtdebug.OpenSession(ctx, store, planner, pabtdebug.SessionConfig{
+    Identity: identity,
+    Announce: server.Announce,
+})
+if err != nil {
+    return err
+}
 
-| Endpoint                                         | Description                           |
-|--------------------------------------------------|---------------------------------------|
-| `GET /debug/pabt/plans`                          | JSON array of plan info               |
-| `GET /debug/pabt/plans/{id}`                     | Full tree structure in JSON           |
-| `GET /debug/pabt/plans/{id}/events`              | SSE stream of tick events             |
-| `GET /debug/pabt/ui`                             | Embedded web UI for tree visualization|
+// The capability is minted by the server and is written to no file and no log.
+// Printing it is the application's job; that is how an operator obtains it.
+fmt.Println("debugger at", server.Addr())
+fmt.Println("capability", server.Capability())
 
-### Data Types
+go server.Start()
 
-**TreeNode** — A node in the planning tree with its metadata:
-
-```json
-{
-  "id": "0.1.2",
-  "name": "pickup",
-  "nodeType": "ActionNode",
-  "status": { "TickCount": 5, "LastStatus": "Success" },
-  "effects": [
-    { "key": "actor", "value": "s5" },
-    { "key": "loc", "value": "table" }
-  ]
+// Each tick goes through the session, which orders intent, execution, bundle,
+// and commit. Every path out of Tick either commits exactly one terminal record
+// or returns an error with the sequence released, so a tick is never half
+// recorded and a sequence is never used without a record.
+result := session.Tick(ctx)
+if result.Err != nil {
+    return result.Err
 }
 ```
 
-**TickEvent** — A snapshot captured after each tick:
+The listener is created by `NewDurableServer` rather than by `Start`, so the
+address is known before anything is served. It binds loopback only, and a
+hostname is refused rather than resolved. This is a trusted-local debugger: the
+loopback listener is the first boundary and the capability is the second.
 
-```json
-{
-  "iteration": 42,
-  "status": "Running",
-  "tree": { ... },
-  "timestamp": "2026-01-15T10:30:00Z"
-}
-```
+### Durable endpoints
 
-**Hub** — Manages SSE client connections and broadcasts tick events to all
-subscribers. Use `Tracker.Hub()` to access the hub directly for custom
-integrations.
+Every route under `/debug/pabt/` requires the `X-PABT-Capability` header. The
+token is read from the header so it never reaches a URL, an access log, a
+referrer, or a shell history. The one exception is the client shell at
+`/debug/pabt/ui`, which carries no record and no token; see
+[Browser client](#browser-client).
+
+| Endpoint | Description |
+|---|---|
+| `GET /debug/pabt/state` | Store identity, generation, recovery, the active run and its head. A client bootstraps from this. |
+| `GET /debug/pabt/records?after=N` | A bounded page of whole records, plus a cursor for the position it leaves the client at. |
+| `GET /debug/pabt/records/{n}` | One whole record. |
+| `GET /debug/pabt/trees/{n}` | The tree that record committed. |
+| `GET /debug/pabt/representations/{n}` | That tree plus the delta that produced it and a named base. |
+| `GET /debug/pabt/stream?cursor=` | SSE. A `behind` event ends the connection with a cursor to resume from. |
+| `GET /debug/pabt/cursor?after=N` | Mints a cursor, so a client never has to construct one. |
+| `GET /debug/pabt/export` | The run's history as a bundle, media type `application/vnd.pabtdebug.bundle`. |
+| `POST /debug/pabt/import` | Stages a bundle and activates it as an independently rewritten session. |
+
+The export's digest is in the `X-PABT-Bundle-SHA256` response header. A bundle
+is unkeyed, so every digest in it is recomputable for free: what it proves is
+damage, truncation, reordering, and frame exchange, never authorship.
+
+The routes are registered in `durableserver.go`; export and import are in
+`durabletransfer.go` and the stream in `durablestream.go`.
+
+### Browser client
+
+`GET /debug/pabt/ui` serves the client — `index.html`, `app.css`, and eight ES
+modules, listed in `clientAssets` in `pabtdebug/uiclient.go`. A request cannot
+name a file that is not in that map.
+
+The shell is served **outside** the guarded subtree, and that is deliberate: it
+carries no record and no token, and keeping it out is what leaves "every route
+requires the capability" true as a property. The consequence is that the shell is
+reachable by anything that can reach the port, and the token is what keeps the
+history private. The page asks for the capability and keeps it in
+`sessionStorage`, which dies with the tab.
+
+The client reads history, not a live plan. Selecting an occurrence shows its
+preconditions with the four evidence fields — expected, current, observed, and
+uncertainty — each labelled separately. An expected value the application did not
+declare renders as unavailable, with the record's own reason; it is never inferred
+from the condition's key.
 
 ## Examples
 
 ### tcell-pick-and-place
 
 ![tcell-pick-and-place demo 1](https://imgur.com/W0NfhSY.gif "A demonstration of the example")
+
+```
+go run -tags example ./examples/tcell-pick-and-place
+```
+
+### harbor-panic
+
+A load fixture rather than a product demo: four carriers, six containers, four
+goals, a human forklift that steals them, and a storm that relocates the goals
+every 120 ticks, which invalidates every plan the planner had settled on.
+
+Both examples are behind `//go:build example`, so they are invisible to
+`go build ./...` and to `go test ./...`, and they need the tag to run or to
+test:
+
+```
+go test -tags example ./examples/harbor-panic/... -count=1
+go vet -tags example ./examples/harbor-panic/...
+```
+
+Harbor loads the planner and the simulator; it does not serve or attach to the
+debug server. Read its README as fixture context.
+
+## Research input
+
+`docs/research/` holds audits of behaviour-tree planning, partial observability,
+and pipeline linearization. They are **constraint input**: the reasoning a design
+was checked against, not evidence that anything in this repository behaves a
+particular way. Nothing in `docs/research/` is a specification this code
+implements, and a claim about what the code does has to be checked against the
+code.
+
+`docs/rearch.md` is the design input for the earlier in-memory debug server, which
+the durable server replaced. It is history, not a description of this code.

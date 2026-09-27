@@ -27,22 +27,21 @@ import (
 //go:embed client
 var clientFS embed.FS
 
-// uiPrefix is where the client is served. It sits outside /debug/pabt/v2/ on
+// uiPrefix is where the client is served. It sits outside the guarded subtree on
 // purpose, and that is the whole reason for the choice.
 //
-// The v2 subtree is behind the capability check, and it must stay wholly behind
-// it: a route that answers there without the check is the failure T6's
-// capability test exists to catch. The shell is not a data route. It is a
+// Everything under routePrefix is behind the capability check, and it must stay
+// wholly behind it: a route that answers there without the check is the failure
+// the capability test exists to catch. The shell is not a data route. It is a
 // document that contains no record, no digest, and no capability, and every
 // request it makes carries the token in a header. Serving it from outside the
-// subtree therefore discloses nothing while keeping "every /debug/pabt/v2/ route
-// requires the capability" true as a property a test can check rather than an
-// intention.
+// subtree therefore discloses nothing while keeping "every route requires the
+// capability" true as a property a test can check rather than an intention.
 //
 // The consequence is that the shell is reachable by anything that can reach the
 // port, and the token is what keeps the history private. That is the boundary
-// T6 built, unchanged: the loopback listener is the first boundary and the token
-// is the second, and the shell does not weaken the second.
+// unchanged: the loopback listener is the first boundary and the token is the
+// second, and the shell does not weaken the second.
 const uiPrefix = "/debug/pabt/ui"
 
 // clientAssets is the exact set of files the client is made of, with the media
@@ -67,10 +66,9 @@ var clientAssets = map[string]string{
 
 // clientUI registers the browser client on the server's own mux.
 //
-// It is called only from NewDurableServer. A tracker-backed server keeps the
-// legacy page, because the client speaks the v2 route set and there is no v2
-// history behind a tracker: serving it there would show an operator a page whose
-// every request fails.
+// It is called only from NewDurableServer, which is the only constructor there
+// is: the client reads committed history, so there is nothing for it to be
+// served without a store behind it.
 func (d *durable) clientUI(mux *http.ServeMux) {
 	mux.HandleFunc(uiPrefix, d.handleClientShell)
 	mux.HandleFunc(uiPrefix+"/", d.handleClientAsset)

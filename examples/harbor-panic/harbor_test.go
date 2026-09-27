@@ -31,21 +31,23 @@ import (
 	"github.com/joeycumines/go-pabt"
 	"github.com/joeycumines/go-pabt/examples/harbor-panic/logic"
 	hsim "github.com/joeycumines/go-pabt/examples/harbor-panic/sim"
-	"github.com/joeycumines/go-pabt/pabtdebug"
 )
 
 func init() {
 	bt.DefaultPrinter = pabt.Printer
 }
 
-func countTreeNodes(tree *pabtdebug.TreeNode) int {
-	if tree == nil {
-		return 0
-	}
-	count := 1
-	for i := range tree.Children {
-		count += countTreeNodes(&tree.Children[i])
-	}
+// countPlanNodes counts the nodes of a live plan.
+//
+// The count comes from walking the plan itself rather than from a snapshot of it:
+// a debugger's tree is a copy, and a copy can be a faithful size while the plan
+// that produced it is not the plan under test.
+func countPlanNodes(node bt.Node) int {
+	count := 0
+	pabt.Walk(node, func(*pabt.NodeInfo) bool {
+		count++
+		return true
+	})
 	return count
 }
 
@@ -63,7 +65,6 @@ func TestHarborBuildsLargeTrees(t *testing.T) {
 	for i, actor := range actors {
 		planID := fmt.Sprintf("harbor-bot-%d", i)
 		result := logic.HarborPlan(ctx, harbor, actor.ID)
-		tracker := pabtdebug.NewTrackerWithID(result.Plan, planID)
 
 		planNode := result.Node
 
@@ -75,14 +76,10 @@ func TestHarborBuildsLargeTrees(t *testing.T) {
 			}
 		}
 
-		tracker.Track(bt.Success, nil)
-
-		tree := tracker.BuildTree()
-		if tree == nil {
-			t.Fatalf("%s: BuildTree returned nil", planID)
+		nodeCount := countPlanNodes(planNode)
+		if nodeCount == 0 {
+			t.Fatalf("%s: the plan has no nodes", planID)
 		}
-
-		nodeCount := countTreeNodes(tree)
 		t.Logf("%s: tree has %d nodes", planID, nodeCount)
 
 		// PA-BT produces compact trees proportional to distinct precondition

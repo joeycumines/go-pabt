@@ -1,9 +1,9 @@
 /*
-   Talking to the v2 route set.
+   Talking to the debug server's route set.
 
    Every request carries the capability in a header and nowhere else. That is the
    server's boundary, not a habit: a token in a query string is a token in an
-   access log, in a referrer, and in a shell history, and T6's route test refuses
+   access log, in a referrer, and in a shell history, and the server's route test refuses
    a token offered any other way. The same reason rules out EventSource, which
    cannot set a header, which is why the stream in stream.js reads the body.
 */
@@ -36,7 +36,7 @@ export class ApiError extends Error {
   }
 }
 
-const BASE = "/debug/pabt/v2";
+const BASE = "/debug/pabt";
 
 /** Api is one authenticated connection to one store's active run. */
 export class Api {

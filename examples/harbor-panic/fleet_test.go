@@ -9,9 +9,9 @@ import (
 	"time"
 
 	bt "github.com/joeycumines/go-behaviortree"
+	"github.com/joeycumines/go-pabt"
 	"github.com/joeycumines/go-pabt/examples/harbor-panic/logic"
 	hsim "github.com/joeycumines/go-pabt/examples/harbor-panic/sim"
-	"github.com/joeycumines/go-pabt/pabtdebug"
 )
 
 func TestFleet(t *testing.T) {
@@ -23,7 +23,6 @@ func TestFleet(t *testing.T) {
 		t.Fatalf("expected 3 fleet members, got %d", len(fleet))
 	}
 
-	var trackers []*pabtdebug.Tracker
 	var planNodes []bt.Node
 
 	for mi, m := range fleet {
@@ -32,16 +31,17 @@ func TestFleet(t *testing.T) {
 			t.Fatalf("fleet member %d: expected 4 actors, got %d", mi, len(actors))
 		}
 		for ai, actor := range actors {
-			planID := hsim.FleetPlanID(mi, ai)
+			// The plan identity is built even though nothing registers it: it is
+			// the name a debugger would show, and building it for twelve plans is
+			// part of what this asserts.
+			_ = hsim.FleetPlanID(mi, ai)
 			result := logic.HarborPlan(ctx, m.Harbor, actor.ID)
-			tracker := pabtdebug.NewTrackerWithID(result.Plan, planID)
-			trackers = append(trackers, tracker)
 			planNodes = append(planNodes, result.Node)
 		}
 	}
 
-	if len(trackers) != 12 {
-		t.Fatalf("expected 12 trackers, got %d", len(trackers))
+	if len(planNodes) != 12 {
+		t.Fatalf("expected 12 plans, got %d", len(planNodes))
 	}
 
 	for tick := 0; tick < 100; tick++ {
@@ -50,22 +50,23 @@ func TestFleet(t *testing.T) {
 				t.Fatalf("tick %d: step error: %v", tick, err)
 			}
 		}
-		for idx, pn := range planNodes {
-			status, err := pn.Tick()
-			trackers[idx].Track(status, err)
+		for _, pn := range planNodes {
+			if _, err := pn.Tick(); err != nil {
+				t.Fatalf("tick %d: %v", tick, err)
+			}
 		}
 	}
 
-	for idx, tr := range trackers {
-		tree := tr.BuildTree()
-		if tree == nil {
-			t.Errorf("tracker %d (%s): BuildTree returned nil", idx, tr.ID())
-		}
-		ev := tr.Events()
-		if len(ev) == 0 {
-			t.Errorf("tracker %d (%s): no events", idx, tr.ID())
+	for idx, pn := range planNodes {
+		nodes := 0
+		pabt.Walk(pn, func(*pabt.NodeInfo) bool {
+			nodes++
+			return true
+		})
+		if nodes == 0 {
+			t.Errorf("plan %d has no nodes after 100 ticks", idx)
 		}
 	}
 
-	t.Logf("TestFleet: 3 harbors x 4 actors = 12 plans, 100 ticks, all trees built")
+	t.Logf("TestFleet: 3 harbors x 4 actors = 12 plans, 100 ticks, all plans built")
 }

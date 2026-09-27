@@ -5,14 +5,14 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"sync"
 	"testing"
 	"time"
 
+	bt "github.com/joeycumines/go-behaviortree"
+	"github.com/joeycumines/go-pabt"
 	"github.com/joeycumines/go-pabt/examples/harbor-panic/logic"
 	hsim "github.com/joeycumines/go-pabt/examples/harbor-panic/sim"
-	"github.com/joeycumines/go-pabt/pabtdebug"
 )
 
 func TestDeterminismLock(t *testing.T) {
@@ -84,34 +84,38 @@ func TestConcurrencyStress(t *testing.T) {
 
 	const planCount = 4
 	plans := make([]logic.HarborPlanResult, planCount)
-	trackers := make([]*pabtdebug.Tracker, planCount)
 	planMu := make([]sync.RWMutex, planCount)
 	for i := 0; i < planCount; i++ {
 		plans[i] = logic.HarborPlan(ctx, harbor, actors[i].ID)
-		trackers[i] = pabtdebug.NewTrackerWithID(plans[i].Plan, fmt.Sprintf("stress-bot-%d", i))
-	}
-
-	srv := pabtdebug.NewServer(trackers[0], "127.0.0.1:0")
-	for i := 1; i < planCount; i++ {
-		srv.RegisterTracker(trackers[i])
 	}
 
 	const iterations = 500
 	var wg sync.WaitGroup
 
+	// One plan per actor, each ticked on its own goroutine while the harbor itself
+	// steps on this one. Run this under -race: the assertion is that the planner
+	// fabric holds no shared mutable state across those goroutines, which is the
+	// property a debugger's own capture would otherwise be blamed for.
+	//
+	// There is deliberately no concurrent reader of a live tree here. Reading one
+	// while a tick runs races with the writes expansion performs - that is a known
+	// hazard of the live plan, and the reason the durable server serves committed
+	// records instead. A test that provoked it would be asserting a race.
+	terminal := make([]bt.Status, planCount)
 	for i := 0; i < planCount; i++ {
 		wg.Add(1)
 		go func(idx int) {
 			defer wg.Done()
 			pn := plans[idx].Node
-			tr := trackers[idx]
 			mu := &planMu[idx]
+			var last bt.Status
 			for iter := 0; iter < iterations; iter++ {
 				mu.Lock()
 				status, _ := pn.Tick()
-				tr.Track(status, nil)
 				mu.Unlock()
+				last = status
 			}
+			terminal[idx] = last
 		}(i)
 	}
 
@@ -119,31 +123,23 @@ func TestConcurrencyStress(t *testing.T) {
 		harbor.Step(ctx)
 	}
 
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		for i := 0; i < iterations/5; i++ {
-			for j := 0; j < planCount; j++ {
-				_ = trackers[j].Profile()
-				_ = trackers[j].Timeline()
-				if i > 0 {
-					_, _ = trackers[j].Diff(1, i)
-				}
-				planMu[j].RLock()
-				_ = trackers[j].Search("Selector")
-				_ = trackers[j].BuildTree()
-				planMu[j].RUnlock()
-			}
-			time.Sleep(time.Microsecond)
-		}
-	}()
-
 	wg.Wait()
 
+	// A PA-BT plan returns Running while it still has work to do, so Running after
+	// 500 iterations is a normal outcome and not a failure. What must hold is that
+	// every plan reported a real status - the ABI leaves 0 undefined, so a zero here
+	// means a tick returned nothing - and that each plan built a tree.
 	for i := 0; i < planCount; i++ {
-		ev := trackers[i].Events()
-		if len(ev) == 0 {
-			t.Errorf("stress-bot-%d: no events recorded", i)
+		if terminal[i] == 0 {
+			t.Errorf("stress-bot-%d: last status is the undefined zero", i)
+		}
+		nodes := 0
+		pabt.Walk(plans[i].Node, func(*pabt.NodeInfo) bool {
+			nodes++
+			return true
+		})
+		if nodes == 0 {
+			t.Errorf("stress-bot-%d: no nodes after %d iterations", i, iterations)
 		}
 	}
 	t.Logf("ConcurrencyStress: %d plans x %d iterations, no race detected", planCount, iterations)

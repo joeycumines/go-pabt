@@ -60,8 +60,8 @@ type DurableServerConfig struct {
 	KeepAlive time.Duration
 }
 
-// durable is the state the v2 routes need, held on the existing Server so one type
-// owns one lifecycle and one mux.
+// durable is the state the routes need, held on the Server so one type owns one
+// lifecycle and one mux.
 type durable struct {
 	store      *SQLiteStore
 	capability string
@@ -81,7 +81,7 @@ type durable struct {
 // binds loopback only: this is a trusted local debugger, and the token is a second
 // boundary rather than the first.
 //
-// No v2 route reads a live plan. A live tree read while a tick runs races with the
+// No route reads a live plan. A live tree read while a tick runs races with the
 // writes expansion performs, and the history is the whole point: everything a route
 // serves is a record the store committed.
 func NewDurableServer(store *SQLiteStore, cfg DurableServerConfig) (*Server, error) {
@@ -138,17 +138,16 @@ func NewDurableServer(store *SQLiteStore, cfg DurableServerConfig) (*Server, err
 		server:   &http.Server{Handler: mux},
 		listener: listener,
 		durable:  d,
-		trackers: map[string]*Tracker{},
-		v2:       http.NewServeMux(),
+		guarded:  http.NewServeMux(),
 	}
-	// The v2 routes live on their own mux with the capability check in front of it.
+	// The routes live on their own mux with the capability check in front of it.
 	// Registering them on one mux with a prefix pattern would not work: a more specific
 	// pattern wins, so every named route would answer without ever reaching the check.
 	d.server(s)
-	mux.Handle("/debug/pabt/v2/", s.requireCapability(s.v2))
+	mux.Handle("/debug/pabt/", s.requireCapability(s.guarded))
 	// The browser client is served outside that subtree, and the reason is in
 	// uiPrefix: it carries no data and no capability, and keeping it out is what
-	// leaves "every v2 route requires the capability" checkable as a property.
+	// leaves "every route requires the capability" checkable as a property.
 	d.clientUI(mux)
 	if err := d.writeReady(listener.Addr().String()); err != nil {
 		_ = listener.Close()
@@ -227,18 +226,18 @@ func (s *Server) authenticated(r *http.Request) bool {
 // capabilityHeader is where the token is presented.
 const capabilityHeader = "X-PABT-Capability"
 
-// server registers the v2 route set.
+// server registers the route set.
 func (d *durable) server(s *Server) {
-	mux := s.v2
-	mux.HandleFunc("/debug/pabt/v2/state", d.handleState)
-	mux.HandleFunc("/debug/pabt/v2/records", d.handleRecords)
-	mux.HandleFunc("/debug/pabt/v2/records/{sequence}", d.handleRecord)
-	mux.HandleFunc("/debug/pabt/v2/trees/{sequence}", d.handleTree)
-	mux.HandleFunc("/debug/pabt/v2/representations/{sequence}", d.handleRepresentation)
-	mux.HandleFunc("/debug/pabt/v2/stream", d.handleStream)
-	mux.HandleFunc("/debug/pabt/v2/export", d.handleExport)
-	mux.HandleFunc("/debug/pabt/v2/import", d.handleImport)
-	mux.HandleFunc("/debug/pabt/v2/cursor", d.handleCursor)
+	mux := s.guarded
+	mux.HandleFunc("/debug/pabt/state", d.handleState)
+	mux.HandleFunc("/debug/pabt/records", d.handleRecords)
+	mux.HandleFunc("/debug/pabt/records/{sequence}", d.handleRecord)
+	mux.HandleFunc("/debug/pabt/trees/{sequence}", d.handleTree)
+	mux.HandleFunc("/debug/pabt/representations/{sequence}", d.handleRepresentation)
+	mux.HandleFunc("/debug/pabt/stream", d.handleStream)
+	mux.HandleFunc("/debug/pabt/export", d.handleExport)
+	mux.HandleFunc("/debug/pabt/import", d.handleImport)
+	mux.HandleFunc("/debug/pabt/cursor", d.handleCursor)
 }
 
 // ready reports what the store is serving, refusing a store that is not ready to be
