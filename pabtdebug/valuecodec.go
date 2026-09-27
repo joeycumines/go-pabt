@@ -298,8 +298,8 @@ func encodeWithCodec(c ValueCodec, v any) (data Bytes, err error) {
 }
 
 var (
-	timeType      = reflect.TypeOf(time.Time{})
-	timestampType = reflect.TypeOf(Timestamp(time.Time{}))
+	timeType      = reflect.TypeFor[time.Time]()
+	timestampType = reflect.TypeFor[Timestamp]()
 )
 
 // bytesOf returns a byte slice or byte array's bytes.
@@ -760,7 +760,7 @@ type stringCodec struct{}
 
 func (stringCodec) ID() string              { return stringCodecID }
 func (stringCodec) Version() uint32         { return 1 }
-func (stringCodec) MatchType() reflect.Type { return reflect.TypeOf("") }
+func (stringCodec) MatchType() reflect.Type { return reflect.TypeFor[string]() }
 func (stringCodec) Encode(v any) (Bytes, error) {
 	s, ok := v.(string)
 	if !ok {
@@ -774,7 +774,7 @@ type bytesCodec struct{}
 
 func (bytesCodec) ID() string              { return bytesCodecID }
 func (bytesCodec) Version() uint32         { return 1 }
-func (bytesCodec) MatchType() reflect.Type { return reflect.TypeOf(Bytes(nil)) }
+func (bytesCodec) MatchType() reflect.Type { return reflect.TypeFor[Bytes]() }
 func (bytesCodec) Encode(v any) (Bytes, error) {
 	switch t := v.(type) {
 	case Bytes:
@@ -807,7 +807,7 @@ type intCodec struct{}
 
 func (intCodec) ID() string              { return intCodecID }
 func (intCodec) Version() uint32         { return 1 }
-func (intCodec) MatchType() reflect.Type { return reflect.TypeOf(int64(0)) }
+func (intCodec) MatchType() reflect.Type { return reflect.TypeFor[int64]() }
 func (intCodec) Encode(v any) (Bytes, error) {
 	switch t := v.(type) {
 	case int64:
@@ -829,7 +829,7 @@ type floatCodec struct{}
 
 func (floatCodec) ID() string              { return floatCodecID }
 func (floatCodec) Version() uint32         { return 1 }
-func (floatCodec) MatchType() reflect.Type { return reflect.TypeOf(float64(0)) }
+func (floatCodec) MatchType() reflect.Type { return reflect.TypeFor[float64]() }
 func (floatCodec) Encode(v any) (Bytes, error) {
 	f, ok := v.(float64)
 	if !ok {

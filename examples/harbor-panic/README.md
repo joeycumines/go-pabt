@@ -43,12 +43,17 @@ Every file is behind `//go:build example`, so the fixture is invisible to
 go test -tags example ./examples/harbor-panic/... -count=1
 go vet  -tags example ./examples/harbor-panic/...
 
-# headless
-go run -tags example ./examples/harbor-panic -- --headless --ticks 200
+# headless, bounded
+go run -tags example ./examples/harbor-panic -headless -ticks 200
 
-# the tcell harbour
-go run -tags example ./examples/harbor-panic -- --tui
+# the tcell harbour, which needs a terminal
+go run -tags example ./examples/harbor-panic -tui
 ```
+
+There is no `--` before the flags. Go's `flag` package treats a bare `--` as the
+end of the flags, so everything after it becomes a positional argument — and the
+binary now refuses one rather than running on the defaults, because a run that
+silently ignores `--ticks` is a run that never stops.
 
 ### Flags
 

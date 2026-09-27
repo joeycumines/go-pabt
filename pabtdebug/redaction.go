@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -87,7 +88,7 @@ func pointerToIsSensitive(t reflect.Type) bool {
 	return ok
 }
 
-var sensitiveType = reflect.TypeOf((*Sensitive)(nil)).Elem()
+var sensitiveType = reflect.TypeFor[Sensitive]()
 
 // declared reports whether a value declares itself a secret, containing a panic
 // as a declaration.
@@ -530,10 +531,8 @@ func (c *redactionContext) registerSecret(literal string) {
 		c.droppedSecrets++
 		return
 	}
-	for _, existing := range c.secrets {
-		if existing == literal {
-			return
-		}
+	if slices.Contains(c.secrets, literal) {
+		return
 	}
 	c.secrets = append(c.secrets, literal)
 }

@@ -95,7 +95,7 @@ func TestGetPath_GraphState(t *testing.T) {
 	}
 
 	node := plan.Node()
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		status, err := node.Tick()
 		if err != nil {
 			t.Fatalf("tick %d: %v", i, err)

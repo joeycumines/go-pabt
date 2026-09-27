@@ -87,6 +87,13 @@ func run(cmd string, args []string) (exitCode int) {
 		err = screen.Init()
 	}
 	if err != nil {
+		// The log is discarded when there is no logfile, so the screen failure would
+		// be the one startup error a user never sees - and it is the one a user
+		// without a terminal hits first. The sim init error below restores stderr
+		// for exactly this reason; this path is the same case and was not.
+		if logfile == `` {
+			log.SetOutput(os.Stderr)
+		}
 		log.Printf(`screen init error: %s`, err)
 		return 1
 	}

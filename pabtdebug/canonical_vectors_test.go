@@ -932,7 +932,7 @@ type panickingCodec struct{ message string }
 func (panickingCodec) ID() string      { return "panic/v1" }
 func (panickingCodec) Version() uint32 { return 1 }
 func (panickingCodec) MatchType() reflect.Type {
-	return reflect.TypeOf(unencodable{})
+	return reflect.TypeFor[unencodable]()
 }
 func (p panickingCodec) Encode(any) (Bytes, error) { panic(p.message) }
 func (panickingCodec) Decode(Bytes) (any, error)   { return nil, nil }
@@ -942,7 +942,7 @@ type failingCodec struct{ message string }
 func (failingCodec) ID() string      { return "failing/v1" }
 func (failingCodec) Version() uint32 { return 1 }
 func (failingCodec) MatchType() reflect.Type {
-	return reflect.TypeOf(unencodable{})
+	return reflect.TypeFor[unencodable]()
 }
 func (f failingCodec) Encode(any) (Bytes, error) {
 	return nil, fmt.Errorf("%s", f.message)

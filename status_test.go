@@ -113,9 +113,7 @@ func TestNodeStatusSnapshotUnderConcurrentReaders(t *testing.T) {
 		reads atomic.Int64
 	)
 	for range 4 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			<-start
 			for range 500 {
 				got := s.Snapshot()
@@ -127,7 +125,7 @@ func TestNodeStatusSnapshotUnderConcurrentReaders(t *testing.T) {
 					torn.Add(1)
 				}
 			}
-		}()
+		})
 	}
 	close(start)
 	for i := range 2000 {
@@ -271,9 +269,7 @@ func TestRootStatusIsPublishedInOneStep(t *testing.T) {
 	}
 	status = plan.root.status
 	for range 4 {
-		guard.Add(1)
-		go func() {
-			defer guard.Done()
+		guard.Go(func() {
 			for {
 				select {
 				case <-stop:
@@ -286,7 +282,7 @@ func TestRootStatusIsPublishedInOneStep(t *testing.T) {
 					torn.Add(1)
 				}
 			}
-		}()
+		})
 	}
 	for range 3000 {
 		plan.TickCaptured(TickEnvironment{})

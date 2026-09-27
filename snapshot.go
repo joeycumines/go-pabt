@@ -17,7 +17,7 @@
 package pabt
 
 import (
-	"sort"
+	"slices"
 	"time"
 
 	bt "github.com/joeycumines/go-behaviortree"
@@ -279,9 +279,7 @@ func (a *action[T]) occurrence(nodeID OccurrenceID) ActionOccurrence {
 	}
 	// Map iteration order is unspecified, so the guarded conditions are sorted
 	// to keep a snapshot's bytes stable for identical planner state.
-	sort.Slice(out.ConditionIDs, func(i, j int) bool {
-		return out.ConditionIDs[i] < out.ConditionIDs[j]
-	})
+	slices.Sort(out.ConditionIDs)
 	return out
 }
 

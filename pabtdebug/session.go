@@ -369,10 +369,7 @@ func (s *Session) buildRecord(
 	// no snapshot at all. Taking the higher of the two keeps the record at or above
 	// the revision the attempt began at, which is what the store requires, rather
 	// than zero, which it refuses.
-	planRevision := snapshot.PlanRevision
-	if planRevision < exec.PlanRevision {
-		planRevision = exec.PlanRevision
-	}
+	planRevision := max(snapshot.PlanRevision, exec.PlanRevision)
 	record := StoredRecord{
 		Kind:             outcome.kind,
 		PayloadState:     PayloadComplete,

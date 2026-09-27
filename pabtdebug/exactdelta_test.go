@@ -72,14 +72,16 @@ func threeNodeTree(t *testing.T, seq, revision uint64) StoredTree {
 	first, second := "n1", "n2"
 	return sealDeltaTree(t, deltaRunKey(), "e", seq, revision,
 		deltaFixtureNode("root", nil, 0, "root"),
-		deltaFixtureNode(first, id("root"), 0, "first"),
-		deltaFixtureNode(second, id("root"), 1, "second"),
+		deltaFixtureNode(first, new("root"), 0, "first"),
+		deltaFixtureNode(second, new("root"), 1, "second"),
 	)
 }
 
 // id returns a stable pointer to a literal, which is how an optional
 // reference is expressed in a fixture.
-func id(name string) *string { return &name }
+//
+//go:fix inline
+func id(name string) *string { return new(name) }
 
 // cloneTree copies a tree's node slice, so a case that changes the tree cannot
 // change the base every later case is measured against.
@@ -239,9 +241,9 @@ func TestExactDeltaIsDeterministic(t *testing.T) {
 	base := threeNodeTree(t, 1, 1)
 	target := sealDeltaTree(t, deltaRunKey(), "e2", 2, 2,
 		deltaFixtureNode("root", nil, 0, "root"),
-		deltaFixtureNode("b", id("root"), 0, "b"),
-		deltaFixtureNode("a", id("root"), 1, "a"),
-		deltaFixtureNode("c", id("a"), 0, "c"),
+		deltaFixtureNode("b", new("root"), 0, "b"),
+		deltaFixtureNode("a", new("root"), 1, "a"),
+		deltaFixtureNode("c", new("a"), 0, "c"),
 	)
 	first, err := ComputeExactDelta(base, target)
 	if err != nil {
@@ -438,12 +440,12 @@ func TestAParentThatLosesItsLastChildRoundTrips(t *testing.T) {
 	root, parent, child := "root", "parent", "child-0"
 	base := sealDeltaTree(t, deltaRunKey(), "e", 1, 2,
 		deltaFixtureNode(root, nil, 0, root),
-		deltaFixtureNode(parent, id(root), 0, parent),
-		deltaFixtureNode(child, id(parent), 0, child),
+		deltaFixtureNode(parent, new(root), 0, parent),
+		deltaFixtureNode(child, new(parent), 0, child),
 	)
 	target := sealDeltaTree(t, deltaRunKey(), "e", 2, 2,
 		deltaFixtureNode(root, nil, 0, root),
-		deltaFixtureNode(parent, id(root), 0, parent),
+		deltaFixtureNode(parent, new(root), 0, parent),
 	)
 	delta, err := ComputeExactDelta(base, target)
 	if err != nil {
@@ -493,14 +495,14 @@ func TestTheRemovalPhaseUnlinksFromTheParent(t *testing.T) {
 	root, parent, first, second := "root", "parent", "child-1", "child-2"
 	base := sealDeltaTree(t, deltaRunKey(), "e", 1, 2,
 		deltaFixtureNode(root, nil, 0, root),
-		deltaFixtureNode(parent, id(root), 0, parent),
-		deltaFixtureNode(first, id(parent), 0, first),
-		deltaFixtureNode(second, id(parent), 1, second),
+		deltaFixtureNode(parent, new(root), 0, parent),
+		deltaFixtureNode(first, new(parent), 0, first),
+		deltaFixtureNode(second, new(parent), 1, second),
 	)
 	target := sealDeltaTree(t, deltaRunKey(), "e", 2, 2,
 		deltaFixtureNode(root, nil, 0, root),
-		deltaFixtureNode(parent, id(root), 0, parent),
-		deltaFixtureNode(first, id(parent), 0, first),
+		deltaFixtureNode(parent, new(root), 0, parent),
+		deltaFixtureNode(first, new(parent), 0, first),
 	)
 	delta, err := ComputeExactDelta(base, target)
 	if err != nil {

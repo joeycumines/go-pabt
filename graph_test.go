@@ -18,6 +18,7 @@ package pabt
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	bt "github.com/joeycumines/go-behaviortree"
@@ -122,11 +123,8 @@ func (g *graphState) Actions(failed Condition) ([]IAction, error) {
 								return bt.Failure, nil
 							}
 							var ok bool
-							for _, node := range node.links {
-								if node == failed {
-									ok = true
-									break
-								}
+							if slices.Contains(node.links, failed) {
+								ok = true
 							}
 							if !ok {
 								return bt.Failure, nil

@@ -63,6 +63,16 @@ func main() {
 	flag.BoolVar(&tuiAudit, "tui-audit", false, "print TUI design token audit table and exit")
 	flag.Parse()
 
+	// Go's flag package treats a bare "--" as the end of the flags, so
+	// `go run ./examples/harbor-panic -- --ticks 5` leaves --ticks 5 as a
+	// positional argument. Without this check the run continues on the defaults
+	// and says nothing, which is worse than refusing: --ticks is how a bounded
+	// run is asked for, and a run that ignores it never stops.
+	if flag.NArg() != 0 {
+		flag.Usage()
+		log.Fatalf("unexpected argument %q; flags go before any --, or not at all", flag.Arg(0))
+	}
+
 	if tuiAudit {
 		tui.PrintAuditTable()
 		return

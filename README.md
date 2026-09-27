@@ -308,6 +308,10 @@ from the condition's key.
 go run -tags example ./examples/tcell-pick-and-place
 ```
 
+It is a terminal application, so it needs a real TTY; without one it reports
+`screen init error: open /dev/tty` on stderr and exits 1. Pass `-logfile=path` to
+send its log to a file, and `-exit` to stop once every plan succeeds.
+
 ### harbor-panic
 
 A load fixture rather than a product demo: four carriers, six containers, four

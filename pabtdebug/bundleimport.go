@@ -341,12 +341,10 @@ func (s *SQLiteStore) insertImportedHistory(
 		return out, fmt.Errorf("%w: the staged bundle is gone", ErrImportStale)
 	}
 	size := uint64(info.Size())
-	objects := uint64(^uint32(0))
-	if size < objects {
+	objects := min(size,
 		// Every frame is at least a length prefix and a header, so a file cannot
 		// hold more frames than it has bytes.
-		objects = size
-	}
+		uint64(^uint32(0)))
 	reader, err := newBundleReader(file, nil,
 		ImportLimits{MaxBytes: size, MaxObjects: uint32(objects)}, s.frameBounds())
 	if err != nil {

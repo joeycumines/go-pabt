@@ -479,7 +479,7 @@ type multiCodec struct{}
 func (multiCodec) ID() string      { return "multi/v1" }
 func (multiCodec) Version() uint32 { return 1 }
 func (multiCodec) MatchType() reflect.Type {
-	return reflect.TypeOf((*any)(nil)).Elem()
+	return reflect.TypeFor[any]()
 }
 func (multiCodec) Encode(v any) (Bytes, error) { return Bytes("m"), nil }
 func (multiCodec) Decode(Bytes) (any, error)   { return nil, nil }
@@ -488,7 +488,7 @@ type shapeCodec struct{}
 
 func (shapeCodec) ID() string                  { return "shape/v1" }
 func (shapeCodec) Version() uint32             { return 1 }
-func (shapeCodec) MatchType() reflect.Type     { return reflect.TypeOf(shape{}) }
+func (shapeCodec) MatchType() reflect.Type     { return reflect.TypeFor[shape]() }
 func (shapeCodec) Encode(v any) (Bytes, error) { return Bytes("s"), nil }
 func (shapeCodec) Decode(Bytes) (any, error)   { return nil, nil }
 
@@ -512,7 +512,7 @@ type unnamedCodec struct{}
 func (unnamedCodec) ID() string      { return "" }
 func (unnamedCodec) Version() uint32 { return 1 }
 func (unnamedCodec) MatchType() reflect.Type {
-	return reflect.TypeOf((*any)(nil)).Elem()
+	return reflect.TypeFor[any]()
 }
 func (unnamedCodec) Encode(any) (Bytes, error) { return nil, nil }
 func (unnamedCodec) Decode(Bytes) (any, error) { return nil, nil }

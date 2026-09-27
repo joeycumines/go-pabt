@@ -549,8 +549,8 @@ func readSSE(reader *bufio.Reader) (sseEvent, error) {
 }
 
 func firstLine(body []byte) string {
-	if i := bytes.IndexByte(body, '\n'); i >= 0 {
-		return string(body[:i])
+	if before, _, ok := bytes.Cut(body, []byte{'\n'}); ok {
+		return string(before)
 	}
 	return string(body)
 }
@@ -854,7 +854,7 @@ func TestAnOutOfBandImportStopsTheStreamAnnouncingTheOldRun(t *testing.T) {
 	// never delivered on it, however many the old session commits.
 	f.commit(t, 6)
 	seen := []string{}
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		event, err := readSSE(reader)
 		if err != nil {
 			break
