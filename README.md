@@ -312,15 +312,29 @@ It is a terminal application, so it needs a real TTY; without one it reports
 `screen init error: open /dev/tty` on stderr and exits 1. Pass `-logfile=path` to
 send its log to a file, and `-exit` to stop once every plan succeeds.
 
-### harbor-panic
+### reefer-handoff — contract written, not yet implemented
+
+Three autonomous yard tractors must move three reefer containers from quay
+staging through one shared transfer bay into three powered slots before a vessel
+cutoff at round 120. A wind controller closes a lane, one RFID tag will not read,
+two tractors contend for the single bay, and a placement is refused after a slot
+loses power. The contract is
+[`examples/reefer-handoff/DESIGN.md`](examples/reefer-handoff/DESIGN.md); it
+records the physical system, the actors, the incident, the plan/job relationship,
+the success and failure conditions, the debugger proof, and the
+`go-eventloop v0.1.0` and pabt API contracts. There is no Go source here yet.
+
+### harbor-panic — retired
 
 A load fixture rather than a product demo: four carriers, six containers, four
 goals, a human forklift that steals them, and a storm that relocates the goals
-every 120 ticks, which invalidates every plan the planner had settled on.
+every 120 ticks. **Withdrawn on 2026-09-27** after adversarial review. It is kept
+for its benchmark and stress tests and is migration input for the replacement. Its
+README and storyboard are not requirements.
 
-Both examples are behind `//go:build example`, so they are invisible to
-`go build ./...` and to `go test ./...`, and they need the tag to run or to
-test:
+All the examples are behind `//go:build example`, so they are invisible to
+`go build ./...` and to `go test ./...`, and they need the tag to run or to test.
+The retired fixture's checks are:
 
 ```
 go test -tags example ./examples/harbor-panic/... -count=1

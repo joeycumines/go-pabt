@@ -1,5 +1,11 @@
 # Harbor Panic Cinematic Storyboard
 
+> **Retired.** The scenario this narrates was withdrawn on 2026-09-27. This file
+> describes a five-beat auto-tour in `sim/tour.go` that is kept as a load
+> fixture. It is not a requirement, not a product narrative, and not evidence
+> that anything in this repository behaves the way it says here. The replacement
+> contract is `examples/reefer-handoff/DESIGN.md`.
+>
 > **Fixture context.** This document narrates the five-beat auto-tour in
 > `sim/tour.go`: what the planner and the simulator do at each beat. It does not
 > describe a UI or an HTTP surface. Where a beat used to end with a sentence

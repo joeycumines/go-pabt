@@ -1,8 +1,21 @@
-# Harbor Panic — a load fixture for `go-pabt`
+# Harbor Panic — a retired load fixture for `go-pabt`
 
-> **Fixture context, not a product document.** This is a load fixture for the
-> PA-BT planner and simulator. It is not part of the debugger and it does not
-> serve or attach to one.
+> **Retired. Migration input, not a product document and not a requirement.**
+> This scenario was withdrawn on 2026-09-27 after adversarial review. It has no
+> coherent incident or operational purpose, its carrier-to-container pairing is
+> computed arithmetically from the actor index rather than claimed through the
+> world, its storm teleports goals rather than modelling anything, and its belief
+> mode is off by default. It is not a specification this repository implements,
+> and no acceptance criterion refers to it.
+>
+> It stays in the tree as a load fixture because the benchmark and stress tests
+> in this package still exercise the planner, and because
+> `examples/reefer-handoff` was derived from what this one got wrong. The
+> replacement's contract is `examples/reefer-handoff/DESIGN.md`.
+>
+> **Fixture context.** This is a load fixture for the PA-BT planner and
+> simulator. It is not part of the debugger and it does not serve or attach to
+> one.
 
 Harbor Panic puts four autonomous straddle carriers, six containers, four berths,
 a rogue human forklift, and a storm on a 40×18 harbor, and makes the planner
