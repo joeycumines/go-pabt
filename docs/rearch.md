@@ -1,7 +1,15 @@
 # go-pabt / pabtdebug — Long-Running Session Rearchitecture
 
-> Produced by the hyperplan-debugger-rearch team   
-> Date: 2026-06-09   
+> **Historical. This describes software that no longer exists.** It was written
+> against an in-memory debug server — `tracker.go`, a `Hub` in `stream.go`, a
+> `server.go` with a `/plans` route set, and a 3653-line embedded page in `ui.go`.
+> All of that was deleted; the package now records a run into a durable store and
+> serves committed records over `/debug/pabt/` (see the root `README.md`). Nothing
+> below describes what the code does now, and no defect list in it is open against
+> what the code does now. It is kept for the reasoning, not the state.
+>
+> Produced by the hyperplan-debugger-rearch team
+> Date: 2026-06-09
 > Scope: Memory leak root-cause analysis & architectural proposals for infinite debug sessions
 
 ---

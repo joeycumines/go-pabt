@@ -86,17 +86,6 @@ func (s *SQLiteStore) alterTreeBytes(t *testing.T, key RunKey, sequence uint64, 
 	return err
 }
 
-// pragmaOn reports a pragma's value on a pooled writer connection, which is where
-// a pragma issued through a pool would be missing.
-func (s *SQLiteStore) pragmaOn(t *testing.T, name string) int {
-	t.Helper()
-	var got int
-	if err := s.writer.QueryRow("PRAGMA " + name).Scan(&got); err != nil {
-		t.Fatalf("read %s: %v", name, err)
-	}
-	return got
-}
-
 // orphanSessionID names a session that does not exist, used to prove a foreign key
 // is actually in force rather than only declared.
 const orphanSessionID = "no-such-session"

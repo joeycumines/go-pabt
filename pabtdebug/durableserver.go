@@ -385,9 +385,12 @@ func (d *durable) handleRecords(w http.ResponseWriter, r *http.Request) {
 		Generation: installation.Generation,
 		Sequence:   position,
 	}
-	if page.HasMore {
-		cursor.KeyframeSequence = page.Through
-	}
+	// The keyframe reference is not set here. It is a convenience naming a tree the
+	// client may hold, and it is only useful with the digest beside it: a sequence
+	// on its own says "some tree, unverifiably", and a client that fetched it would
+	// have no way to tell a keyframe from anything else at that position. A page
+	// leaves the client a position, and /cursor mints a cursor that carries the
+	// whole reference.
 	d.writeJSON(w, http.StatusOK, RecordPageResponse{Page: page, Cursor: cursor})
 }
 

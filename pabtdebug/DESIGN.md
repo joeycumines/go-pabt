@@ -5,10 +5,12 @@ The debugger's user interface is the browser client in `pabtdebug/client/`:
 `NewDurableServer` at `/debug/pabt/ui`. This document specifies it.
 
 **Maintenance contract.** A change to the client updates this file in the same
-commit: the tokens and rules it changes, and the change log. The `:root` block in
-`client/app.css` carries a pointer comment back to this file. If the spec and the
+commit: the tokens and rules it changes, and the change log. The header comment in
+`client/app.css` points back at this file's palette section. If the spec and the
 implementation ever disagree, stop and reconcile before proceeding — drift
-between spec and implementation is a defect.
+between spec and implementation is a defect. That is not a formality: the first
+time this file claimed the pointer comment existed, it did not, and the file
+convicted itself.
 
 **What is not a specification.** `docs/research/` is constraint input, not
 evidence. A retired prose architecture and its screenshots are historical.
@@ -48,7 +50,7 @@ performs. Everything on screen is a record the store committed.
 | `--failure` | `#f0566a` | Failure status |
 | `--running` | `#f5a524` | Running status |
 | `--pre` | `#2dd4bf` | precondition evidence |
-| `--warn` | `#c792ea` | post-condition and uncertainty |
+| `--warn` | `#c792ea` | the PPA node tint, which is the same purple |
 
 Contrast, measured with the WCAG formula and re-verified on any token change:
 ink/void ≈ 15.4:1 · secondary/panel ≈ 6.9:1 · accent/panel ≈ 9.8:1 ·

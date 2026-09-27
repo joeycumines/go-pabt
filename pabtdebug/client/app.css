@@ -12,6 +12,10 @@
    the one a reader actually reads, so it is never allowed below 180px, the tree
    never below 150px, and the scrub strip never below 24px, which is also about
    the smallest height a pointer can comfortably grab.
+
+   The :root block below is the palette, and pabtdebug/DESIGN.md section 2 is its
+   specification - same values, same names on the other side. If the two ever
+   disagree, stop and reconcile; drift between spec and implementation is a defect.
 */
 
 :root {
@@ -377,7 +381,7 @@ button.crumb {
 }
 
 .node[data-type="GoalRoot"], .node[data-type="GoalSelector"] { --tint: #5aa2ff; }
-.node[data-type="PPARoot"], .node[data-type="PPAPost"] { --tint: #c792ea; }
+.node[data-type="PPARoot"], .node[data-type="PPAPost"] { --tint: var(--warn); }
 .node[data-type="ActionRoot"], .node[data-type="ActionSelector"] { --tint: #ff9e64; }
 .node[data-type="ActionNode"] { --tint: var(--success); }
 .node[data-type="PreconditionsRoot"], .node[data-type="PreconditionLeaf"] { --tint: var(--pre); }

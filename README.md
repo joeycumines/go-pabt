@@ -254,9 +254,11 @@ loopback listener is the first boundary and the capability is the second.
 
 Every route under `/debug/pabt/` requires the `X-PABT-Capability` header. The
 token is read from the header so it never reaches a URL, an access log, a
-referrer, or a shell history. The one exception is the client shell at
-`/debug/pabt/ui`, which carries no record and no token; see
-[Browser client](#browser-client).
+referrer, or a shell history.
+
+The exception is the client shell, which is the subtree `/debug/pabt/ui` and
+everything under it — the document and its assets. It carries no record and no
+token; see [Browser client](#browser-client).
 
 | Endpoint | Description |
 |---|---|

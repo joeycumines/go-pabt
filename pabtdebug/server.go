@@ -114,7 +114,11 @@ func (s *Server) Close() error {
 func (s *Server) HandleFunc(pattern string, handler http.HandlerFunc) {
 	mux, ok := s.server.Handler.(*http.ServeMux)
 	if !ok {
-		return
+		// Nothing would be registered and nothing would say so. This package builds
+		// the handler itself and always gets a mux, so the case cannot arise here -
+		// but a caller reaching for HandleFunc to register something deserves to be
+		// told, not left to find out later that its route 404s.
+		panic(fmt.Sprintf("pabtdebug: cannot register %q: the server's handler is not a mux", pattern))
 	}
 	// A host-qualified pattern is "example.com/path", so the path is taken from the
 	// first slash. Testing the whole string would let a caller register the
@@ -126,7 +130,12 @@ func (s *Server) HandleFunc(pattern string, handler http.HandlerFunc) {
 	}
 	decoded, err := url.PathUnescape(path)
 	if err != nil {
-		decoded = path
+		// Claimed as inside the namespace, and now actually so. A raw prefix test
+		// here would register an undecodable pattern on the outer mux, which is the
+		// one direction this whole function exists to prevent. The mux rejects such
+		// a pattern at registration anyway, so the branch is unreachable - but an
+		// unreachable branch that fails the wrong way is still the wrong way.
+		decoded = routePrefix
 	}
 	switch {
 	case strings.HasPrefix(decoded, routePrefix):

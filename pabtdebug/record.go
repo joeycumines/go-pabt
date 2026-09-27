@@ -466,10 +466,22 @@ const (
 //
 // Version 2 added the action and effect sections and the condition's own node
 // links, because a consumer could not otherwise say which preconditions govern
-// a selected occurrence. A version 1 record decodes into this shape with those
-// sections absent, which reads as "not recorded" rather than as "none": a record
-// written before the linkage existed did not say the tree had no actions, it
-// said nothing about them.
+// a selected occurrence.
+//
+// A version 1 record decodes into this shape with those sections absent, and is
+// then refused - not by this version, which nothing checks, but by its own
+// digest. Canonical encoding writes a nil slice as an explicit null, so the
+// absent sections come back as "actions":null and "effects":null, which are bytes
+// the original did not carry; the digest those bytes were written with is not the
+// one they recompute to. A read path answers that as corruption, and the message
+// says the history was altered, which for a version 1 record is not what
+// happened. It is the safe direction, and it is loud, but it is a weaker answer
+// than a version check would have been. TestAVersionOneRecordIsRefusedRatherThanServed
+// pins it.
+//
+// Nothing in this build has ever written a version 1 record, so there is no
+// history to lose to this. It matters only to a store produced by an earlier
+// build of this same unreleased branch.
 const (
 	FormatName    = "pabtdebug.record"
 	FormatVersion = uint32(2)
