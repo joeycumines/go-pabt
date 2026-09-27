@@ -129,8 +129,11 @@ type WorldLoop struct {
 	timed     bool
 
 	// drained closes once the loop's cleanup barrier has closed, so a second
-	// concurrent Shutdown joins the same teardown instead of returning early.
-	drained chan struct{}
+	// concurrent Shutdown joins the same teardown instead of returning early, and
+	// drainOnce makes that close happen exactly once however the callers overlap.
+	drained     chan struct{}
+	drainOnce   sync.Once
+	shutdownErr error
 }
 
 // NewWorldLoop builds the loop. It admits nothing: a task handed to a loop that
@@ -162,11 +165,13 @@ func (w *WorldLoop) Start() error {
 		return fmt.Errorf("sim: world loop already started")
 	}
 	w.running = true
-	w.admitting = true
 	w.mu.Unlock()
 
-	runErr := make(chan error, 1)
-	go func() { runErr <- w.loop.Run(context.Background()) }()
+	go func() {
+		if err := w.loop.Run(context.Background()); err != nil {
+			w.recordRunError(err)
+		}
+	}()
 
 	// Wait for the owner rather than assume it. Run blocks until the loop exits,
 	// so a probe is the only way to know it started.
@@ -175,6 +180,7 @@ func (w *WorldLoop) Start() error {
 		switch w.loop.State() {
 		case eventloop.StateRunning, eventloop.StateSleeping:
 			w.mu.Lock()
+			w.admitting = true
 			stopped, err := w.stopped, w.runErr
 			w.mu.Unlock()
 			if stopped {
@@ -189,18 +195,40 @@ func (w *WorldLoop) Start() error {
 			return nil
 		}
 		if time.Now().After(deadline) {
-			w.failStart(fmt.Errorf("world loop did not reach the running state, last was %v", w.loop.State()))
-			return fmt.Errorf("sim: world loop did not reach the running state, last was %v", w.loop.State())
+			state := w.loop.State()
+			err := fmt.Errorf("world loop did not reach the running state, last was %v", state)
+			w.failStart(err)
+			return fmt.Errorf("sim: %w", err)
 		}
 		time.Sleep(time.Millisecond)
 	}
 }
 
-// failStart puts the loop back into a state where it admits nothing, so a Start
-// that never reached an owner does not leave an object that looks alive.
+// failStart puts the loop back into a state that admits nothing and stops the
+// owner goroutine. A Start that never reached an owner must not leave the object
+// looking alive, and under WithAutoExit(false) a Run goroutine that is not stopped
+// runs for the life of the process.
 func (w *WorldLoop) failStart(err error) {
 	w.mu.Lock()
 	w.admitting = false
+	w.runErr = err
+	w.mu.Unlock()
+
+	ctx, cancel := context.WithTimeout(context.Background(), startTimeout)
+	defer cancel()
+	if shutdownErr := w.loop.Shutdown(ctx); shutdownErr != nil {
+		// Shutdown is the graceful path and can refuse a loop that never ran.
+		// Close is the immediate one, and it is what guarantees the goroutine is
+		// gone.
+		_ = w.loop.Close()
+	}
+	<-w.loop.Done()
+}
+
+// recordRunError keeps the reason a running loop exited, so a caller that finds a
+// loop admitting nothing can say why rather than reporting a nil.
+func (w *WorldLoop) recordRunError(err error) {
+	w.mu.Lock()
 	w.runErr = err
 	w.mu.Unlock()
 }
@@ -347,9 +375,11 @@ func (w *WorldLoop) Snapshot() World {
 	return w.world.clone()
 }
 
-// Abandoned reports the commands that were admitted and never settled. A clean
-// run leaves it empty; a run torn down with work in flight leaves one entry per
-// stranded command, which is the reconciliation the contract requires.
+// Abandoned reports the commands that are admitted and not yet settled. It is
+// therefore a reading of a live loop: once Shutdown has run, reconciliation has
+// settled every one of them and the answer is always empty. It exists to be
+// sampled before a teardown, which is what tells a caller whether the loop is
+// idle or still carrying work.
 func (w *WorldLoop) Abandoned() []Abandoned {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -480,7 +510,13 @@ func (w *WorldLoop) Shutdown(ctx context.Context) error {
 		w.mu.Unlock()
 		select {
 		case <-drained:
-			return nil
+			// A joining caller learns how the teardown went, not merely that it
+			// is over. Reporting nil here would make a failed teardown
+			// indistinguishable from a successful one.
+			w.mu.Lock()
+			err := w.shutdownErr
+			w.mu.Unlock()
+			return err
 		case <-ctx.Done():
 			return ctx.Err()
 		}
@@ -501,26 +537,33 @@ func (w *WorldLoop) Shutdown(ctx context.Context) error {
 	// reduces nothing.
 	w.reconcile()
 
-	if err := w.loop.Shutdown(ctx); err != nil {
-		w.closeDrained()
-		return fmt.Errorf("sim: shutting the world loop down: %w", err)
-	}
-	select {
-	case <-w.loop.Done():
-	case <-ctx.Done():
-		w.closeDrained()
-		return ctx.Err()
-	}
+	err := w.stopLoop(ctx)
 	w.closeDrained()
-	return nil
+	return err
+}
+
+// stopLoop stops the loop and waits for its barrier, recording the outcome for any
+// caller that joins later.
+func (w *WorldLoop) stopLoop(ctx context.Context) error {
+	err := w.loop.Shutdown(ctx)
+	if err == nil {
+		select {
+		case <-w.loop.Done():
+		case <-ctx.Done():
+			err = ctx.Err()
+		}
+	}
+	if err != nil {
+		err = fmt.Errorf("sim: shutting the world loop down: %w", err)
+	}
+	w.mu.Lock()
+	w.shutdownErr = err
+	w.mu.Unlock()
+	return err
 }
 
 func (w *WorldLoop) closeDrained() {
-	select {
-	case <-w.drained:
-	default:
-		close(w.drained)
-	}
+	w.drainOnce.Do(func() { close(w.drained) })
 }
 
 // reconcile settles every command still in flight. Without this a producer would

@@ -24,6 +24,41 @@ import (
 	"time"
 )
 
+// Every command in a busy run must be reduced by the owner. The owner's assertion
+// is not observable directly, so this checks its consequence: a command reduced
+// off the owner is reported as abandoned, and a run using all five command kinds
+// settles cleanly.
+//
+// Abandoned() is sampled here, on a live loop, because that is the only state
+// where it carries information: after a teardown, reconciliation has settled
+// everything and it is always empty.
+func TestACleanRunSettlesEveryKind(t *testing.T) {
+	w := newStartedLoop(t, ModeDeterministic)
+	claimAllThroughLoop(t, w)
+	holdAtBayThroughLoop(t, w, Tug1, Reefer1)
+	placeThroughLoop(t, w, Tug1, Reefer1, Slot1, "p1")
+	holdAtBayThroughLoop(t, w, Tug2, Reefer3)
+	placeThroughLoop(t, w, Tug2, Reefer3, Slot3, "p2")
+
+	if left := w.Abandoned(); len(left) != 0 {
+		t.Fatalf("a clean run left %d commands unsettled: %v", len(left), left)
+	}
+	for _, key := range []string{"p1-place", "p2-place"} {
+		found := false
+		for _, r := range w.Snapshot().Receipts() {
+			if r.IdempotencyKey == key {
+				found = true
+				if !r.Applied() {
+					t.Fatalf("the %s receipt is %s/%s", key, r.Outcome, r.Reason)
+				}
+			}
+		}
+		if !found {
+			t.Fatalf("no ledger entry for %s", key)
+		}
+	}
+}
+
 // Concurrent producers must still get one total world sequence. Each applied
 // receipt names the sequence it produced, and a total order means those are
 // distinct and contiguous.
@@ -69,6 +104,10 @@ func TestConcurrentProducersGetOneTotalWorldSequence(t *testing.T) {
 	applied := map[uint64]string{}
 	for _, rs := range results {
 		for _, r := range rs {
+			if r.Abandoned != nil {
+				t.Errorf("a command in a clean concurrent run was withdrawn: %+v", r.Abandoned)
+				continue
+			}
 			if !r.Receipt.Applied() {
 				continue
 			}
@@ -342,15 +381,17 @@ func TestAnAbandonedProducerDoesNotBlockTheLoop(t *testing.T) {
 	}
 }
 
-// Both modes must run the same reducer and the same command path, so a run is
-// reproducible. The two are driven identically — same commands, same host round
-// boundaries — and must reach a byte-identical world, round counter included.
+// The same script driven through the same command path reaches the same world in
+// either mode, round counter included, when the host drives the same round
+// boundaries in both.
 //
-// The previous version of this test relied on the realtime timer not firing during
-// a run that finishes in milliseconds, which is a timing margin rather than a
-// property. What actually distinguishes the modes is tested separately, in
-// TestRealtimeModeAdvancesRoundsAndDeterministicDoesNot.
-func TestBothModesUseTheSameCommandPath(t *testing.T) {
+// This test cannot tell the modes apart on its own — two identically configured
+// loops obviously agree — and it does not claim to. What distinguishes the modes
+// is that realtime mode advances rounds on its own and deterministic mode waits
+// for the host, which is asserted on both halves in
+// TestRealtimeModeAdvancesRoundsAndDeterministicDoesNot. Between them they cover
+// the claim: the path is shared, and the pacing is not.
+func TestTheSameScriptReachesTheSameWorldInEitherMode(t *testing.T) {
 	det := runScriptThroughLoop(t, ModeDeterministic)
 	real := runScriptThroughLoop(t, ModeRealtime)
 
