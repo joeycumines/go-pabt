@@ -55,6 +55,13 @@ import (
 // refusal after the world has settled — stay buffered until the next committed
 // record; anything still buffered when the publisher flushes commits as one
 // final tree-less control record.
+//
+// A wired example attaches the durable server's Announce to the publisher
+// (AttachAnnounce, after an eager Open that bootstraps the store so a server
+// can exist before the first generation opens). Every session the publisher
+// then opens announces its committed records — the tick records and the
+// boundary control record alike — so a live reader sees the walk-home
+// causality the moment it lands rather than only when it pages the run.
 type Publisher struct {
 	tug sim.TractorID
 	dir string
@@ -64,6 +71,13 @@ type Publisher struct {
 	session  *pabtdebug.Session
 	identity pabtdebug.SessionIdentity
 	gen      uint64
+
+	// announce is the function every session this publisher opens announces
+	// its committed records through — the durable server's Announce in a wired
+	// example. It is set once, before the first generation begins: a session
+	// that opened without it would publish durably but silently, and a
+	// half-announced run is the split-brain a live reader must never see.
+	announce func(context.Context, pabtdebug.CommitReceipt, pabtdebug.StoredRecord) error
 
 	// The causal buffers, drained by Causality. They are lists rather than
 	// single slots because more than one command can settle between two plan
@@ -120,6 +134,53 @@ func (p *Publisher) RunKey() pabtdebug.RunKey {
 	}
 }
 
+// Open bootstraps the tractor's store and run if they do not exist yet, so a
+// durable server can be built on the store before the first generation opens.
+// It is idempotent: a publisher whose first BeginGeneration has already run
+// holds the store and Open does nothing.
+func (p *Publisher) Open(ctx context.Context) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.ensureStoreLocked(ctx)
+}
+
+// AttachAnnounce sets the function every session this publisher opens
+// announces its committed records through. It is set once, before the first
+// generation begins — the Announce of a durable server built on this
+// publisher's store, following the evidence target's construction order: open
+// the store, build the server, attach, then let generations open. A session
+// that opened without it publishes durably but silently, and a run whose early
+// generations are silent and whose later ones are not is the split-brain a
+// live reader must never see.
+func (p *Publisher) AttachAnnounce(fn func(context.Context, pabtdebug.CommitReceipt, pabtdebug.StoredRecord) error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.announce = fn
+}
+
+// ensureStoreLocked bootstraps the store and run once. The caller holds the lock.
+func (p *Publisher) ensureStoreLocked(ctx context.Context) error {
+	if p.store != nil {
+		return nil
+	}
+	store, err := pabtdebug.OpenSQLiteStore(ctx, pabtdebug.SQLiteStoreConfig{
+		Path: filepath.Join(p.dir, string(p.tug), "history.sqlite"),
+	})
+	if err != nil {
+		return fmt.Errorf("logic: %s opening history: %w", p.tug, err)
+	}
+	identity, err := store.Bootstrap(ctx, pabtdebug.BootstrapRequest{
+		PlanID: string(p.tug), RunID: string(p.tug), Title: "reefer " + string(p.tug),
+	})
+	if err != nil {
+		_ = store.Close()
+		return fmt.Errorf("logic: %s bootstrapping history: %w", p.tug, err)
+	}
+	p.store = store
+	p.identity = identity
+	return nil
+}
+
 // BeginGeneration opens a fresh session for a new plan generation on the
 // tractor's one store and run. The first call bootstraps the store; later
 // calls reuse it, because the run — not the plan object — is what the durable
@@ -139,26 +200,13 @@ func (p *Publisher) BeginGeneration(ctx context.Context, gen uint64, plan pabt.C
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if p.store == nil {
-		store, err := pabtdebug.OpenSQLiteStore(ctx, pabtdebug.SQLiteStoreConfig{
-			Path: filepath.Join(p.dir, string(p.tug), "history.sqlite"),
-		})
-		if err != nil {
-			return fmt.Errorf("logic: %s opening history: %w", p.tug, err)
-		}
-		identity, err := store.Bootstrap(ctx, pabtdebug.BootstrapRequest{
-			PlanID: string(p.tug), RunID: string(p.tug), Title: "reefer " + string(p.tug),
-		})
-		if err != nil {
-			_ = store.Close()
-			return fmt.Errorf("logic: %s bootstrapping history: %w", p.tug, err)
-		}
-		p.store = store
-		p.identity = identity
+	if err := p.ensureStoreLocked(ctx); err != nil {
+		return err
 	}
 	session, err := pabtdebug.OpenSession(ctx, p.store, plan, pabtdebug.SessionConfig{
 		Identity:  p.identity,
 		Causality: p,
+		Announce:  p.announce,
 	})
 	if err != nil {
 		return fmt.Errorf("logic: %s opening generation %d session: %w", p.tug, gen, err)
@@ -323,9 +371,15 @@ func (p *Publisher) Flush() error {
 	if session == nil {
 		return nil
 	}
-	if _, _, err := session.CommitControl(context.Background()); err != nil {
+	_, committed, err := session.CommitControl(context.Background())
+	if err != nil && !committed {
 		return fmt.Errorf("logic: %s flushing causality: %w", p.tug, err)
 	}
+	// A record that landed but was not announced is the same non-fatal contract
+	// a tick's AnnounceErr carries: the causality is durable and a reader that
+	// pages the run sees it; only a live subscriber was not told. Failing the
+	// flush here would fail a generation open whose boundary record already
+	// committed, and strand the runner holding a plan with no session.
 	return nil
 }
 

@@ -654,3 +654,102 @@ func TestTwoGenerationsOnOneRunCommitAndAttributeTruthfully(t *testing.T) {
 		t.Fatal("the run recorded no plan-tick submissions")
 	}
 }
+
+// TestAnnounceWiringCarriesEveryCommittedRecordToTheLiveStream wires the
+// publisher to a real durable server and drives one tractor through two
+// deliveries, so the assertion covers both halves of the wiring: the eager
+// Open that lets a server exist before the first generation opens, and the
+// boundary control record the generation flush commits. The gate is the
+// server's own — Announce resolves the store's active run and refuses a
+// record naming any other — so an announce list that matches the paged run
+// proves the DD-35 identity satisfies it for every record the publisher
+// commits. A record that committed but never reached the stream is exactly
+// the split-brain a live reader would hit: durable history the stream never
+// carried. The hub resolves lazily and publishes to zero subscribers as a
+// documented no-op, so this exercises the production Announce path without
+// binding a port to a test.
+func TestAnnounceWiringCarriesEveryCommittedRecordToTheLiveStream(t *testing.T) {
+	loop := newLoop(t)
+	pub := NewPublisher(sim.Tug1, t.TempDir())
+
+	// Open eagerly: a store bootstrapped inside the first BeginGeneration
+	// would leave no server to build before that generation's first tick, and
+	// the earliest records would commit off the live stream.
+	if err := pub.Open(context.Background()); err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	server, err := pabtdebug.NewDurableServer(pub.Store(), pabtdebug.DurableServerConfig{})
+	if err != nil {
+		t.Fatalf("NewDurableServer: %v", err)
+	}
+
+	// The wrapper counts only what the server's gate accepted. A refused
+	// announce returns its error to the session and never reaches the list,
+	// so a divergence between this list and the paged run is the defect.
+	var announced []uint64
+	pub.AttachAnnounce(func(ctx context.Context, receipt pabtdebug.CommitReceipt, record pabtdebug.StoredRecord) error {
+		if err := server.Announce(ctx, receipt, record); err != nil {
+			return err
+		}
+		announced = append(announced, receipt.Sequence)
+		return nil
+	})
+
+	// Cleanup order: the publisher's Close flushes the buffered walk-home
+	// causality as a final control record and announces it, so the server has
+	// to outlive the publisher. t.Cleanup runs last-in-first-out, so the
+	// server's close registers first.
+	t.Cleanup(func() { _ = server.Close() })
+	t.Cleanup(func() {
+		if err := pub.Close(); err != nil {
+			t.Errorf("closing %s's publisher: %v", sim.Tug1, err)
+		}
+	})
+
+	r := New(sim.Tug1, loop)
+	r.AttachPublisher(pub)
+
+	if out := drive(t, r); out != OutcomeDelivered {
+		t.Fatalf("first delivery ended as %s, want %s; blocked on %q",
+			out, OutcomeDelivered, r.Blocked())
+	}
+	if out := drive(t, r); out != OutcomeDelivered {
+		t.Fatalf("second delivery ended as %s, want %s; blocked on %q",
+			out, OutcomeDelivered, r.Blocked())
+	}
+
+	records := readRun(t, pub)
+	if len(records) == 0 {
+		t.Fatal("the run committed no records")
+	}
+
+	announcedSet := make(map[uint64]bool, len(announced))
+	for _, seq := range announced {
+		if announcedSet[seq] {
+			t.Fatalf("sequence %d was announced twice", seq)
+		}
+		announcedSet[seq] = true
+	}
+	if len(announced) != len(records) {
+		t.Fatalf("%d records reached the live stream but the run holds %d",
+			len(announced), len(records))
+	}
+
+	// Every committed record, and only the committed records, rode the
+	// stream. The boundary control record is named here too: it carries the
+	// walk-home causality that no plan tick will ever ride in, so a live
+	// watcher that misses it misses the walk for the rest of the run.
+	controls := 0
+	for _, rec := range records {
+		if !announcedSet[rec.Sequence] {
+			t.Fatalf("committed record %d (%s) never reached the live stream",
+				rec.Sequence, rec.Kind)
+		}
+		if rec.Kind == pabtdebug.RecordControl {
+			controls++
+		}
+	}
+	if controls == 0 {
+		t.Fatal("the run holds no control record; the generation boundary never flushed")
+	}
+}
