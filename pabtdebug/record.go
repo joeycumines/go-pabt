@@ -493,32 +493,45 @@ const (
 // record digest additionally covers the previous record's digest. That asymmetry
 // is what makes a record tamper-evident and a whole run chain-verifiable.
 type StoredRecord struct {
-	Format               string            `json:"format"`
-	Version              uint32            `json:"version"`
-	EventUID             string            `json:"eventUid"`
-	RunKey               RunKey            `json:"runKey"`
-	Sequence             uint64            `json:"sequence"`
-	AttemptID            string            `json:"attemptId"`
-	Kind                 RecordKind        `json:"kind"`
-	PayloadState         PayloadState      `json:"payloadState"`
-	TreeEligible         bool              `json:"treeEligible"`
-	ExecutionStarted     bool              `json:"executionStarted"`
-	Revision             RevisionScope     `json:"revision"`
-	StartedAt            Timestamp         `json:"startedAt"`
-	CompletedAt          Timestamp         `json:"completedAt"`
-	Status               uint8             `json:"status"`
-	StatusPresent        bool              `json:"statusPresent"`
-	PlannerError         *StoredError      `json:"plannerError"`
-	Panic                *StoredPanic      `json:"panic"`
-	CaptureError         *StoredError      `json:"captureError"`
-	Conditions           []StoredCondition `json:"conditions"`
-	Relations            []StoredRelation  `json:"relations"`
-	Actions              []StoredAction    `json:"actions"`
-	Effects              []StoredEffect    `json:"effects"`
-	Tree                 *StoredTree       `json:"tree"`
-	PayloadSHA256        string            `json:"payloadSha256"`
-	PreviousRecordSHA256 string            `json:"previousRecordSha256"`
-	RecordSHA256         string            `json:"recordSha256"`
+	Format           string            `json:"format"`
+	Version          uint32            `json:"version"`
+	EventUID         string            `json:"eventUid"`
+	RunKey           RunKey            `json:"runKey"`
+	Sequence         uint64            `json:"sequence"`
+	AttemptID        string            `json:"attemptId"`
+	Kind             RecordKind        `json:"kind"`
+	PayloadState     PayloadState      `json:"payloadState"`
+	TreeEligible     bool              `json:"treeEligible"`
+	ExecutionStarted bool              `json:"executionStarted"`
+	Revision         RevisionScope     `json:"revision"`
+	StartedAt        Timestamp         `json:"startedAt"`
+	CompletedAt      Timestamp         `json:"completedAt"`
+	Status           uint8             `json:"status"`
+	StatusPresent    bool              `json:"statusPresent"`
+	PlannerError     *StoredError      `json:"plannerError"`
+	Panic            *StoredPanic      `json:"panic"`
+	CaptureError     *StoredError      `json:"captureError"`
+	Conditions       []StoredCondition `json:"conditions"`
+	Relations        []StoredRelation  `json:"relations"`
+	Actions          []StoredAction    `json:"actions"`
+	Effects          []StoredEffect    `json:"effects"`
+
+	// Causality is the causal envelope this record carries: what settled into
+	// the tick, what it submitted, and what the world changed exogenically.
+	// It is an additive omitempty section, and the omitempty is load-bearing:
+	// canonical encoding writes an absent nullable as an explicit null, so an
+	// always-rendered nil would add "causality":null to every record's bytes
+	// and move every digest — the exact failure
+	// TestAVersionOneRecordIsRefusedRatherThanServed pins. With omitempty the
+	// section is byte-absent when unset, the frozen golden vectors hold, and
+	// FormatVersion stays 2: nothing on the read path branches on record
+	// version, and a bump would move every vector for no reader benefit.
+	Causality *StoredCausality `json:"causality,omitempty"`
+
+	Tree                 *StoredTree `json:"tree"`
+	PayloadSHA256        string      `json:"payloadSha256"`
+	PreviousRecordSHA256 string      `json:"previousRecordSha256"`
+	RecordSHA256         string      `json:"recordSha256"`
 }
 
 // MarshalJSON writes the record's status as text and omits absent optional

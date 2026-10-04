@@ -18,6 +18,7 @@
 package logic
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/joeycumines/go-pabt"
@@ -41,6 +42,13 @@ func (r *Runner) Tick() (Outcome, error) {
 		return r.claimLocked()
 	}
 
+	// Drain any receipt that settled between ticks before the plan runs and
+	// before this tick can retire the generation. Routing by the owners map
+	// parks it on the action instance that submitted it and records it with the
+	// publisher, so the command that caused a tree change is never dropped by a
+	// retirement that outruns the node which submitted it (see drainSettledLocked).
+	r.drainSettledLocked()
+
 	// One frame for the whole tick. Every condition read and every action list
 	// the plan consults in this tick comes from this observation and no other, so
 	// a tick cannot see half of one world and half of another.
@@ -51,7 +59,7 @@ func (r *Runner) Tick() (Outcome, error) {
 	r.state.pin(frame, r.plan.PlannerRevision())
 
 	r.tick++
-	status, err := r.plan.Node().Tick()
+	status, err := r.tickPlanLocked(frame)
 	if err != nil {
 		r.state.unpin()
 		return OutcomeRunning, fmt.Errorf("logic: %s tick %d: %w", r.tug, r.tick, err)
@@ -87,6 +95,24 @@ func (r *Runner) Tick() (Outcome, error) {
 	}
 }
 
+// tickPlanLocked runs the plan's tick once against the pinned frame.
+//
+// Without a publisher it ticks the bare node, exactly as before, and publishes
+// nothing. With one the publisher commits the tick's plan record through the
+// generation's session: the frame it reasoned over, the command its action
+// submitted during the tick, and the receipts that settled since the last
+// record all drain into the committed envelope, so the runner cannot disagree
+// with what was published. The status feeds the same switch either way. The
+// caller holds the lock and the frame stays pinned across the call; the action
+// path takes no lock (only the detached await goroutine does), so the
+// synchronous publish cannot deadlock against the runner.
+func (r *Runner) tickPlanLocked(frame sim.Observation) (btStatus, error) {
+	if r.publisher == nil {
+		return r.plan.Node().Tick()
+	}
+	return r.publisher.PublishTickPlan(context.Background(), r.tick, r.gen, frame)
+}
+
 // claimLocked takes a job from the world and builds a generation for it.
 //
 // The claim is a command like any other and goes through the same one-in-flight
@@ -112,8 +138,12 @@ func (r *Runner) claimLocked() (Outcome, error) {
 	if r.inflight == nil || r.inflight.result == nil {
 		return OutcomeRunning, nil
 	}
+	key := r.inflight.key
 	settled := *r.inflight.result
 	r.inflight = nil
+	if r.publisher != nil {
+		r.publisher.NoteSettled(key, settled)
+	}
 
 	if settled.Abandoned != nil {
 		return OutcomeWithdrawn, nil
@@ -182,7 +212,23 @@ func (r *Runner) buildLocked(reefer sim.ReeferID) error {
 	// construction phase, not evaluated — so the frame is unpinned once the plan
 	// exists. Between ticks a Variable read fails loudly instead of answering
 	// from a stale frame.
-	plan, err := pabt.INew(r.state, []pabt.IConditions{{delivered(reefer)}})
+	//
+	// With a publisher attached the plan is captured: it ticks through the
+	// session, which commits each root tick's tree, and it reads through the
+	// snapshot view with the observer and verifier reporting what each action
+	// changed. Without one it is built plain and publishes nothing. The type is
+	// the same either way, so the runner drives both identically.
+	var plan *pabt.IPlan
+	var err error
+	if r.publisher != nil {
+		plan, err = pabt.NewCaptured[pabt.Condition](r.state, []pabt.IConditions{{delivered(reefer)}},
+			pabt.WithStateViews[pabt.Condition](r.state.provider()),
+			pabt.WithExecutionObserver[pabt.Condition](reeferObserver{}),
+			pabt.WithTransitionVerifier[pabt.Condition](reeferVerifier{}),
+		)
+	} else {
+		plan, err = pabt.INew(r.state, []pabt.IConditions{{delivered(reefer)}})
+	}
 	if err != nil {
 		r.state.unpin()
 		return fmt.Errorf("logic: %s building a generation for %s: %w", r.tug, reefer, err)
@@ -190,6 +236,11 @@ func (r *Runner) buildLocked(reefer sim.ReeferID) error {
 	r.state.unpin()
 	r.plan = plan
 	r.blocked = ""
+	if r.publisher != nil {
+		if err := r.publisher.BeginGeneration(context.Background(), r.gen, plan); err != nil {
+			return fmt.Errorf("logic: %s opening generation %d history: %w", r.tug, r.gen, err)
+		}
+	}
 	return nil
 }
 

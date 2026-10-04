@@ -40,6 +40,11 @@ type Session struct {
 	limits   ValueLimits
 	announce func(context.Context, CommitReceipt, StoredRecord) error
 
+	// causality, when set, supplies the causal envelope each tick record
+	// carries. A nil provider records no envelope: the section is absent from
+	// the bytes, and every digest written without it still verifies.
+	causality CausalityProvider
+
 	// gate serialises ticks. The store's append lease would serialise commits
 	// anyway, but serialising here means a second caller is told rather than
 	// being allowed to allocate a sequence it will not finish.
@@ -66,6 +71,11 @@ type SessionConfig struct {
 	// commit: the record is already durable, and the error is the subscriber's to
 	// report.
 	Announce func(context.Context, CommitReceipt, StoredRecord) error
+
+	// Causality, when set, supplies the causal envelope each tick record
+	// carries. See CausalityProvider for when it is consulted and what a nil
+	// or an error means.
+	Causality CausalityProvider
 }
 
 // TickResult is what one tick produced.
@@ -141,12 +151,13 @@ func OpenSession(
 		return nil, fmt.Errorf("pabtdebug: attach a session: %w", err)
 	}
 	return &Session{
-		store:    store,
-		planner:  planner,
-		key:      key,
-		codecs:   cfg.Codecs,
-		limits:   limits,
-		announce: cfg.Announce,
+		store:     store,
+		planner:   planner,
+		key:       key,
+		codecs:    cfg.Codecs,
+		limits:    limits,
+		announce:  cfg.Announce,
+		causality: cfg.Causality,
 	}, nil
 }
 
@@ -357,6 +368,74 @@ func (s *Session) finalize(ctx context.Context, ticket IntentTicket, outcome tic
 	return out
 }
 
+// CommitControl commits a tree-less control record carrying whatever causality
+// the provider still holds. It is the flush a run takes when it ends with
+// buffered settlements and no further plan tick to ride in — a walk-home
+// receipt, an exogenous change drained after the last tick.
+//
+// The record is tree-less, so DeltaBase excludes it as a base and the next
+// tree after it is a keyframe. At the end of a history that forces nothing;
+// mid-history a caller that flushes is accepting the one keyframe.
+//
+// A provider with an empty envelope commits nothing and reports it: a control
+// record that says nothing happened is exactly the filler the terminalization
+// rules exist to keep out of the chain.
+func (s *Session) CommitControl(ctx context.Context) (CommitReceipt, bool, error) {
+	if !s.gate.TryLock() {
+		return CommitReceipt{}, false, fmt.Errorf(`pabtdebug: a tick is already in progress`)
+	}
+	defer s.gate.Unlock()
+	if s.causality == nil {
+		return CommitReceipt{}, false, nil
+	}
+	envelope, err := s.causality.Causality(ctx)
+	if err != nil {
+		return CommitReceipt{}, false, fmt.Errorf("pabtdebug: the causality provider: %w", err)
+	}
+	stored, err := s.storedCausality(ctx, envelope)
+	if err != nil {
+		return CommitReceipt{}, false, err
+	}
+	if stored == nil {
+		return CommitReceipt{}, false, nil
+	}
+	revision := s.planner.PlannerRevision()
+	ticket, err := s.store.Begin(ctx, BeginRequest{
+		RunKey:               s.key,
+		ExpectedPlanRevision: revision,
+	})
+	if err != nil {
+		return CommitReceipt{}, false, err
+	}
+	now := time.Now().UTC()
+	record := StoredRecord{
+		Kind:         RecordControl,
+		PayloadState: PayloadComplete,
+		StartedAt:    Timestamp(now),
+		CompletedAt:  Timestamp(now),
+		Revision: RevisionScope{
+			RunKey:       s.key,
+			Sequence:     ticket.Sequence,
+			PlanRevision: revision,
+		},
+		Causality: stored,
+	}
+	receipt, err := s.store.Commit(ctx, ticket, record)
+	if err != nil {
+		return CommitReceipt{}, false, joinErrors(err, s.store.Abort(ctx, ticket))
+	}
+	if s.announce != nil {
+		committed, readErr := s.store.RecordAt(ctx, s.key, receipt.Sequence)
+		if readErr != nil {
+			return receipt, true, readErr
+		}
+		if err := s.announce(ctx, receipt, committed); err != nil {
+			return receipt, true, err
+		}
+	}
+	return receipt, true, nil
+}
+
 // buildRecord turns a captured tick into the record the store commits.
 func (s *Session) buildRecord(
 	ctx context.Context,
@@ -439,6 +518,20 @@ func (s *Session) buildRecord(
 		}
 		record.Tree = tree
 		record.TreeEligible = true
+	}
+	// The envelope is consulted only for a tick that produced a record: a
+	// panicked or capture-failed tick leaves the provider's buffer parked for
+	// the next record, so buffered causality is never discarded by a failure
+	// that carries no payload of its own.
+	if outcome.kind == RecordTick && s.causality != nil {
+		envelope, err := s.causality.Causality(ctx)
+		if err != nil {
+			return StoredRecord{}, nil, fmt.Errorf("pabtdebug: the causality provider: %w", err)
+		}
+		record.Causality, err = s.storedCausality(ctx, envelope)
+		if err != nil {
+			return StoredRecord{}, nil, err
+		}
 	}
 	return record, record.Tree, nil
 }

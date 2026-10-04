@@ -35,9 +35,18 @@ func (r *Runner) submitPendingLocked(p *pending, build func(sim.Expectation, str
 	cmd := build(sim.Expectation{}, p.key)
 	cmd.Tractor = r.tug
 	cmd.PlanID = r.planIDLocked()
-	cmd.Generation = r.gen
-	cmd.PlanTickSeq = r.tick
-	cmd.ActionID = p.attempt
+	// A claim is not submitted by a plan tick. The first claim is born before
+	// any generation exists; a later one is born after a delivery retired its
+	// generation, when copying r.gen would name a plan tick that never
+	// submitted it. The zero stamp means "no plan tick" — the envelope
+	// contract's own words. The in-flight record still fences on the live
+	// generation.
+	planTick := p != r.claim
+	if planTick {
+		cmd.Generation = r.gen
+		cmd.PlanTickSeq = r.tick
+		cmd.ActionID = p.attempt
+	}
 
 	ch, err := r.loop.Submit(cmd)
 	if err != nil {
@@ -48,6 +57,13 @@ func (r *Runner) submitPendingLocked(p *pending, build func(sim.Expectation, str
 	}
 	r.owners[p.key] = p
 	r.inflight = &inflight{key: p.key, gen: r.gen, planTickSeq: r.tick, actionSeq: p.attempt}
+	if r.publisher != nil {
+		actionID := uint64(0)
+		if planTick {
+			actionID = p.attempt
+		}
+		r.publisher.NoteSubmitted(cmd, actionID)
+	}
 	go r.await(p.key, ch)
 }
 
@@ -143,6 +159,9 @@ func (r *Runner) submitKeyedLocked(key string, build func(sim.Expectation, strin
 	}
 	r.owners[key] = r.travel
 	r.inflight = &inflight{key: key, gen: r.gen, planTickSeq: r.tick}
+	if r.publisher != nil {
+		r.publisher.NoteSubmitted(cmd, r.travel.attempt)
+	}
 	go r.await(key, ch)
 }
 
@@ -211,9 +230,11 @@ func (r *Runner) planIDLocked() string { return string(r.tug) }
 // may fill the slot. An Abandoned marker carries no receipt, so it is fenced on
 // the submit key and the generation instead of on a receipt key. A late result
 // from a retired generation or a retired hop must not clobber the next
-// generation's command, so a mismatch drops the result rather than answering
-// with another command's outcome. Either way the settle path re-checks the key,
-// because a result can also land between the attach and the next tick.
+// generation's command, so a mismatch never fills the slot — but it is still
+// recorded (noteLateLocked), because the world reduced that command and a
+// causal log that loses reductions is exactly what the lane exists to prevent.
+// Either way the settle path re-checks the key, because a result can also land
+// between the attach and the next tick.
 func (r *Runner) await(key string, ch <-chan sim.Result) {
 	res, ok := <-ch
 	if !ok {
@@ -222,22 +243,40 @@ func (r *Runner) await(key string, ch <-chan sim.Result) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.inflight == nil {
+		// The command's generation was retired while the world was still
+		// deciding it — the delivery tick's frame showed the goal met before
+		// this receipt attached. No node may act on it, but the reduction is
+		// a fact, so it is noted and rides in the next committed record,
+		// linked to its submission by idempotency key.
+		r.noteLateLocked(key, res)
 		return
 	}
 	if r.inflight.gen != r.gen || r.inflight.key != key {
 		// A result for a generation this runner has since retired can neither
-		// mutate state nor report success, so it is dropped rather than answered.
-		// The slot is cleared only when it still holds the awaited command;
-		// otherwise a newer generation has already submitted and must not lose
-		// its place to a stale arrival.
+		// mutate state nor report success. The slot is cleared only when it
+		// still holds the awaited command; otherwise a newer generation has
+		// already submitted and must not lose its place to a stale arrival.
 		if r.inflight.key == key {
 			r.inflight = nil
 		}
+		r.noteLateLocked(key, res)
 		return
 	}
 	if res.Abandoned == nil && key != res.Receipt.IdempotencyKey {
 		r.inflight = nil
+		r.noteLateLocked(key, res)
 		return
 	}
 	r.inflight.result = &res
+}
+
+// noteLateLocked records a result that arrived for a command no node can any
+// longer act on: a retired generation, a cleared slot, a mismatched key. The
+// world still reduced it, so it is noted to the publisher rather than dropped;
+// it drains into the next committed record's envelope, linked to its submission
+// by the idempotency key, and never fills an in-flight slot.
+func (r *Runner) noteLateLocked(key string, res sim.Result) {
+	if r.publisher != nil {
+		r.publisher.NoteSettled(key, res)
+	}
 }

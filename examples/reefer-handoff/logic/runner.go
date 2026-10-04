@@ -135,6 +135,14 @@ type Runner struct {
 	// blocked is the condition the last blocked tick could not achieve, so a
 	// report can name it instead of only saying the goal was unreachable.
 	blocked string
+
+	// publisher, when non-nil, commits each root tick's plan record through a
+	// pabtdebug session and appends its causal bundle to the committed
+	// world/command log. The tick still runs exactly once: the session drives
+	// the plan's captured tick instead of the runner ticking the bare node.
+	// A nil publisher ticks the bare node and publishes nothing, which is how
+	// every existing test drives the runner.
+	publisher *Publisher
 }
 
 // pending is one action instance's place in the runner's single in-flight slot.
@@ -176,6 +184,16 @@ func New(tug sim.TractorID, loop *sim.WorldLoop) *Runner {
 
 // Tractor returns which tractor this runner drives.
 func (r *Runner) Tractor() sim.TractorID { return r.tug }
+
+// AttachPublisher attaches the owner-side publisher for this tractor. The next
+// generation built claims its plan as captured and publishes each root tick.
+// It is set once, before the first tick, and never detached: detaching would
+// leave half a history.
+func (r *Runner) AttachPublisher(p *Publisher) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.publisher = p
+}
 
 // Generation returns the current plan generation, zero when none is held.
 func (r *Runner) Generation() uint64 {

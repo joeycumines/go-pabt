@@ -41,8 +41,12 @@ func (r *Runner) vacateLocked() Outcome {
 		if r.inflight.result == nil {
 			return OutcomeRunning
 		}
+		key := r.inflight.key
 		res := *r.inflight.result
 		r.inflight = nil
+		if r.publisher != nil {
+			r.publisher.NoteSettled(key, res)
+		}
 		delete(r.owners, res.Receipt.IdempotencyKey)
 		if res.Abandoned != nil {
 			return OutcomeRunning
@@ -89,7 +93,13 @@ func (r *Runner) vacateLocked() Outcome {
 	cmd := sim.Command{
 		ID: key, IdempotencyKey: key, Kind: sim.CmdMoveTo, Tractor: r.tug,
 		Node: next, Expect: r.vacateExpectLocked(w),
-		PlanID: r.planIDLocked(), Generation: r.gen, PlanTickSeq: r.tick,
+		PlanID: r.planIDLocked(),
+		// The walk home is not submitted by a plan tick: the generation was
+		// retired when the job was delivered, and the runner's own loop is
+		// walking the tractor out of the bay. The zero stamp means "no plan
+		// tick" — the envelope contract's own words — so the causality never
+		// claims a tick that never happened. The in-flight record below still
+		// fences on the live generation, and the key still names it.
 	}
 	ch, err := r.loop.Submit(cmd)
 	if err != nil {
@@ -97,6 +107,9 @@ func (r *Runner) vacateLocked() Outcome {
 	}
 	r.owners[key] = nil
 	r.inflight = &inflight{key: key, gen: r.gen, planTickSeq: r.tick}
+	if r.publisher != nil {
+		r.publisher.NoteSubmitted(cmd, 0)
+	}
 	go r.await(key, ch)
 	return OutcomeRunning
 }

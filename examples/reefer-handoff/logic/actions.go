@@ -216,9 +216,9 @@ func (s *state) travelNode(o sim.Observation, target sim.NodeID) btNode {
 	return func() (btTick, []btNode) {
 		tick := func([]btNode) (btStatus, error) {
 			r := s.runner
-			// A settled travel receipt is parked on the shared travel pending,
-			// not on the in-flight record: settle first so a refusal is seen.
-			r.settleTravelLocked()
+			// A settled travel receipt is parked on the shared travel pending by
+			// the central drain at the top of the tick, not on the in-flight
+			// record, so a refusal is seen here without this node draining it.
 			if out := r.takeTravelOutcome(); out != nil {
 				if out.Abandoned != nil {
 					// Nothing was decided. The next attempt is a new command.
@@ -308,7 +308,6 @@ func (s *state) nodeFor(kind sim.CommandKind, slot sim.SlotID, node sim.NodeID, 
 	return func() (btTick, []btNode) {
 		tick := func([]btNode) (btStatus, error) {
 			r := s.runner
-			r.settlePendingLocked()
 			if pend.outcome != nil {
 				return r.awaitingLocked(pend)
 			}
