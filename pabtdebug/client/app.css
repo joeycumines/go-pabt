@@ -483,6 +483,68 @@ button.crumb {
 .tag[data-authoritative="false"] { border-color: var(--running); color: var(--running); }
 .tag[data-authoritative="true"]  { border-color: var(--success); color: var(--success); }
 
+/* ---------- causality lanes ---------- */
+
+/*
+  The lanes render inside the detail region, below the occurrence, because they
+  are a view of the selected record and the detail region is the record-level
+  panel a reader is already looking at. They add no grid area: the six-region
+  contract at the top of this file stands unchanged.
+*/
+.lane-list { list-style: none; display: grid; gap: 2px; }
+
+.lane-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 8px;
+  border-bottom: 1px solid var(--divider);
+  padding: 4px 0;
+  font-size: 11px;
+}
+
+.lane-row[data-kind="caused"] .lane-kind    { color: var(--accent); }
+.lane-row[data-kind="exogenous"] .lane-kind { color: var(--warn); }
+.lane-row[data-state="applied"] .lane-state   { color: var(--success); }
+.lane-row[data-state="refused"] .lane-state   { color: var(--failure); }
+.lane-row[data-state="waiting"] .lane-state   { color: var(--running); }
+.lane-row[data-state="abandoned"] .lane-state { color: var(--muted); }
+
+.lane-kind, .lane-state {
+  flex: 0 0 auto;
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.lane-what { overflow-wrap: anywhere; min-width: 0; }
+.lane-seq { color: var(--muted); flex: 0 0 auto; }
+.lane-id { color: var(--muted); font-size: 10px; overflow-wrap: anywhere; }
+.lane-note { color: var(--muted); font-style: italic; }
+.lane-reason[data-availability="available"] { color: var(--failure); }
+
+.lane-detail {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  align-items: baseline;
+  min-width: 0;
+}
+
+.lane-link, .lane-effect {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--accent);
+  background: none;
+  border: 1px solid var(--line);
+  border-radius: 2px;
+  padding: 0 4px;
+  cursor: pointer;
+}
+.lane-link:hover, .lane-effect:hover { border-color: var(--accent); }
+
+.lane-row.lane-hit { background: var(--card); outline: 1px solid var(--accent); }
+
 /* ---------- scrub ---------- */
 
 /*

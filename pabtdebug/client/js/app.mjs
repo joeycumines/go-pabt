@@ -30,6 +30,7 @@ import { EventStream } from "./stream.mjs";
 import { Model, compareSeq, governingConditions, indexTree } from "./model.mjs";
 import { applyDelta, sameTree, ContinuityFault } from "./delta.mjs";
 import { renderDetail } from "./detail.mjs";
+import { renderCausality } from "./causality.mjs";
 import {
   applyRovingTabindex,
   reachable,
@@ -421,6 +422,12 @@ function paint() {
     node,
     node ? governingConditions(record, node) : [],
   );
+  // The causality lanes are a view of the selected record, not of the selected
+  // occurrence, so they ride below the occurrence panel in the same scrolling
+  // region rather than claiming a grid area of their own. They resolve their
+  // links across every held record, because a settlement rides the record after
+  // the submission it answers and a caused event rides inside a settlement.
+  renderCausality(document.getElementById("detail-body"), model, followCause);
 }
 
 /**
@@ -433,6 +440,30 @@ function toggle(id) {
     collapsed.add(id);
   }
   paint();
+}
+
+/**
+ * followCause completes one causal link: jump to the record that holds the
+ * submission behind a world event (or behind a buffered settlement), then light
+ * every lane row in the new paint that names the same command. The jump is what
+ * makes "a selected world event can be followed to the plan tick and command
+ * that caused it" a reading rather than a label: the event, the submission that
+ * decided it, and the settlement that answered it all carry the same command id,
+ * and a reader who clicks the link lands on the tick that caused it.
+ *
+ * select repaints synchronously, so the highlight runs against the new rows.
+ *
+ * @param {string|null} sequence the record holding the linked submission, if held
+ * @param {string|null} command the command id to light up
+ */
+function followCause(sequence, command) {
+  if (sequence && sequence !== model.selectedSequence && model.records.has(sequence)) {
+    select(sequence);
+  }
+  const body = document.getElementById("detail-body");
+  for (const row of body.querySelectorAll(".lane-row")) {
+    row.classList.toggle("lane-hit", Boolean(command) && row.dataset.command === command);
+  }
 }
 
 /* ---------------- keyboard ---------------- */

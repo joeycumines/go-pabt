@@ -19,30 +19,12 @@
    the characters it is rather than executed.
 */
 
-/**
- * el builds an element. Text is set through textContent, so no value in a record
- * can become markup.
- *
- * @param {string} tag
- * @param {Record<string, any>} [props] attributes; `text` sets textContent
- * @param {Array<Node>} [children]
- * @returns {HTMLElement}
- */
-export function el(tag, props = {}, children = []) {
-  const node = document.createElement(tag);
-  for (const [name, value] of Object.entries(props)) {
-    if (value === undefined || value === null) continue;
-    if (name === "text") {
-      node.textContent = String(value);
-    } else if (name === "class") {
-      node.className = String(value);
-    } else {
-      node.setAttribute(name, String(value));
-    }
-  }
-  for (const child of children) node.appendChild(child);
-  return node;
-}
+import { el, availabilityOf, displayOf } from "./dom.mjs";
+
+// el is re-exported so render.mjs and every existing caller keep reaching it
+// from this module; the definition, and the two stored-value readers the
+// causality lanes share, now live in dom.mjs, the leaf below both panels.
+export { el };
 
 /**
  * renderDetail fills the detail region for one occurrence.
@@ -291,47 +273,6 @@ function uncertaintyRow(uncertainty) {
       text,
     }),
   ]);
-}
-
-/**
- * availabilityOf maps a stored value's visibility onto how the panel must show
- * it. An unknown value is unavailable, not empty: rendering nothing would let a
- * reader assume a value was there and simply not displayed.
- *
- * @param {any} value
- * @returns {"available"|"unavailable"|"redacted"|"error"}
- */
-function availabilityOf(value) {
-  switch (value.Visibility) {
-    case "exact":
-    case "semantic":
-      return "available";
-    case "redacted":
-      return "redacted";
-    case "error":
-      return "error";
-    default:
-      return "unavailable";
-  }
-}
-
-/**
- * displayOf returns the text a value is shown as.
- *
- * @param {any} value
- * @returns {string}
- */
-function displayOf(value) {
-  if (value.Visibility === "error") {
-    return value.Error ? `unreadable: ${value.Error}` : "unreadable";
-  }
-  if (value.Visibility === "unknown") {
-    return value.Error && value.Error !== "undeclared"
-      ? `unavailable — ${value.Error}`
-      : "unavailable";
-  }
-  if (value.Display) return value.Display;
-  return value.ReflectType ? `(a ${value.ReflectType} with no display form)` : "(no display form)";
 }
 
 /**

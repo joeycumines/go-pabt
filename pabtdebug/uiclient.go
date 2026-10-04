@@ -52,16 +52,18 @@ const uiPrefix = "/debug/pabt/ui"
 // directory layout is not a route table. The embedded tree holds nothing else,
 // so the map is the whole of what the server will hand to a browser.
 var clientAssets = map[string]string{
-	"index.html":      "text/html; charset=utf-8",
-	"app.css":         "text/css; charset=utf-8",
-	"js/app.mjs":      "text/javascript; charset=utf-8",
-	"js/lossless.mjs": "text/javascript; charset=utf-8",
-	"js/api.mjs":      "text/javascript; charset=utf-8",
-	"js/stream.mjs":   "text/javascript; charset=utf-8",
-	"js/delta.mjs":    "text/javascript; charset=utf-8",
-	"js/model.mjs":    "text/javascript; charset=utf-8",
-	"js/render.mjs":   "text/javascript; charset=utf-8",
-	"js/detail.mjs":   "text/javascript; charset=utf-8",
+	"index.html":       "text/html; charset=utf-8",
+	"app.css":          "text/css; charset=utf-8",
+	"js/app.mjs":       "text/javascript; charset=utf-8",
+	"js/lossless.mjs":  "text/javascript; charset=utf-8",
+	"js/api.mjs":       "text/javascript; charset=utf-8",
+	"js/stream.mjs":    "text/javascript; charset=utf-8",
+	"js/delta.mjs":     "text/javascript; charset=utf-8",
+	"js/model.mjs":     "text/javascript; charset=utf-8",
+	"js/render.mjs":    "text/javascript; charset=utf-8",
+	"js/detail.mjs":    "text/javascript; charset=utf-8",
+	"js/dom.mjs":       "text/javascript; charset=utf-8",
+	"js/causality.mjs": "text/javascript; charset=utf-8",
 }
 
 // clientUI registers the browser client on the server's own mux.
