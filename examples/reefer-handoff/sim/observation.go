@@ -149,6 +149,7 @@ type Observation struct {
 	tagOK     bool
 	tempC     int
 
+	reeferAt    NodeID
 	slotPowered map[SlotID]bool
 	slotRating  map[SlotID]int
 	slotVersion map[SlotID]uint64
@@ -185,6 +186,7 @@ func Observe(w World, t TractorID, jobReefer ReeferID) (Observation, bool) {
 		delivered:   w.Delivered(jobReefer),
 		tagOK:       reefer.TagReadable,
 		tempC:       reefer.TempC,
+		reeferAt:    reefer.At,
 		slotPowered: make(map[SlotID]bool, len(w.slots)),
 		slotRating:  make(map[SlotID]int, len(w.slots)),
 		slotVersion: make(map[SlotID]uint64, len(w.slots)),
@@ -238,6 +240,24 @@ func (o Observation) Read(k VarKey) (any, bool) {
 	}
 	return nil, false
 }
+
+// At returns the node this frame's tractor is standing on. It is the frame's own
+// answer rather than a read of the world, so an action generator choosing a hop
+// works from the same snapshot the conditions were evaluated against.
+func (o Observation) At() NodeID { return o.at }
+
+// Holding returns the reefer this frame's tractor has in custody, empty when it
+// has nothing.
+func (o Observation) Holding() ReeferID { return o.holding }
+
+// ReeferAt returns the node the job reefer is standing on. A pickup needs the
+// tractor beside it, and the node is read from the same frame as everything else,
+// so the guard on a pickup is decided from the world the plan is reasoning over.
+func (o Observation) ReeferAt() NodeID { return o.reeferAt }
+
+// TempC returns the job reefer's temperature, which is what decides which slots
+// will accept it.
+func (o Observation) TempC() int { return o.tempC }
 
 // Expectation returns the versions a command issued from this frame must expect.
 // A command that carries these and is reduced against a world where one of them
