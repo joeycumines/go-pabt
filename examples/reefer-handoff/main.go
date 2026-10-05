@@ -52,6 +52,7 @@ import (
 
 	"github.com/joeycumines/go-pabt/examples/reefer-handoff/logic"
 	"github.com/joeycumines/go-pabt/examples/reefer-handoff/sim"
+	"github.com/joeycumines/go-pabt/examples/reefer-handoff/tui"
 	"github.com/joeycumines/go-pabt/pabtdebug"
 )
 
@@ -115,7 +116,24 @@ func run() error {
 			t.tug, t.server.Addr(), t.server.Capability())
 	}
 
-	if err := drive(ctx, loop, tractors); err != nil {
+	ctrl := NewController()
+
+	// The operations monitor renders the same world/plan trace the browser
+	// shows. It runs on its own goroutine and routes keyboard input through
+	// the controller. If there is no TTY (headless CI), it fails gracefully
+	// and the run continues without it.
+	views := make([]tui.TractorView, len(tractors))
+	for i, t := range tractors {
+		views[i] = tui.TractorView{ID: t.tug, Addr: t.server.Addr(), Cap: t.server.Capability()}
+	}
+	mon := tui.NewMonitor(loop, views, ctrl)
+	go func() {
+		if err := mon.Run(ctx); err != nil {
+			fmt.Fprintf(os.Stderr, "monitor: %v\n", err)
+		}
+	}()
+
+	if err := drive(ctx, loop, tractors, ctrl); err != nil {
 		if errors.Is(err, context.Canceled) {
 			// A signal during the run is an operator stopping the demo, not
 			// a failure: the ordered teardown still releases the world, the
@@ -193,12 +211,36 @@ func wire(ctx context.Context, dir string, loop *sim.WorldLoop) ([]*tractor, err
 // makes the demo deterministic: the world only ever changes through the
 // owner, and the owner's schedule here is tick, settle, tick, settle, round
 // boundary, drain — every round, the same way, for every tractor.
-func drive(ctx context.Context, loop *sim.WorldLoop, tractors []*tractor) error {
+func drive(ctx context.Context, loop *sim.WorldLoop, tractors []*tractor, ctrl *Controller) error {
 	active := map[sim.TractorID]bool{sim.Tug1: true, sim.Tug2: true, sim.Tug3: true}
 	// The guard bounds the demo, not the world: the reducer reaches Cutoff on
 	// its own, and a run that somehow outlives the cutoff plus a margin is a
 	// bug to report rather than a horizon to wait on.
 	for rounds := 0; ; rounds++ {
+		// The controller mediates between the operator (TUI keyboard or future
+		// API) and this loop. It does NOT touch WorldLoop.admitting, which
+		// remains the lifecycle/shutdown gate. Pause freezes new admission by
+		// skipping the tick/boundary cycle; already-queued commands in the
+		// eventloop still reduce because they were admitted before the freeze.
+		// Step consumes exactly one permit, allowing one round through before
+		// re-freezing. Speed scales the pacing interval.
+		paused, stepOne, speed, quit := ctrl.Check()
+		if quit {
+			return context.Canceled
+		}
+		if paused && !stepOne {
+			// While paused, sleep proportional to speed and re-check. Don't
+			// count paused iterations against the round guard.
+			pace := time.Duration(float64(sim.RoundInterval) / speed)
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(pace):
+			}
+			rounds--
+			continue
+		}
+
 		world := loop.Snapshot()
 		if world.Phase() == sim.PhaseComplete || world.Phase() == sim.PhaseCutoff {
 			printSummary(world)
@@ -251,11 +293,13 @@ func drive(ctx context.Context, loop *sim.WorldLoop, tractors []*tractor) error 
 		loop.BeginRound()
 		// The pace is the demo's, not the world's: deterministic mode leaves
 		// rounds to the host, and the host is here. The wait also gives the
-		// owner time to reduce the boundary before the drain reads it.
+		// owner time to reduce the boundary before the drain reads it. Speed
+		// scales the interval so the operator can slow down or accelerate.
+		pace := time.Duration(float64(sim.RoundInterval) / speed)
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-time.After(sim.RoundInterval):
+		case <-time.After(pace):
 		}
 		if events := loop.DrainEvents(); len(events) > 0 {
 			for _, t := range tractors {

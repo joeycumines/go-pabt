@@ -126,6 +126,41 @@ func (w World) Revision() string { return "w" + strconv.FormatUint(w.worldSeq, 1
 // returned slice is the world's own and must not be modified.
 func (w World) Receipts() []Receipt { return w.receipts }
 
+// Reefers returns a copy of every reefer in the world.
+func (w World) Reefers() []Reefer {
+	out := make([]Reefer, len(w.reefers))
+	copy(out, w.reefers)
+	return out
+}
+
+// Slots returns a copy of every slot in the world.
+func (w World) Slots() []Slot {
+	out := make([]Slot, len(w.slots))
+	copy(out, w.slots)
+	return out
+}
+
+// Tractors returns a copy of every tractor in the world.
+func (w World) Tractors() []Tractor {
+	out := make([]Tractor, len(w.tractors))
+	copy(out, w.tractors)
+	return out
+}
+
+// Jobs returns a copy of every job in the world.
+func (w World) Jobs() []Job {
+	out := make([]Job, len(w.jobs))
+	copy(out, w.jobs)
+	return out
+}
+
+// Nodes returns a copy of every node in the world.
+func (w World) Nodes() []Node {
+	out := make([]Node, len(w.nodes))
+	copy(out, w.nodes)
+	return out
+}
+
 // Reefer returns a reefer record by ID.
 func (w World) Reefer(id ReeferID) (Reefer, bool) {
 	for _, r := range w.reefers {
