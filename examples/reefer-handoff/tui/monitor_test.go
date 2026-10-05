@@ -133,7 +133,7 @@ func TestMonitorHeadlessRendering(t *testing.T) {
 	records := map[string][]RecordSummary{
 		string(sim.Tug1): {{Sequence: 1, Kind: "tick", Outcome: "Applied"}},
 	}
-	renderAll(screen, world, ctrl, records)
+	renderAll(screen, world, ctrl, records, nil)
 	screen.Show()
 
 	// Assert title bar contains REEFER HANDOFF.

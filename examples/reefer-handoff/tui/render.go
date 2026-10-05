@@ -25,16 +25,21 @@ import (
 )
 
 var (
-	titleStyle    = tcell.StyleDefault.Foreground(tcell.NewRGBColor(220, 220, 240)).Background(tcell.NewRGBColor(20, 20, 60)).Bold(true)
-	labelStyle    = tcell.StyleDefault.Foreground(tcell.NewRGBColor(100, 110, 130))
-	valueStyle    = tcell.StyleDefault.Foreground(tcell.NewRGBColor(200, 210, 230))
-	headerStyle   = tcell.StyleDefault.Foreground(tcell.NewRGBColor(180, 190, 210)).Bold(true)
-	pausedStyle   = tcell.StyleDefault.Foreground(tcell.ColorBlack).Background(tcell.ColorYellow).Bold(true)
-	helpKeyStyle  = tcell.StyleDefault.Foreground(tcell.NewRGBColor(200, 200, 220)).Bold(true)
-	helpDescStyle = tcell.StyleDefault.Foreground(tcell.NewRGBColor(100, 110, 130))
+	titleStyle         = tcell.StyleDefault.Foreground(tcell.NewRGBColor(220, 220, 240)).Background(tcell.NewRGBColor(20, 20, 60)).Bold(true)
+	labelStyle         = tcell.StyleDefault.Foreground(tcell.NewRGBColor(100, 110, 130))
+	valueStyle         = tcell.StyleDefault.Foreground(tcell.NewRGBColor(200, 210, 230))
+	headerStyle        = tcell.StyleDefault.Foreground(tcell.NewRGBColor(180, 190, 210)).Bold(true)
+	pausedStyle        = tcell.StyleDefault.Foreground(tcell.ColorBlack).Background(tcell.ColorYellow).Bold(true)
+	helpKeyStyle       = tcell.StyleDefault.Foreground(tcell.NewRGBColor(200, 200, 220)).Bold(true)
+	helpDescStyle      = tcell.StyleDefault.Foreground(tcell.NewRGBColor(100, 110, 130))
+	beliefHeaderStyle  = tcell.StyleDefault.Foreground(tcell.NewRGBColor(180, 140, 60)).Bold(true)
+	beliefValueStyle   = tcell.StyleDefault.Foreground(tcell.NewRGBColor(160, 140, 100))
+	beliefKnownStyle   = tcell.StyleDefault.Foreground(tcell.NewRGBColor(100, 200, 100))
+	beliefStaleStyle   = tcell.StyleDefault.Foreground(tcell.ColorOrange).Bold(true)
+	beliefUnknownStyle = tcell.StyleDefault.Foreground(tcell.ColorGray)
 )
 
-func renderAll(screen tcell.Screen, world sim.World, ctrl Controller, records map[string][]RecordSummary) {
+func renderAll(screen tcell.Screen, world sim.World, ctrl Controller, records map[string][]RecordSummary, beliefs map[string]map[string]string) {
 	w, h := screen.Size()
 	if w < 40 || h < 10 {
 		return
@@ -43,6 +48,7 @@ func renderAll(screen tcell.Screen, world sim.World, ctrl Controller, records ma
 
 	y := renderTitleBar(screen, w, world, ctrl)
 	y = renderReeferTable(screen, w, y, world)
+	y = renderBeliefPanel(screen, w, y, beliefs)
 	y = renderBayState(screen, w, y, world)
 	y = renderLaneState(screen, w, y, world)
 	y = renderTractorJobs(screen, w, y, world)
@@ -106,6 +112,38 @@ func renderReeferTable(screen tcell.Screen, width, y int, world sim.World) int {
 			r.ID, r.TempC, r.At, cust, tag, delivered)
 		drawLine(screen, width, y, line, valueStyle)
 		y++
+	}
+	return y + 1
+}
+
+func renderBeliefPanel(screen tcell.Screen, width, y int, beliefs map[string]map[string]string) int {
+	if len(beliefs) == 0 {
+		return y
+	}
+	drawLine(screen, width, y, "═══ AGENT BELIEFS ═══", beliefHeaderStyle)
+	y++
+	for tug, statusMap := range beliefs {
+		if y >= 50 { // safety bound
+			break
+		}
+		drawLine(screen, width, y, fmt.Sprintf("  %s:", tug), beliefHeaderStyle)
+		y++
+		for key, status := range statusMap {
+			if y >= 50 {
+				break
+			}
+			style := beliefValueStyle
+			switch status {
+			case "Known":
+				style = beliefKnownStyle
+			case "Stale":
+				style = beliefStaleStyle
+			case "Unknown":
+				style = beliefUnknownStyle
+			}
+			drawLine(screen, width, y, fmt.Sprintf("    %-30s  %s", key, status), style)
+			y++
+		}
 	}
 	return y + 1
 }

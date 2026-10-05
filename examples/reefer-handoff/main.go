@@ -162,6 +162,13 @@ func run() error {
 		tuiLoop = loop
 	}
 	mon := tui.NewMonitor(tuiLoop, views, ctrl)
+	// Wire runner belief sources into the TUI monitor so the belief panel
+	// can render per-agent epistemic state alongside ground truth.
+	runnerSources := make([]tui.RunnerBeliefSource, len(tractors))
+	for i, t := range tractors {
+		runnerSources[i] = t.runner
+	}
+	mon.AttachRunners(runnerSources)
 	go func() {
 		if err := mon.Run(ctx); err != nil {
 			fmt.Fprintf(os.Stderr, "monitor: %v\n", err)

@@ -48,8 +48,18 @@ type Monitor struct {
 	loop     *sim.WorldLoop
 	tractors []TractorView
 	ctrl     Controller
+	runners  []RunnerBeliefSource
 	mu       sync.Mutex
-	records  map[string][]RecordSummary // keyed by tractor ID
+	records  map[string][]RecordSummary   // keyed by tractor ID
+	beliefs  map[string]map[string]string // tractor -> key -> status string
+}
+
+// RunnerBeliefSource provides read access to a runner's belief store.
+// It matches logic.Runner's Beliefs() method without importing the logic
+// package, preventing circular dependencies.
+type RunnerBeliefSource interface {
+	Beliefs() map[sim.VarKey]sim.Belief
+	Tractor() sim.TractorID
 }
 
 // TractorView binds one tractor to its debugger server address and capability.
@@ -87,14 +97,21 @@ type RecordSummary struct {
 }
 
 // NewMonitor builds a ready monitor. The controller may be nil for headless
-// tests that do not need keyboard routing.
+// tests that do not need keyboard routing. The runners slice provides belief
+// data for the TUI belief panel; it may be nil or empty.
 func NewMonitor(loop *sim.WorldLoop, views []TractorView, ctrl Controller) *Monitor {
 	return &Monitor{
 		loop:     loop,
 		tractors: views,
 		ctrl:     ctrl,
 		records:  make(map[string][]RecordSummary),
+		beliefs:  make(map[string]map[string]string),
 	}
+}
+
+// AttachRunners wires belief sources into the monitor. Call before Run().
+func (m *Monitor) AttachRunners(runners []RunnerBeliefSource) {
+	m.runners = runners
 }
 
 // Run starts the TUI loop, blocking until quit or context cancel. If screen
@@ -160,7 +177,7 @@ func (m *Monitor) runWithScreen(ctx context.Context, screen tcell.Screen) error 
 		return sim.NewWorld()
 	}
 
-	renderAll(screen, snapshot(), m.ctrl, m.records)
+	renderAll(screen, snapshot(), m.ctrl, m.records, m.snapshotBeliefs())
 	screen.Show()
 
 	for {
@@ -177,7 +194,7 @@ func (m *Monitor) runWithScreen(ctx context.Context, screen tcell.Screen) error 
 				}
 			}
 		case <-ticker.C:
-			renderAll(screen, snapshot(), m.ctrl, m.records)
+			renderAll(screen, snapshot(), m.ctrl, m.records, m.snapshotBeliefs())
 			screen.Show()
 		}
 	}
@@ -325,6 +342,23 @@ func mergeRecords(existing, incoming []RecordSummary) []RecordSummary {
 			out = append(out, r)
 			seen[r.Sequence] = true
 		}
+	}
+	return out
+}
+
+// snapshotBeliefs reads every attached runner's belief store and returns a
+// display-ready map keyed by tractor ID. Each value maps a variable key
+// string to its belief status string (Unknown/Known/Stale).
+func (m *Monitor) snapshotBeliefs() map[string]map[string]string {
+	out := make(map[string]map[string]string, len(m.runners))
+	for _, r := range m.runners {
+		tug := string(r.Tractor())
+		beliefs := r.Beliefs()
+		statusMap := make(map[string]string, len(beliefs))
+		for k, b := range beliefs {
+			statusMap[k.String()] = b.Status.String()
+		}
+		out[tug] = statusMap
 	}
 	return out
 }

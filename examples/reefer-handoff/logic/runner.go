@@ -252,3 +252,16 @@ func (r *Runner) Settled() bool {
 	defer r.mu.Unlock()
 	return r.inflight == nil || r.inflight.result != nil
 }
+
+// Beliefs returns a snapshot of the runner's persistent belief store. The
+// returned map is a defensive copy safe for concurrent read by the TUI or
+// debugger without holding the runner's lock.
+func (r *Runner) Beliefs() map[sim.VarKey]sim.Belief {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make(map[sim.VarKey]sim.Belief, len(r.beliefs))
+	for k, v := range r.beliefs {
+		out[k] = v
+	}
+	return out
+}
