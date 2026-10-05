@@ -426,6 +426,110 @@ func TestAFlushCommitsBufferedCausalityAsAControlRecord(t *testing.T) {
 	}
 }
 
+// A receipt that attaches after its runner's last tick has no tick to drain
+// it, and a flush commits only what the publisher has already been told: the
+// submission was noted when the command went out, so a control record
+// commits either way — without a drain it simply carries no answer. The
+// strand is not hypothetical. In the scenario the completing Place finishes
+// the world, the host's top-of-round check exits before that tractor ticks
+// again, and the receipt — with the Placed event the browser follows — would
+// reach no store while the world reports the reefer delivered. DrainSettled
+// is the host's step before it flushes; the settlement answers the
+// submission across the two records by idempotency key, the same
+// cross-record link the lanes resolve.
+//
+// The strand reproduced here is the walk-home hop: one vacate tick submits
+// it and returns with no plan tick to carry the answer, and the receipt
+// attaches with no further tick to drain it. The generation's session —
+// opened when the job was claimed — is the same session the scenario's final
+// flush commits through, so this also pins that the drain, not the session,
+// is what was missing.
+func TestAReceiptWithNoTickLeftToDrainStillReachesHistory(t *testing.T) {
+	loop := newLoop(t)
+	r, pub := newPublishedRunner(t, loop, sim.Tug1)
+	if out := drive(t, r); out != OutcomeDelivered {
+		t.Fatalf("ended as %s, want %s; blocked on %q", out, OutcomeDelivered, r.Blocked())
+	}
+
+	// One vacate tick submits the walk-home hop and returns; the receipt
+	// attaches with no further tick, which is the strand.
+	if _, err := r.Tick(); err != nil {
+		t.Fatalf("%s tick: %v", r.Tractor(), err)
+	}
+	settle(t, r)
+	if !r.Settled() {
+		t.Fatal("the walk-home receipt never attached")
+	}
+
+	// Flush without the drain first: the record commits — the submission was
+	// noted at submit time — and carries no settlement. This is the state the
+	// scenario's stores were in before the drain existed, and the state a
+	// flush alone would leave them in.
+	if err := pub.Flush(); err != nil {
+		t.Fatalf("Flush: %v", err)
+	}
+	records := readRun(t, pub)
+	if len(records) == 0 {
+		t.Fatal("the flush committed no record")
+	}
+	stranded := records[len(records)-1]
+	if stranded.Kind != pabtdebug.RecordControl {
+		t.Fatalf("the flush committed %q, want a control record", stranded.Kind)
+	}
+	if stranded.Causality == nil || len(stranded.Causality.Submitted) == 0 {
+		t.Fatal("the walk-home submission never reached the publisher")
+	}
+	if len(stranded.Causality.Settled) != 0 {
+		t.Fatal("a settlement is present before the drain ran; the test no longer pins the strand")
+	}
+	var submitted *pabtdebug.StoredSubmission
+	for i := range stranded.Causality.Submitted {
+		if causalString(t, stranded.Causality.Submitted[i].Kind) == string(sim.CmdMoveTo) {
+			submitted = &stranded.Causality.Submitted[i]
+		}
+	}
+	if submitted == nil {
+		t.Fatalf("the control record carries no walk-home submission: %+v", stranded.Causality.Submitted)
+	}
+	key := causalString(t, submitted.IdempotencyKey)
+
+	// The drain notes the attached receipt; the flush commits it.
+	r.DrainSettled()
+	if err := pub.Flush(); err != nil {
+		t.Fatalf("Flush after drain: %v", err)
+	}
+	records = readRun(t, pub)
+	if len(records) < 2 {
+		t.Fatalf("the drain's flush committed nothing; records: %d", len(records))
+	}
+	last := records[len(records)-1]
+	if last.Kind != pabtdebug.RecordControl {
+		t.Fatalf("the drain's flush committed %q, want a control record", last.Kind)
+	}
+	if last.Causality == nil || len(last.Causality.Settled) == 0 {
+		t.Fatal("the drained receipt did not ride in a committed record")
+	}
+	st := last.Causality.Settled[0]
+	if kind := causalString(t, st.Kind); kind != string(sim.CmdMoveTo) {
+		t.Fatalf("the drained settlement is for %q, want %q", kind, sim.CmdMoveTo)
+	}
+	if outcome := causalString(t, st.Outcome); outcome != string(sim.OutcomeApplied) {
+		t.Fatalf("the walk-home hop settled as %q, want %q", outcome, sim.OutcomeApplied)
+	}
+	if answered := causalString(t, st.IdempotencyKey); answered != key {
+		t.Fatalf("the settlement answers key %q, its submission rode under %q", answered, key)
+	}
+	// The receipt's own events — the world change the browser follows from
+	// the plan lane — ride with it; a settlement that kept the answer but
+	// dropped the effect would still leave the lane without its destination.
+	if len(st.Events) == 0 {
+		t.Fatal("the drained settlement carries no world events")
+	}
+	if _, err := pub.Store().VerifyChain(context.Background(), pub.RunKey()); err != nil {
+		t.Fatalf("VerifyChain across the drain's control record: %v", err)
+	}
+}
+
 // World events no command caused — a lane the wind controller closed — ride
 // in the next committed record with no cause command, which is what tells an
 // exogenous change apart from a command's effect. The host drains them through

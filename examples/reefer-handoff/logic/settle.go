@@ -74,6 +74,26 @@ func (r *Runner) drainSettledLocked() {
 	owner.outcome = &res
 }
 
+// DrainSettled records an attached receipt that no further tick will drain.
+// Every plan-held tick drains at its top, and the claim and vacate paths
+// drain theirs on the tick that observes them — but a receipt that attaches
+// after the last tick has no next tick to run it, and a flush commits only
+// what the publisher has already been told: the submission was noted when the
+// command went out, so without this the answer — and the events it published —
+// reach no store at all. In the scenario the completing Place finishes the
+// world mid-round, the host's top-of-round check exits before that tractor
+// ticks again, and the delivery's own Placed event would be lost while the
+// world reports the reefer delivered.
+//
+// It is a no-op when nothing is attached, and safe on any path: the in-flight
+// record is the same slot whichever path filled it, and drainSettledLocked
+// notes the receipt before it fences. The caller holds no lock.
+func (r *Runner) DrainSettled() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.drainSettledLocked()
+}
+
 // takeOutcome reads and clears this action's settled result.
 func (r *Runner) takeOutcome(p *pending) *sim.Result {
 	if p == nil || p.outcome == nil {

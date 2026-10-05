@@ -24,9 +24,10 @@
 // use: each round ticks every active runner to settlement, advances the
 // host's round, and drains the boundary events into every publisher so the
 // next committed record carries them. REEFER-2's unreadable tag forces a scan
-// into the tree, and the capacity-one bay serializes the handoffs. The wind
-// lockout and the pulled plug belong to the scripted incident, which is P6;
-// this binary runs the calm manifest and is the wiring P5 owes.
+// into the tree, and the capacity-one bay serializes the handoffs. The fixed
+// incident fires at its own rounds through loop.Change, before the round's
+// commands, so a command that meets the closed lane is refused in the same
+// round the wind controller closed it.
 //
 // Each tractor's history lands in its own store file under -dir — one store
 // and one run per tractor per DD-35 — and each store is served by exactly one
@@ -125,6 +126,20 @@ func run() error {
 		return err
 	}
 
+	// The world settled, but a receipt may have attached after its runner's
+	// last tick — the completing Place finishes the world and drive's
+	// top-of-round check exits before that tractor ticks again — and a receipt
+	// no tick drains is a reduction no store ever hears. Drain and flush while
+	// the servers are still up, so a browser holding the run sees the finished
+	// trace rather than a submission whose answer never arrived.
+	for _, t := range tractors {
+		settle(t.runner)
+		t.runner.DrainSettled()
+		if err := t.pub.Flush(); err != nil {
+			return fmt.Errorf("%s flushing the final receipts: %w", t.tug, err)
+		}
+	}
+
 	// Alive after the run until terminated, which is what lets a browser
 	// attach, follow the causal links across the committed history, and be
 	// torn down without racing the run's own output.
@@ -193,6 +208,23 @@ func drive(ctx context.Context, loop *sim.WorldLoop, tractors []*tractor) error 
 			return fmt.Errorf("the run did not settle within %d rounds; phase %s",
 				rounds, world.Phase())
 		}
+		// The scripted incident applies at the round its controller acts, and
+		// only there: each Apply is idempotent, and waiting on the change's
+		// channel means the round's commands queue behind it, so a MoveTo that
+		// crosses the western approach is refused by the closure itself. The
+		// events join the boundary drain below, which is how every publisher
+		// records them.
+		for _, incident := range sim.Scripted(world.Round()) {
+			out, err := loop.Change(incident.Apply)
+			if err != nil {
+				return fmt.Errorf("incident at round %d: %w", world.Round(), err)
+			}
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-out:
+			}
+		}
 		live := false
 		for _, t := range tractors {
 			if !active[t.tug] {
@@ -254,18 +286,25 @@ func printSummary(world sim.World) {
 	}
 }
 
-// teardown stops the world, then the servers, then releases the stores. The
-// order is deliberate: a store closed under a live server would answer an
-// in-flight browser request with a closed-database error, so serving stops
-// first. The price is that a publisher's final flush — the walk-home receipts
-// that settled after the last plan tick — commits unannounced. That is the
-// contract Flush already carries: the causality is durable and a reader that
-// pages the run sees it; only a live subscriber at that instant was not told.
+// teardown stops the world, then drains any receipt that attached with no
+// tick left to note it — Shutdown answers what was still in flight, so an
+// await that was waiting on the world attaches before the drain reads it —
+// then the servers, then the stores. The order is deliberate: a store closed
+// under a live server would answer an in-flight browser request with a
+// closed-database error, so serving stops first. The price is that a
+// publisher's final flush — the walk-home receipts that settled after the
+// last plan tick — commits unannounced. That is the contract Flush already
+// carries: the causality is durable and a reader that pages the run sees it;
+// only a live subscriber at that instant was not told.
 func teardown(loop *sim.WorldLoop, tractors []*tractor) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := loop.Shutdown(ctx); err != nil {
 		fmt.Fprintf(os.Stderr, "reefer-handoff: shutting the world loop: %v\n", err)
+	}
+	for _, t := range tractors {
+		settle(t.runner)
+		t.runner.DrainSettled()
 	}
 	for _, t := range tractors {
 		if err := t.server.Close(); err != nil {
