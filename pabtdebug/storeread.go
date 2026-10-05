@@ -90,6 +90,21 @@ func (s *SQLiteStore) RecordAt(ctx context.Context, key RunKey, sequence uint64)
 		key.SessionID, key.RunID, sequence)
 	switch err := row.Scan(&raw); {
 	case errors.Is(err, sql.ErrNoRows):
+		// Check whether this sequence was evicted rather than never committed.
+		var exists int
+		checkErr := s.readers.QueryRowContext(ctx,
+			"SELECT COUNT(*) FROM records WHERE session_id = ? AND run_id = ?",
+			key.SessionID, key.RunID).Scan(&exists)
+		if checkErr == nil && exists > 0 {
+			// The run has records but not this one — check if it's below the minimum.
+			var minSeq sql.NullInt64
+			minErr := s.readers.QueryRowContext(ctx,
+				"SELECT MIN(seq) FROM records WHERE session_id = ? AND run_id = ?",
+				key.SessionID, key.RunID).Scan(&minSeq)
+			if minErr == nil && minSeq.Valid && sequence < uint64(minSeq.Int64) {
+				return StoredRecord{}, fmt.Errorf("%w: sequence %d of run %s", ErrEvicted, sequence, key.RunID)
+			}
+		}
 		return StoredRecord{}, fmt.Errorf("%w: sequence %d of run %s", ErrNotFound, sequence, key.RunID)
 	case err != nil:
 		return StoredRecord{}, fmt.Errorf("pabtdebug: read record: %w", err)
@@ -127,6 +142,14 @@ func (s *SQLiteStore) TreeAt(ctx context.Context, key RunKey, sequence uint64) (
 		key.SessionID, key.RunID, sequence)
 	switch err := row.Scan(&raw); {
 	case errors.Is(err, sql.ErrNoRows):
+		// Check whether this sequence was evicted rather than never having a tree.
+		var minSeq sql.NullInt64
+		minErr := s.readers.QueryRowContext(ctx,
+			"SELECT MIN(seq) FROM records WHERE session_id = ? AND run_id = ?",
+			key.SessionID, key.RunID).Scan(&minSeq)
+		if minErr == nil && minSeq.Valid && sequence < uint64(minSeq.Int64) {
+			return StoredTree{}, fmt.Errorf("%w: tree at sequence %d of run %s", ErrEvicted, sequence, key.RunID)
+		}
 		return StoredTree{}, fmt.Errorf("%w: no tree at sequence %d of run %s",
 			ErrNotFound, sequence, key.RunID)
 	case err != nil:
