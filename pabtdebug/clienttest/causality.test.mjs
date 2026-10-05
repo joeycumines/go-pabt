@@ -31,9 +31,16 @@ import {
 } from "../client/js/causality.mjs";
 import { Model } from "../client/js/model.mjs";
 
-/** value is the exact-visibility StoredValue the routes serve for application text. */
+/**
+ * value is the exact-visibility StoredValue the routes serve for application
+ * text. Display is the value's canonical JSON text (valuecodec derives it from
+ * CanonicalEncode), so a string arrives as a quoted literal — the exact bytes
+ * isApplied reads back. An unquoted Display would let the outcome assertion
+ * pass against a comparison production never satisfies, the vacuity this
+ * file's header warns about.
+ */
 function value(display) {
-  return { Visibility: "exact", Display: display };
+  return { Visibility: "exact", Display: JSON.stringify(display) };
 }
 
 function submission(commandId, key, kind, tick) {
@@ -116,10 +123,22 @@ test("a record with no envelope reads as none", () => {
 });
 
 test("the outcome word decides applied", () => {
+  // The fixture's Display is the canonical text the routes serve — a quoted
+  // literal — so this pins the comparison against the bytes production sends,
+  // not a hand-built unquoted word.
+  assert.equal(settlement("c", "k", "MoveTo", "Applied").outcome.Display, '"Applied"');
   assert.equal(isApplied(settlement("c", "k", "MoveTo", "Applied")), true);
   assert.equal(isApplied(settlement("c", "k", "MoveTo", "Refused")), false);
   assert.equal(isApplied(settlement("c", "k", "MoveTo", "Duplicate")), false);
   assert.equal(isApplied(null), false);
+  // An outcome the client cannot read — error visibility serves prose, not
+  // canonical text — answers no: unreadable is never an application, and the
+  // word must not be guessed from a display that will not decode.
+  const unreadable = {
+    ...settlement("c", "k", "MoveTo", "Applied"),
+    outcome: { Visibility: "error", Error: "boom" },
+  };
+  assert.equal(isApplied(unreadable), false);
 });
 
 test("an abandoned settlement is neither applied nor refused", () => {
@@ -133,8 +152,8 @@ test("an abandoned settlement is neither applied nor refused", () => {
 test("caused events come from inside the settlements, exogenous from the buffer", () => {
   const { second } = heldRecords();
   const { caused, exogenous } = causedEvents(second.causality);
-  assert.deepEqual(caused.map((ev) => ev.kind.Display), ["Moved"]);
-  assert.deepEqual(exogenous.map((ev) => ev.kind.Display), ["LaneClosed"]);
+  assert.deepEqual(caused.map((ev) => ev.kind.Display), ['"Moved"']);
+  assert.deepEqual(exogenous.map((ev) => ev.kind.Display), ['"LaneClosed"']);
 });
 
 test("the split reads the cause link, not the buffer that held it", () => {
@@ -146,8 +165,8 @@ test("the split reads the cause link, not the buffer that held it", () => {
     exogenous: [worldEvent("Moved", "cmd-x"), worldEvent("LaneClosed", null)],
   };
   const { caused, exogenous } = causedEvents(envelope);
-  assert.deepEqual(caused.map((ev) => ev.kind.Display), ["Moved"]);
-  assert.deepEqual(exogenous.map((ev) => ev.kind.Display), ["LaneClosed"]);
+  assert.deepEqual(caused.map((ev) => ev.kind.Display), ['"Moved"']);
+  assert.deepEqual(exogenous.map((ev) => ev.kind.Display), ['"LaneClosed"']);
 });
 
 test("an envelope with no events splits to nothing", () => {
@@ -160,10 +179,12 @@ test("an envelope with no events splits to nothing", () => {
 test("the index walks every held record and keys by identity", () => {
   const { model } = heldRecords();
   const index = indexCommands(model);
-  assert.equal(index.byCommand.get("cmd-move").sequence, "1");
-  assert.equal(index.settledByCommand.get("cmd-move").sequence, "2");
-  assert.equal(index.byKey.get("plan/g1/t3/move").sequence, "1");
-  assert.equal(index.settledByKey.get("plan/g1/t3/move").sequence, "2");
+  // The index keys are displayOf of the identity fields, so on the wire they
+  // are the quoted canonical text — the same bytes linkEvent looks up.
+  assert.equal(index.byCommand.get('"cmd-move"').sequence, "1");
+  assert.equal(index.settledByCommand.get('"cmd-move"').sequence, "2");
+  assert.equal(index.byKey.get('"plan/g1/t3/move"').sequence, "1");
+  assert.equal(index.settledByKey.get('"plan/g1/t3/move"').sequence, "2");
 });
 
 test("a world event follows to the command and tick that caused it", () => {
@@ -175,10 +196,10 @@ test("a world event follows to the command and tick that caused it", () => {
   const index = indexCommands(model);
   const { caused } = causedEvents(second.causality);
   const link = linkEvent(index, caused[0]);
-  assert.equal(link.command, "cmd-move");
+  assert.equal(link.command, '"cmd-move"');
   assert.equal(link.sequence, "1");
   assert.equal(String(link.submission.planTickSeq), "3");
-  assert.equal(link.submission.kind.Display, "MoveTo");
+  assert.equal(link.submission.kind.Display, '"MoveTo"');
 });
 
 test("a cause the client does not hold is reported, not guessed", () => {
@@ -191,7 +212,7 @@ test("a cause the client does not hold is reported, not guessed", () => {
   const index = indexCommands(model);
   const { caused } = causedEvents(second.causality);
   const link = linkEvent(index, caused[0]);
-  assert.equal(link.command, "cmd-move"); // the event still names its cause
+  assert.equal(link.command, '"cmd-move"'); // the event still names its cause
   assert.equal(link.sequence, null);
   assert.equal(link.submission, null);
 });
@@ -211,7 +232,7 @@ test("a submission resolves to the settlement that answered it", () => {
   const index = indexCommands(model);
   const { settlement, sequence } = linkSubmission(index, first.causality.submitted[0]);
   assert.equal(sequence, "2");
-  assert.equal(settlement.outcome.Display, "Applied");
+  assert.equal(settlement.outcome.Display, '"Applied"');
   assert.equal(settlement.events.length, 1);
 });
 
@@ -251,8 +272,8 @@ test("a refusal carries a reason and no world effect", () => {
   const { settlement: answered } = linkSubmission(index, model.record("1").causality.submitted[0]);
   assert.equal(isApplied(answered), false);
   assert.equal(isAbandoned(answered), false);
-  assert.equal(answered.reason.Display, "SlotOccupied");
-  assert.equal(answered.holder.Display, "TUG-2");
+  assert.equal(answered.reason.Display, '"SlotOccupied"');
+  assert.equal(answered.holder.Display, '"TUG-2"');
   assert.deepEqual(answered.events, []);
   const { caused } = causedEvents(model.record("1").causality);
   assert.equal(caused.length, 0);

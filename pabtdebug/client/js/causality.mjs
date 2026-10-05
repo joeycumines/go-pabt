@@ -71,7 +71,29 @@ export function isApplied(settlement) {
   // all; reading one from it would be inventing an outcome. The absence is
   // guarded before the word is compared, because an absent value is not a
   // refusal either — isAbandoned names it, and the lane shows it as neither.
-  return Boolean(settlement) && Boolean(settlement.outcome) && displayOf(settlement.outcome) === "Applied";
+  return Boolean(settlement) && Boolean(settlement.outcome) && outcomeWord(settlement.outcome) === "Applied";
+}
+
+/**
+ * outcomeWord reads the receipt's outcome word out of the StoredValue the wire
+ * serves. Display is the value's canonical JSON text — valuecodec derives it
+ * from CanonicalEncode, so a string arrives as a quoted literal ('"Applied"'),
+ * while an unreadable or redacted value's display is prose that is not that
+ * text. Decoding keeps the comparison on the word the receipt recorded rather
+ * than on one encoding of it, and a display that will not decode answers null:
+ * a value this client cannot read is not an application, and guessing that it
+ * is would be the claim the lanes exist to keep out.
+ *
+ * @param {any} value
+ * @returns {string|null}
+ */
+function outcomeWord(value) {
+  try {
+    const word = JSON.parse(displayOf(value));
+    return typeof word === "string" ? word : null;
+  } catch {
+    return null;
+  }
 }
 
 /**
