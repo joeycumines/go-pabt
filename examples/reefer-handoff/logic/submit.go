@@ -56,7 +56,7 @@ func (r *Runner) submitPendingLocked(p *pending, build func(sim.Expectation, str
 		return
 	}
 	r.owners[p.key] = p
-	r.inflight = &inflight{key: p.key, gen: r.gen, planTickSeq: r.tick, actionSeq: p.attempt}
+	r.inflight = &inflight{key: p.key, gen: r.gen, planTickSeq: r.tick, actionSeq: p.attempt, expect: cmd.Expect}
 	if r.publisher != nil {
 		actionID := uint64(0)
 		if planTick {
@@ -158,7 +158,7 @@ func (r *Runner) submitKeyedLocked(key string, build func(sim.Expectation, strin
 		return
 	}
 	r.owners[key] = r.travel
-	r.inflight = &inflight{key: key, gen: r.gen, planTickSeq: r.tick}
+	r.inflight = &inflight{key: key, gen: r.gen, planTickSeq: r.tick, expect: cmd.Expect}
 	if r.publisher != nil {
 		r.publisher.NoteSubmitted(cmd, r.travel.attempt)
 	}

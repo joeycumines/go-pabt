@@ -143,6 +143,13 @@ type Runner struct {
 	// A nil publisher ticks the bare node and publishes nothing, which is how
 	// every existing test drives the runner.
 	publisher *Publisher
+
+	// beliefs is the runner's persistent epistemic state. It survives across
+	// ticks and generations, accumulating knowledge as commands settle. Each
+	// tick overlays these beliefs onto the fresh Observation so the plan reads
+	// what the agent knows rather than what the world is. Only the owning
+	// runner mutates this map, under mu.
+	beliefs map[sim.VarKey]sim.Belief
 }
 
 // pending is one action instance's place in the runner's single in-flight slot.
@@ -173,11 +180,17 @@ type inflight struct {
 	planTickSeq uint64
 	actionSeq   uint64
 	result      *sim.Result
+	expect      sim.Expectation // the frame versions this command was decided against
 }
 
 // New builds a runner for one tractor. It holds no plan until its first tick.
 func New(tug sim.TractorID, loop *sim.WorldLoop) *Runner {
-	r := &Runner{tug: tug, loop: loop, owners: make(map[string]*pending)}
+	r := &Runner{
+		tug:     tug,
+		loop:    loop,
+		owners:  make(map[string]*pending),
+		beliefs: make(map[sim.VarKey]sim.Belief),
+	}
 	r.state = &state{runner: r}
 	return r
 }

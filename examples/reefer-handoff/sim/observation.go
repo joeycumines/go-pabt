@@ -156,6 +156,12 @@ type Observation struct {
 
 	laneVersion uint64
 	tagVersion  uint64
+
+	// beliefs carries the agent's epistemic state for each post-condition
+	// variable. Generation-time reads (Temp, SlotPowered, SlotRating) are
+	// not beliefs — they are consulted while choosing an action and never
+	// held as goals, so staleness does not apply to them.
+	beliefs map[VarKey]Belief
 }
 
 // Observe freezes the world into a frame for one tractor and one job.
@@ -174,8 +180,9 @@ func Observe(w World, t TractorID, jobReefer ReeferID) (Observation, bool) {
 	if !ok {
 		return Observation{}, false
 	}
+	seq := w.WorldSeq()
 	o := Observation{
-		WorldSeq:    w.WorldSeq(),
+		WorldSeq:    seq,
 		Revision:    w.Revision(),
 		Round:       w.Round(),
 		Phase:       w.Phase(),
@@ -192,40 +199,55 @@ func Observe(w World, t TractorID, jobReefer ReeferID) (Observation, bool) {
 		slotVersion: make(map[SlotID]uint64, len(w.slots)),
 		laneVersion: w.topology.Version(),
 		tagVersion:  reefer.TagVersion,
+		beliefs:     make(map[VarKey]Belief, 4),
 	}
 	for _, s := range w.slots {
 		o.slotPowered[s.ID] = s.Plugged
 		o.slotRating[s.ID] = s.RatedMaxC
 		o.slotVersion[s.ID] = s.Version
 	}
+	// Initialize all post-condition beliefs as Known from ground truth.
+	// Increment B will overlay the runner's persistent belief store here,
+	// introducing Unknown and Stale states. For now, every belief mirrors
+	// the world so existing behavior is preserved exactly.
+	o.beliefs[DeliveredKey(jobReefer)] = Belief{Status: BeliefKnown, Value: o.delivered, ObservedSeq: seq, ObservedVer: 0}
+	o.beliefs[HoldingKey(t, jobReefer)] = Belief{Status: BeliefKnown, Value: o.holding == jobReefer, ObservedSeq: seq, ObservedVer: 0}
+	o.beliefs[AtKey(t)] = Belief{Status: BeliefKnown, Value: o.at, ObservedSeq: seq, ObservedVer: 0}
+	o.beliefs[TagKey(jobReefer)] = Belief{Status: BeliefKnown, Value: o.tagOK, ObservedSeq: seq, ObservedVer: reefer.TagVersion}
 	return o, true
 }
 
 // Read returns the value of a key in this frame, and whether the key is one this
 // frame answers. A key about another tractor's job is not answered rather than
 // answered wrongly, so a plan cannot read across jobs by guessing a key.
+//
+// Post-condition variables (Delivered, Holding, At, TagConfirmed) are routed
+// through the belief layer: an Unknown belief returns (nil, false), hiding the
+// ground truth from the agent. Generation-time reads (Temp, SlotPowered,
+// SlotRating) bypass beliefs — they are consulted while choosing an action and
+// never held as goals.
 func (o Observation) Read(k VarKey) (any, bool) {
 	switch k.Kind {
 	case VarDelivered:
 		if k.Reefer != o.Reefer {
 			return nil, false
 		}
-		return o.delivered, true
+		return o.readBelief(k)
 	case VarHolding:
 		if k.Tractor != o.Tractor || k.Reefer != o.Reefer {
 			return nil, false
 		}
-		return o.holding == o.Reefer, true
+		return o.readBelief(k)
 	case VarAt:
 		if k.Tractor != o.Tractor {
 			return nil, false
 		}
-		return o.at, true
+		return o.readBelief(k)
 	case VarTagConfirmed:
 		if k.Reefer != o.Reefer {
 			return nil, false
 		}
-		return o.tagOK, true
+		return o.readBelief(k)
 	case VarTemp:
 		if k.Reefer != o.Reefer {
 			return nil, false
@@ -239,6 +261,56 @@ func (o Observation) Read(k VarKey) (any, bool) {
 		return v, ok
 	}
 	return nil, false
+}
+
+// readBelief returns the belief's value when it is Known or Stale, and
+// (nil, false) when it is Unknown or absent. This is the gate that prevents
+// hidden ground truth from leaking into the agent's plan.
+func (o Observation) readBelief(k VarKey) (any, bool) {
+	b, ok := o.beliefs[k]
+	if !ok || b.Status == BeliefUnknown {
+		return nil, false
+	}
+	return b.Value, true
+}
+
+// BeliefOf returns the full belief record for a key, exposing status and
+// provenance stamps. It is used by the stale gate in logic/actions.go and
+// by the TUI belief panel.
+func (o Observation) BeliefOf(k VarKey) (Belief, bool) {
+	b, ok := o.beliefs[k]
+	return b, ok
+}
+
+// MarkStale transitions a Known belief to Stale when the frame detects that
+// the world's version for the resource has advanced past the belief's
+// ObservedVer. It is called during observation construction, never mid-tick.
+func (o *Observation) MarkStale(k VarKey) {
+	if b, ok := o.beliefs[k]; ok && b.Status == BeliefKnown {
+		b.Status = BeliefStale
+		o.beliefs[k] = b
+	}
+}
+
+// JobReefer returns the job reefer this frame was taken for.
+func (o Observation) JobReefer() ReeferID { return o.Reefer }
+
+// TagVersionOf returns the tag version for a reefer from this frame's world
+// snapshot. It is used by the runner's belief overlay to detect staleness.
+func (o Observation) TagVersionOf(r ReeferID) uint64 {
+	if r == o.Reefer {
+		return o.tagVersion
+	}
+	return 0
+}
+
+// SetBelief replaces the belief entry for a key. It is called by the runner's
+// overlayBeliefs to merge persistent beliefs into a fresh frame.
+func (o *Observation) SetBelief(k VarKey, b Belief) {
+	if o.beliefs == nil {
+		o.beliefs = make(map[VarKey]Belief)
+	}
+	o.beliefs[k] = b
 }
 
 // At returns the node this frame's tractor is standing on. It is the frame's own

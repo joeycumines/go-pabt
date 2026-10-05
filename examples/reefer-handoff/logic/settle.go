@@ -50,6 +50,7 @@ func (r *Runner) drainSettledLocked() {
 	key := r.inflight.key
 	res := *r.inflight.result
 	gen := r.inflight.gen
+	expect := r.inflight.expect
 	owner := r.owners[key]
 	r.inflight = nil
 	if res.Abandoned == nil {
@@ -64,6 +65,14 @@ func (r *Runner) drainSettledLocked() {
 	// new submitter would answer a command with another command's result.
 	if r.publisher != nil {
 		r.publisher.NoteSettled(key, res)
+	}
+	// When a ScanTag settles as Applied, update the runner's persistent belief.
+	// This is the only path that transitions a tag belief from Unknown/Stale to
+	// Known — the scan is the sensing action that confirms readability for this
+	// specific agent. The world's TagReadable still changes (physical gate for
+	// pickup), but the agent's decision to attempt pickup is gated on belief.
+	if res.Abandoned == nil && res.Receipt.Applied() && res.Receipt.Kind == sim.CmdScanTag {
+		r.applyScanBelief(r.reefer, res.Events, res.Receipt.WorldSeq, expect.TagVersion+1)
 	}
 	if owner == nil || gen != r.gen {
 		return
@@ -112,4 +121,52 @@ func (r *Runner) takeTravelOutcome() *sim.Result {
 	res := r.travel.outcome
 	r.travel.outcome = nil
 	return res
+}
+
+// overlayBeliefs merges the runner's persistent belief store into a freshly
+// constructed observation frame. Only keys the runner has explicitly stored
+// are overlaid — all other beliefs retain their ground-truth Known defaults
+// from Observe(), preserving backward compatibility for plans that do not
+// yet participate in the belief protocol.
+//
+// Staleness is detected here: if the world's resource version has advanced
+// past the belief's ObservedVer, the belief transitions from Known to Stale
+// before the plan reads it.
+//
+// The caller holds r.mu.
+func (r *Runner) overlayBeliefs(frame *sim.Observation) {
+	for k, stored := range r.beliefs {
+		// Scope check: only overlay beliefs about this frame's tractor/job.
+		if k.Tractor != "" && k.Tractor != r.tug {
+			continue
+		}
+		if k.Reefer != "" && k.Reefer != frame.JobReefer() {
+			continue
+		}
+		// Detect staleness for tag beliefs: compare the stored version
+		// against the frame's current tag version.
+		if stored.Status == sim.BeliefKnown && k.Kind == sim.VarTagConfirmed {
+			if frame.TagVersionOf(k.Reefer) > stored.ObservedVer {
+				stored.Status = sim.BeliefStale
+				r.beliefs[k] = stored // persist the staleness
+			}
+		}
+		frame.SetBelief(k, stored)
+	}
+}
+
+// applyScanBelief updates the runner's persistent belief store when a ScanTag
+// command settles as Applied. This is the only path that transitions a tag
+// belief from Unknown/Stale to Known — the scan is the sensing action that
+// confirms the tag's readability for this specific agent.
+//
+// The caller holds r.mu.
+func (r *Runner) applyScanBelief(reefer sim.ReeferID, events []sim.WorldEvent, seq uint64, ver uint64) {
+	k := sim.TagKey(reefer)
+	r.beliefs[k] = sim.Belief{
+		Status:      sim.BeliefKnown,
+		Value:       true,
+		ObservedSeq: seq,
+		ObservedVer: ver,
+	}
 }

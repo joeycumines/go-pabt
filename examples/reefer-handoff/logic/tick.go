@@ -56,6 +56,10 @@ func (r *Runner) Tick() (Outcome, error) {
 	if !ok {
 		return OutcomeIdle, fmt.Errorf("logic: %s cannot frame the world for %s", r.tug, r.reefer)
 	}
+	// Overlay the runner's persistent beliefs onto the frame. Ground truth that
+	// the agent has never sensed stays Unknown; stale beliefs are detected by
+	// version drift at this point, before the plan reads anything.
+	r.overlayBeliefs(&frame)
 	r.state.pin(frame, r.plan.PlannerRevision())
 
 	r.tick++
@@ -197,6 +201,7 @@ func (r *Runner) buildLocked(reefer sim.ReeferID) error {
 	if !ok {
 		return fmt.Errorf("logic: %s cannot frame the world for %s", r.tug, reefer)
 	}
+	r.overlayBeliefs(&frame)
 	r.retireLocked()
 	r.gen++
 	r.reefer = reefer

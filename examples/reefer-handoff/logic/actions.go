@@ -143,6 +143,12 @@ func (s *state) placeActions(o sim.Observation) []pabt.IAction {
 // frame at generation time; the node re-checks it live before submitting, so a
 // plan never fires past a guard it has not passed.
 func (s *state) pickUpAction(o sim.Observation) []pabt.IAction {
+	// Stale or Unknown tag belief cannot authorize pickup. The scan action is
+	// the only way to transition the belief to Known, so returning nil here
+	// forces the planner to grow a ScanTag into the tree.
+	if b, ok := o.BeliefOf(sim.TagKey(o.Reefer)); ok && b.Status != sim.BeliefKnown {
+		return nil
+	}
 	guards := []pabt.IConditions{{
 		tagConfirmed(o.Reefer),
 		at(o.Tractor, o.ReeferAt()),
