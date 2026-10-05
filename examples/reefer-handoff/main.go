@@ -77,6 +77,8 @@ func main() {
 func run() error {
 	dir := flag.String("dir", filepath.Join("scratch", "reefer-handoff"),
 		"the directory the per-tractor store files land in")
+	fleetMode := flag.Bool("fleet", false,
+		"give each tractor its own independent world loop (fleet isolation)")
 	flag.Parse()
 
 	// The handler goes in before anything that can block, so a signal during
@@ -89,20 +91,45 @@ func run() error {
 		return fmt.Errorf("making the store directory: %w", err)
 	}
 
-	loop, err := sim.NewWorldLoop(sim.ModeDeterministic)
-	if err != nil {
-		return err
-	}
-	if err := loop.Start(); err != nil {
-		return err
+	// Fleet mode creates one WorldLoop per tractor; default mode shares one.
+	// Both paths produce the same []*tractor slice — only the loop references differ.
+	var cells []sim.Cell
+	var loop *sim.WorldLoop
+	loopFor := make(map[sim.TractorID]*sim.WorldLoop)
+
+	if *fleetMode {
+		var err error
+		cells, err = sim.NewFleet([]sim.FleetID{"TUG-1", "TUG-2", "TUG-3"}, sim.ModeDeterministic)
+		if err != nil {
+			return err
+		}
+		for i, tug := range []sim.TractorID{sim.Tug1, sim.Tug2, sim.Tug3} {
+			loopFor[tug] = cells[i].Loop
+		}
+	} else {
+		var err error
+		loop, err = sim.NewWorldLoop(sim.ModeDeterministic)
+		if err != nil {
+			return err
+		}
+		if err := loop.Start(); err != nil {
+			return err
+		}
+		for _, tug := range []sim.TractorID{sim.Tug1, sim.Tug2, sim.Tug3} {
+			loopFor[tug] = loop
+		}
 	}
 
-	tractors, err := wire(ctx, *dir, loop)
+	tractors, err := wire(ctx, *dir, loopFor)
 	if err != nil {
-		_ = loop.Shutdown(context.Background())
+		if len(cells) > 0 {
+			sim.ShutdownCells(cells)
+		} else if loop != nil {
+			_ = loop.Shutdown(context.Background())
+		}
 		return err
 	}
-	defer teardown(loop, tractors)
+	defer teardown(cells, loop, tractors)
 
 	served := make(chan error, len(tractors))
 	for _, t := range tractors {
@@ -126,14 +153,22 @@ func run() error {
 	for i, t := range tractors {
 		views[i] = tui.TractorView{ID: t.tug, Addr: t.server.Addr(), Cap: t.server.Capability()}
 	}
-	mon := tui.NewMonitor(loop, views, ctrl)
+	// In fleet mode, the TUI monitors the first cell's world as ground truth.
+	// In shared mode, it monitors the single loop.
+	var tuiLoop *sim.WorldLoop
+	if len(cells) > 0 {
+		tuiLoop = cells[0].Loop
+	} else {
+		tuiLoop = loop
+	}
+	mon := tui.NewMonitor(tuiLoop, views, ctrl)
 	go func() {
 		if err := mon.Run(ctx); err != nil {
 			fmt.Fprintf(os.Stderr, "monitor: %v\n", err)
 		}
 	}()
 
-	if err := drive(ctx, loop, tractors, ctrl); err != nil {
+	if err := drive(ctx, cells, loop, tractors, ctrl); err != nil {
 		if errors.Is(err, context.Canceled) {
 			// A signal during the run is an operator stopping the demo, not
 			// a failure: the ordered teardown still releases the world, the
@@ -178,7 +213,11 @@ func run() error {
 // that opened without an announce would publish durably but silently, which
 // is the split-brain a live reader must never see. On failure it releases
 // everything it already made.
-func wire(ctx context.Context, dir string, loop *sim.WorldLoop) ([]*tractor, error) {
+//
+// In fleet mode, each tractor gets its own WorldLoop from the loopFor map.
+// In shared mode, all tractors map to the same loop. The runner only sees
+// its own loop pointer — no cross-fleet access is possible.
+func wire(ctx context.Context, dir string, loopFor map[sim.TractorID]*sim.WorldLoop) ([]*tractor, error) {
 	var made []*tractor
 	release := func() {
 		for _, t := range made {
@@ -199,7 +238,13 @@ func wire(ctx context.Context, dir string, loop *sim.WorldLoop) ([]*tractor, err
 			return nil, err
 		}
 		pub.AttachAnnounce(server.Announce)
-		runner := logic.New(tug, loop)
+		lp := loopFor[tug]
+		if lp == nil {
+			release()
+			_ = pub.Close()
+			return nil, fmt.Errorf("%s has no world loop", tug)
+		}
+		runner := logic.New(tug, lp)
 		runner.AttachPublisher(pub)
 		made = append(made, &tractor{tug: tug, pub: pub, server: server, runner: runner})
 	}
@@ -207,30 +252,54 @@ func wire(ctx context.Context, dir string, loop *sim.WorldLoop) ([]*tractor, err
 }
 
 // drive ticks the three runners in a fixed serial order, one round at a time,
-// until the world settles. The order is the host's choice and it is what
-// makes the demo deterministic: the world only ever changes through the
-// owner, and the owner's schedule here is tick, settle, tick, settle, round
-// boundary, drain — every round, the same way, for every tractor.
-func drive(ctx context.Context, loop *sim.WorldLoop, tractors []*tractor, ctrl *Controller) error {
+// until the world settles. In fleet mode, each tractor operates against its
+// own independent WorldLoop — sequences, revisions, and shutdown are isolated.
+// In shared mode, all tractors share one loop (the existing behavior).
+//
+// The order is the host's choice and it is what makes the demo deterministic:
+// the world only ever changes through the owner, and the owner's schedule here
+// is tick, settle, tick, settle, round boundary, drain — every round, the same
+// way, for every tractor.
+func drive(ctx context.Context, cells []sim.Cell, sharedLoop *sim.WorldLoop, tractors []*tractor, ctrl *Controller) error {
 	active := map[sim.TractorID]bool{sim.Tug1: true, sim.Tug2: true, sim.Tug3: true}
+	fleetMode := len(cells) > 0
+
+	// loopOf returns the WorldLoop for a given tractor.
+	loopOf := func(tug sim.TractorID) *sim.WorldLoop {
+		if !fleetMode {
+			return sharedLoop
+		}
+		for _, c := range cells {
+			if sim.TractorID(c.ID) == tug {
+				return c.Loop
+			}
+		}
+		return sharedLoop
+	}
+
+	// allLoops returns the deduplicated set of loops to advance each round.
+	var allLoops []*sim.WorldLoop
+	if !fleetMode {
+		allLoops = []*sim.WorldLoop{sharedLoop}
+	} else {
+		seen := make(map[*sim.WorldLoop]bool)
+		for _, c := range cells {
+			if !seen[c.Loop] {
+				seen[c.Loop] = true
+				allLoops = append(allLoops, c.Loop)
+			}
+		}
+	}
+
 	// The guard bounds the demo, not the world: the reducer reaches Cutoff on
 	// its own, and a run that somehow outlives the cutoff plus a margin is a
 	// bug to report rather than a horizon to wait on.
 	for rounds := 0; ; rounds++ {
-		// The controller mediates between the operator (TUI keyboard or future
-		// API) and this loop. It does NOT touch WorldLoop.admitting, which
-		// remains the lifecycle/shutdown gate. Pause freezes new admission by
-		// skipping the tick/boundary cycle; already-queued commands in the
-		// eventloop still reduce because they were admitted before the freeze.
-		// Step consumes exactly one permit, allowing one round through before
-		// re-freezing. Speed scales the pacing interval.
 		paused, stepOne, speed, quit := ctrl.Check()
 		if quit {
 			return context.Canceled
 		}
 		if paused && !stepOne {
-			// While paused, sleep proportional to speed and re-check. Don't
-			// count paused iterations against the round guard.
 			pace := time.Duration(float64(sim.RoundInterval) / speed)
 			select {
 			case <-ctx.Done():
@@ -241,7 +310,18 @@ func drive(ctx context.Context, loop *sim.WorldLoop, tractors []*tractor, ctrl *
 			continue
 		}
 
-		world := loop.Snapshot()
+		// Check phase on the first active tractor's loop.
+		var checkLoop *sim.WorldLoop
+		for _, t := range tractors {
+			if active[t.tug] {
+				checkLoop = loopOf(t.tug)
+				break
+			}
+		}
+		if checkLoop == nil {
+			return nil
+		}
+		world := checkLoop.Snapshot()
 		if world.Phase() == sim.PhaseComplete || world.Phase() == sim.PhaseCutoff {
 			printSummary(world)
 			return nil
@@ -250,23 +330,23 @@ func drive(ctx context.Context, loop *sim.WorldLoop, tractors []*tractor, ctrl *
 			return fmt.Errorf("the run did not settle within %d rounds; phase %s",
 				rounds, world.Phase())
 		}
-		// The scripted incident applies at the round its controller acts, and
-		// only there: each Apply is idempotent, and waiting on the change's
-		// channel means the round's commands queue behind it, so a MoveTo that
-		// crosses the western approach is refused by the closure itself. The
-		// events join the boundary drain below, which is how every publisher
-		// records them.
-		for _, incident := range sim.Scripted(world.Round()) {
-			out, err := loop.Change(incident.Apply)
-			if err != nil {
-				return fmt.Errorf("incident at round %d: %w", world.Round(), err)
-			}
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			case <-out:
+
+		// Apply scripted incidents to each loop independently.
+		for _, lp := range allLoops {
+			w := lp.Snapshot()
+			for _, incident := range sim.Scripted(w.Round()) {
+				out, err := lp.Change(incident.Apply)
+				if err != nil {
+					return fmt.Errorf("incident at round %d: %w", w.Round(), err)
+				}
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				case <-out:
+				}
 			}
 		}
+
 		live := false
 		for _, t := range tractors {
 			if !active[t.tug] {
@@ -287,23 +367,30 @@ func drive(ctx context.Context, loop *sim.WorldLoop, tractors []*tractor, ctrl *
 			}
 		}
 		if !live {
-			printSummary(loop.Snapshot())
+			printSummary(checkLoop.Snapshot())
 			return nil
 		}
-		loop.BeginRound()
-		// The pace is the demo's, not the world's: deterministic mode leaves
-		// rounds to the host, and the host is here. The wait also gives the
-		// owner time to reduce the boundary before the drain reads it. Speed
-		// scales the interval so the operator can slow down or accelerate.
+
+		// Advance all loops.
+		for _, lp := range allLoops {
+			lp.BeginRound()
+		}
+
 		pace := time.Duration(float64(sim.RoundInterval) / speed)
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-time.After(pace):
 		}
-		if events := loop.DrainEvents(); len(events) > 0 {
-			for _, t := range tractors {
-				t.pub.NoteEvents(events)
+
+		// Drain events from each loop into its tractors' publishers.
+		for _, lp := range allLoops {
+			if events := lp.DrainEvents(); len(events) > 0 {
+				for _, t := range tractors {
+					if loopOf(t.tug) == lp {
+						t.pub.NoteEvents(events)
+					}
+				}
 			}
 		}
 	}
@@ -330,7 +417,7 @@ func printSummary(world sim.World) {
 	}
 }
 
-// teardown stops the world, then drains any receipt that attached with no
+// teardown stops the worlds, then drains any receipt that attached with no
 // tick left to note it — Shutdown answers what was still in flight, so an
 // await that was waiting on the world attaches before the drain reads it —
 // then the servers, then the stores. The order is deliberate: a store closed
@@ -340,11 +427,19 @@ func printSummary(world sim.World) {
 // last plan tick — commits unannounced. That is the contract Flush already
 // carries: the causality is durable and a reader that pages the run sees it;
 // only a live subscriber at that instant was not told.
-func teardown(loop *sim.WorldLoop, tractors []*tractor) {
+func teardown(cells []sim.Cell, sharedLoop *sim.WorldLoop, tractors []*tractor) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if err := loop.Shutdown(ctx); err != nil {
-		fmt.Fprintf(os.Stderr, "reefer-handoff: shutting the world loop: %v\n", err)
+	if len(cells) > 0 {
+		for i := len(cells) - 1; i >= 0; i-- {
+			if err := cells[i].Loop.Shutdown(ctx); err != nil {
+				fmt.Fprintf(os.Stderr, "reefer-handoff: fleet %s shutdown: %v\n", cells[i].ID, err)
+			}
+		}
+	} else if sharedLoop != nil {
+		if err := sharedLoop.Shutdown(ctx); err != nil {
+			fmt.Fprintf(os.Stderr, "reefer-handoff: shutting the world loop: %v\n", err)
+		}
 	}
 	for _, t := range tractors {
 		settle(t.runner)
