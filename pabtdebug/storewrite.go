@@ -43,7 +43,7 @@ func mustHex(digest string) []byte {
 // Begin allocates the next sequence for a run under its append lease.
 //
 // The lease is what makes the chain gap-free: a sequence is allocated here and
-// committed by CommitIntent or released by AbortIntent, and nothing else may
+// committed by Commit or released by Abort, and nothing else may
 // allocate one in between. A caller that already holds the lease is told so
 // rather than being allowed to interleave, because two interleaved appends would
 // leave the chain with two records claiming one predecessor.

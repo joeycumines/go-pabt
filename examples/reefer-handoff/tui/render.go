@@ -19,6 +19,7 @@ package tui
 
 import (
 	"fmt"
+	"sort"
 
 	"github.com/gdamore/tcell/v2"
 	"github.com/joeycumines/go-pabt/examples/reefer-handoff/sim"
@@ -122,16 +123,30 @@ func renderBeliefPanel(screen tcell.Screen, width, y int, beliefs map[string]map
 	}
 	drawLine(screen, width, y, "═══ AGENT BELIEFS ═══", beliefHeaderStyle)
 	y++
-	for tug, statusMap := range beliefs {
+	// Sort tractor IDs for deterministic display order.
+	tugs := make([]string, 0, len(beliefs))
+	for tug := range beliefs {
+		tugs = append(tugs, tug)
+	}
+	sort.Strings(tugs)
+	for _, tug := range tugs {
+		statusMap := beliefs[tug]
 		if y >= 50 { // safety bound
 			break
 		}
 		drawLine(screen, width, y, fmt.Sprintf("  %s:", tug), beliefHeaderStyle)
 		y++
-		for key, status := range statusMap {
+		// Sort keys for deterministic display order.
+		keys := make([]string, 0, len(statusMap))
+		for key := range statusMap {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		for _, key := range keys {
 			if y >= 50 {
 				break
 			}
+			status := statusMap[key]
 			style := beliefValueStyle
 			switch status {
 			case "Known":

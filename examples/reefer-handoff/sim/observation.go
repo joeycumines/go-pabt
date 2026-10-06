@@ -304,6 +304,13 @@ func (o Observation) TagVersionOf(r ReeferID) uint64 {
 	return 0
 }
 
+// SlotVersionOf returns the slot version from this frame's world snapshot.
+// It is used by the runner's belief overlay to detect staleness for
+// slot-related beliefs.
+func (o Observation) SlotVersionOf(s SlotID) uint64 {
+	return o.slotVersion[s]
+}
+
 // SetBelief replaces the belief entry for a key. It is called by the runner's
 // overlayBeliefs to merge persistent beliefs into a fresh frame.
 func (o *Observation) SetBelief(k VarKey, b Belief) {

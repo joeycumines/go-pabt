@@ -143,10 +143,19 @@ func (r *Runner) overlayBeliefs(frame *sim.Observation) {
 		if k.Reefer != "" && k.Reefer != frame.JobReefer() {
 			continue
 		}
-		// Detect staleness for tag beliefs: compare the stored version
-		// against the frame's current tag version.
-		if stored.Status == sim.BeliefKnown && k.Kind == sim.VarTagConfirmed {
-			if frame.TagVersionOf(k.Reefer) > stored.ObservedVer {
+		// Detect staleness: compare the stored version against the frame's
+		// current resource version. Each VarKind uses its own version source.
+		if stored.Status == sim.BeliefKnown {
+			var currentVer uint64
+			switch k.Kind {
+			case sim.VarTagConfirmed:
+				currentVer = frame.TagVersionOf(k.Reefer)
+			case sim.VarSlotPowered, sim.VarSlotRating:
+				currentVer = frame.SlotVersionOf(k.Slot)
+			default:
+				continue // non-versioned beliefs don't go stale
+			}
+			if currentVer > stored.ObservedVer {
 				stored.Status = sim.BeliefStale
 				r.beliefs[k] = stored // persist the staleness
 			}
