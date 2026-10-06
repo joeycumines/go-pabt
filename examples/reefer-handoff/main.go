@@ -153,6 +153,22 @@ func run() error {
 		}
 	}()
 
+	// The transport gate the sim page drives, and the per-tractor debugger
+	// pages the detail panel links to. Both are wired before the server
+	// starts serving.
+	ctrl := NewController()
+	simServer.AttachController(ctrl)
+	simServer.SetGenerationSource(func() map[string]uint64 {
+		gens := make(map[string]uint64, len(tractors))
+		for _, t := range tractors {
+			gens[string(t.tug)] = t.runner.Generation()
+		}
+		return gens
+	})
+	for _, t := range tractors {
+		simServer.AddDebugger(string(t.tug), "http://"+t.server.Addr()+"/debug/pabt/ui")
+	}
+
 	served := make(chan error, len(tractors)+1)
 	for _, t := range tractors {
 		go func(t *tractor) { served <- t.server.Start() }(t)
@@ -166,8 +182,6 @@ func run() error {
 			t.tug, t.server.Addr(), t.server.Capability())
 	}
 	fmt.Printf("SIM   http://%s/sim/ui\n", simServer.Addr())
-
-	ctrl := NewController()
 
 	// The operations monitor renders the same world/plan trace the browser
 	// shows. It runs on its own goroutine and routes keyboard input through

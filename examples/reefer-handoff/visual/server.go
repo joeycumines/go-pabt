@@ -48,6 +48,37 @@ type StateResponse struct {
 	Lanes      []LaneState    `json:"lanes"`
 	Nodes      []NodeState    `json:"nodes"`
 	Receipts   []ReceiptState `json:"receipts"`
+	// Control is the host transport gate state, present only when a
+	// controller is attached (V5). It lets the page show pause/speed truth
+	// rather than assume its last POST landed.
+	Control *ControlState `json:"control,omitempty"`
+}
+
+// ControlState reports the host transport gate the sim page drives.
+type ControlState struct {
+	Paused bool    `json:"paused"`
+	Speed  float64 `json:"speed"`
+}
+
+// ControlSource is the host-level transport gate the sim page drives through
+// POST /sim/control. The wired example attaches the main Controller; a
+// fixture that attaches none serves 503 on the control route. The interface
+// names the Controller's own methods, so attaching is a pass-through, never a
+// translation layer.
+type ControlSource interface {
+	SendPause()
+	SendResume()
+	SendStep()
+	SetSpeed(value float64)
+	Paused() bool
+	Speed() float64
+}
+
+// DebuggerLink pairs a tractor with the page where its committed plan trees
+// can be inspected, for the causal link-through the detail panel offers.
+type DebuggerLink struct {
+	Tractor string `json:"tractor"`
+	URL     string `json:"url"`
 }
 
 // ReceiptState is one command outcome from the world's receipt ledger. The
@@ -64,12 +95,16 @@ type ReceiptState struct {
 	Holder     string          `json:"holder"`
 }
 
-// TractorState is one tractor's position and assignment.
+// TractorState is one tractor's position and assignment. Generation is the
+// plan generation the tractor's runner currently holds, filled from the
+// attached generation source; it is zero when no source is attached or the
+// runner holds no plan.
 type TractorState struct {
-	ID   sim.TractorID `json:"id"`
-	At   sim.NodeID    `json:"at"`
-	Job  sim.JobID     `json:"job"`
-	Hold sim.ReeferID  `json:"hold"`
+	ID         sim.TractorID `json:"id"`
+	At         sim.NodeID    `json:"at"`
+	Job        sim.JobID     `json:"job"`
+	Hold       sim.ReeferID  `json:"hold"`
+	Generation uint64        `json:"generation"`
 }
 
 // ReeferState is one reefer's temperature, tag, and custody.
@@ -81,13 +116,14 @@ type ReeferState struct {
 	Custodian   sim.TractorID `json:"custodian"`
 }
 
-// SlotState is one powered slot's rating, plug, and occupant.
+// SlotState is one powered slot's rating, plug, occupant, and version.
 type SlotState struct {
 	ID        sim.SlotID   `json:"id"`
 	Node      sim.NodeID   `json:"node"`
 	RatedMaxC int          `json:"ratedMaxC"`
 	Plugged   bool         `json:"plugged"`
 	Occupied  sim.ReeferID `json:"occupied"`
+	Version   uint64       `json:"version"`
 }
 
 // LaneState is one lane's endpoints and lock status.
@@ -108,13 +144,35 @@ type NodeState struct {
 // Server serves the visual simulation's HTTP surface. It binds loopback in
 // the constructor so the address is known before serving, following the same
 // lifecycle as pabtdebug.Server.
+//
+// The control, generation, and debugger attach points are wired once, before
+// Start, by the same main that builds the server; the handlers only read
+// them, so they need no lock of their own.
 type Server struct {
 	listener net.Listener
 	server   *http.Server
 	loop     *sim.WorldLoop
 
+	control     ControlSource
+	generations func() map[string]uint64
+	debuggers   []DebuggerLink
+
 	mu      sync.Mutex
 	started bool
+}
+
+// AttachController wires the host transport gate the page drives through
+// POST /sim/control, and reports through /sim/state. Call before Start.
+func (s *Server) AttachController(c ControlSource) { s.control = c }
+
+// SetGenerationSource wires the function that reports each tractor's current
+// plan generation, keyed by tractor ID. Call before Start.
+func (s *Server) SetGenerationSource(fn func() map[string]uint64) { s.generations = fn }
+
+// AddDebugger records one tractor's debugger page for the detail panel's
+// causal link-through. Call before Start.
+func (s *Server) AddDebugger(tractor, url string) {
+	s.debuggers = append(s.debuggers, DebuggerLink{Tractor: tractor, URL: url})
 }
 
 // NewServer creates the sim server bound to the given loopback address. An
@@ -145,6 +203,8 @@ func NewServer(addr string, loop *sim.WorldLoop) (*Server, error) {
 		loop:     loop,
 	}
 	mux.HandleFunc("/sim/state", s.handleState)
+	mux.HandleFunc("/sim/control", s.handleControl)
+	mux.HandleFunc("/sim/debuggers", s.handleDebuggers)
 	s.registerClient(mux)
 	return s, nil
 }
@@ -245,12 +305,78 @@ func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
 	}
 	world := s.loop.Snapshot()
 	resp := buildStateResponse(world)
+	if s.control != nil {
+		resp.Control = &ControlState{Paused: s.control.Paused(), Speed: s.control.Speed()}
+	}
+	if s.generations != nil {
+		gens := s.generations()
+		for i := range resp.Tractors {
+			resp.Tractors[i].Generation = gens[string(resp.Tractors[i].ID)]
+		}
+	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	enc := json.NewEncoder(w)
 	if err := enc.Encode(resp); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
+}
+
+// controlRequest is the JSON shape POST /sim/control accepts.
+type controlRequest struct {
+	Action string  `json:"action"`
+	Value  float64 `json:"value"`
+}
+
+// handleControl drives the attached host transport gate. The page posts
+// {action: pause|resume|step|speed, value}; the response carries the gate
+// state after the event landed, so the UI reflects truth rather than intent.
+// With no controller attached the route says so instead of pretending.
+func (s *Server) handleControl(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if s.control == nil {
+		http.Error(w, "no controller attached", http.StatusServiceUnavailable)
+		return
+	}
+	var req controlRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "the body is not a control request", http.StatusBadRequest)
+		return
+	}
+	switch req.Action {
+	case "pause":
+		s.control.SendPause()
+	case "resume":
+		s.control.SendResume()
+	case "step":
+		s.control.SendStep()
+	case "speed":
+		s.control.SetSpeed(req.Value)
+	default:
+		http.Error(w, fmt.Sprintf("unknown control action %q", req.Action), http.StatusBadRequest)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	_ = json.NewEncoder(w).Encode(ControlState{Paused: s.control.Paused(), Speed: s.control.Speed()})
+}
+
+// handleDebuggers serves GET /sim/debuggers: the per-tractor debugger pages
+// the detail panel links to. Unauthenticated, like the rest of the sim
+// surface: it names addresses, and the debugger shell itself is the only
+// unauthenticated page on those servers (DD-40).
+func (s *Server) handleDebuggers(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	_ = json.NewEncoder(w).Encode(struct {
+		Debuggers []DebuggerLink `json:"debuggers"`
+	}{Debuggers: s.debuggers})
 }
 
 func buildStateResponse(world sim.World) StateResponse {
@@ -281,7 +407,7 @@ func buildStateResponse(world sim.World) StateResponse {
 	for i, sl := range slots {
 		sStates[i] = SlotState{
 			ID: sl.ID, Node: sl.Node, RatedMaxC: sl.RatedMaxC,
-			Plugged: sl.Plugged, Occupied: sl.Occupied,
+			Plugged: sl.Plugged, Occupied: sl.Occupied, Version: sl.Version,
 		}
 	}
 

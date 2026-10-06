@@ -224,5 +224,13 @@ func (c *Controller) SendSpeed(delta float64) {
 	c.Send(ControlEvent{Kind: ControlSpeed, SpeedValue: current + delta})
 }
 
+// SetSpeed sets an absolute pacing multiplier. The clamping to the 0.5–5x
+// range is Send's, the same one the TUI's deltas land in. The sim page's
+// speed slider reports absolute values, which is why this exists alongside
+// the delta form.
+func (c *Controller) SetSpeed(value float64) {
+	c.Send(ControlEvent{Kind: ControlSpeed, SpeedValue: value})
+}
+
 // SendQuit sends a quit event. It satisfies tui.Controller.
 func (c *Controller) SendQuit() { c.Send(ControlEvent{Kind: ControlQuit}) }

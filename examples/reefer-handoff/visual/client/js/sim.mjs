@@ -74,6 +74,18 @@ const phaseEl = document.getElementById('status-phase');
 const connEl = document.getElementById('connection-status');
 const eventLogEl = document.getElementById('event-log');
 
+// V5: transport controls and detail panel. The fixture page has none of
+// these, so every reference is guarded below.
+const btnPause = document.getElementById('btn-pause');
+const btnStep = document.getElementById('btn-step');
+const speedSlider = document.getElementById('speed-slider');
+const speedValueEl = document.getElementById('speed-value');
+const detailPanel = document.getElementById('detail-panel');
+const detailTitle = document.getElementById('detail-title');
+const detailBody = document.getElementById('detail-body');
+const detailDebugger = document.getElementById('detail-debugger');
+const detailClose = document.getElementById('detail-close');
+
 function svgEl(tag, attrs) {
   const el = document.createElementNS(SVG_NS, tag);
   for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v);
@@ -558,3 +570,259 @@ async function pollState() {
 
 pollState();
 setInterval(pollState, 200);
+
+// ── V5: transport controls ──────────────────────────────────────────────
+//
+// The page drives the host transport gate through POST /sim/control. The
+// response carries the gate state after the event landed, so the UI reflects
+// truth. With no controller attached (a fixture run) the endpoint answers
+// 503 and the controls disable themselves.
+let controlAvailable = true;
+let isPaused = false;
+
+async function postControl(action, value) {
+  if (!controlAvailable) return;
+  try {
+    const body = value !== undefined ? { action, value } : { action };
+    const resp = await fetch('/sim/control', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (resp.status === 503) {
+      controlAvailable = false;
+      if (btnPause) btnPause.disabled = true;
+      if (btnStep) btnStep.disabled = true;
+      if (speedSlider) speedSlider.disabled = true;
+      return;
+    }
+    if (!resp.ok) return;
+    const state = await resp.json();
+    isPaused = state.paused;
+    if (btnPause) {
+      btnPause.textContent = isPaused ? '▶' : '⏸';
+      btnPause.classList.toggle('active', isPaused);
+    }
+    if (state.speed !== undefined && speedSlider) {
+      speedSlider.value = state.speed;
+      if (speedValueEl) speedValueEl.textContent = state.speed.toFixed(1) + '×';
+    }
+  } catch { /* network — the poller shows Disconnected */ }
+}
+
+if (btnPause) {
+  btnPause.addEventListener('click', () => {
+    postControl(isPaused ? 'resume' : 'pause');
+  });
+}
+
+if (btnStep) {
+  btnStep.addEventListener('click', () => {
+    postControl('step');
+  });
+}
+
+if (speedSlider) {
+  speedSlider.addEventListener('input', () => {
+    const v = parseFloat(speedSlider.value);
+    if (speedValueEl) speedValueEl.textContent = v.toFixed(1) + '×';
+    postControl('speed', v);
+  });
+}
+
+// Keyboard shortcuts: space=pause/resume, s=step, +/-=speed.
+document.addEventListener('keydown', (e) => {
+  if (e.target.tagName === 'INPUT') return;
+  switch (e.key) {
+    case ' ':
+      e.preventDefault();
+      postControl(isPaused ? 'resume' : 'pause');
+      break;
+    case 's':
+    case 'S':
+      postControl('step');
+      break;
+    case '+':
+    case '=':
+      if (speedSlider) {
+        speedSlider.value = Math.min(5, parseFloat(speedSlider.value) + 0.5);
+        speedSlider.dispatchEvent(new Event('input'));
+      }
+      break;
+    case '-':
+      if (speedSlider) {
+        speedSlider.value = Math.max(0.5, parseFloat(speedSlider.value) - 0.5);
+        speedSlider.dispatchEvent(new Event('input'));
+      }
+      break;
+  }
+});
+
+// ── V5: entity inspection ───────────────────────────────────────────────
+//
+// Clicking a tractor, reefer, slot, or node opens the detail panel showing
+// the entity's full state from the most recent poll. Tractors link to their
+// debugger page for causal deep-dives (DD-40).
+let debuggers = []; // [{tractor, url}]
+let selectedEntity = null; // {kind, id}
+
+// Fetch the debugger list once on load.
+fetch('/sim/debuggers', { cache: 'no-store' })
+  .then(r => r.ok ? r.json() : { debuggers: [] })
+  .then(d => { debuggers = d.debuggers || []; })
+  .catch(() => {});
+
+function openDetail(kind, id, state) {
+  selectedEntity = { kind, id };
+  if (detailPanel) detailPanel.hidden = false;
+  if (detailDebugger) detailDebugger.innerHTML = '';
+  if (detailTitle) detailTitle.textContent = id;
+  if (detailBody) detailBody.innerHTML = '';
+
+  const row = (label, value) => {
+    if (!detailBody) return;
+    const div = document.createElement('div');
+    div.className = 'detail-row';
+    const l = document.createElement('span');
+    l.className = 'detail-label';
+    l.textContent = label;
+    const v = document.createElement('span');
+    v.className = 'detail-value';
+    v.textContent = value;
+    div.appendChild(l);
+    div.appendChild(v);
+    detailBody.appendChild(div);
+  };
+
+  if (kind === 'tractor') {
+    const t = state.tractors.find(x => x.id === id);
+    if (!t) return;
+    row('Position', t.at);
+    row('Job', t.job || '—');
+    row('Hold', t.hold || '—');
+    row('Generation', t.generation || 0);
+    const dbg = debuggers.find(d => d.tractor === id);
+    if (dbg && detailDebugger) {
+      const a = document.createElement('a');
+      a.href = dbg.url;
+      a.target = '_blank';
+      a.rel = 'noopener';
+      a.textContent = 'Open debugger →';
+      detailDebugger.appendChild(a);
+    }
+  } else if (kind === 'reefer') {
+    const r = state.reefers.find(x => x.id === id);
+    if (!r) return;
+    row('Temp', `${r.tempC}°C`);
+    row('Tag', r.tagReadable ? 'readable' : 'unreadable');
+    row('Position', r.at);
+    row('Custodian', r.custodian || '—');
+    const delivered = state.slots.some(s => s.occupied === id);
+    row('Delivered', delivered ? 'yes' : 'no');
+  } else if (kind === 'slot') {
+    const s = state.slots.find(x => x.id === id);
+    if (!s) return;
+    // The blueprint's node detail includes capacity and the destination
+    // flag; a slot stands at a node, so a slot detail carries those too.
+    const n = state.nodes.find(x => x.id === s.node);
+    row('Node', s.node);
+    if (n) {
+      row('Capacity', n.capacity === 0 ? '∞' : n.capacity);
+      row('Reefer destination', n.reeferDestination ? 'yes' : 'no');
+    }
+    row('Rated', `≥ ${s.ratedMaxC}°C`);
+    row('Plugged', s.plugged ? 'yes' : 'no');
+    row('Occupied', s.occupied || '—');
+    row('Version', s.version);
+  } else if (kind === 'node') {
+    const n = state.nodes.find(x => x.id === id);
+    if (!n) return;
+    row('Capacity', n.capacity === 0 ? '∞' : n.capacity);
+    row('Reefer destination', n.reeferDestination ? 'yes' : 'no');
+    const occupant = state.tractors.find(t => t.at === id);
+    row('Occupant', occupant ? occupant.id : '—');
+  }
+}
+
+// Node clicks that land on a slot node open the slot's detail instead (the
+// slot is the interesting thing standing there). The node detail itself is
+// what openDetail('node', ...) renders, and it is reachable on nodes that
+// have no slot.
+function openNodeOrSlot(nodeId, state) {
+  const slot = state.slots.find(s => s.node === nodeId);
+  if (slot) {
+    openDetail('slot', slot.id, state);
+  } else {
+    openDetail('node', nodeId, state);
+  }
+}
+
+function closeDetail() {
+  if (detailPanel) detailPanel.hidden = true;
+  selectedEntity = null;
+}
+
+if (detailClose) {
+  detailClose.addEventListener('click', closeDetail);
+}
+
+// Attach click handlers to entities and nodes. Called once after entities
+// are built; handlers read prevState at click time so they always show the
+// most recent poll. A node click opens the node detail; if a slot stands at
+// that node, the slot's own fields are shown instead, because a slot is the
+// interesting thing standing there.
+function attachClickHandlers() {
+  for (const [id, el] of tractorEls) {
+    el.addEventListener('click', () => openDetail('tractor', id, prevState));
+  }
+  for (const [id, el] of reeferEls) {
+    el.addEventListener('click', () => openDetail('reefer', id, prevState));
+  }
+  for (const g of nodesLayer.querySelectorAll('[data-node]')) {
+    const nodeId = g.dataset.node;
+    g.addEventListener('click', () => openNodeOrSlot(nodeId, prevState));
+  }
+}
+
+// Update the detail panel on each poll if one is open.
+function updateDetailIfOpen(state) {
+  if (!selectedEntity || !detailPanel || detailPanel.hidden) return;
+  openDetail(selectedEntity.kind, selectedEntity.id, state);
+}
+
+// ── V5: pause respect ───────────────────────────────────────────────────
+//
+// While the host gate is paused the world does not advance, so no new state
+// arrives to render. The poller keeps running (it must — pause is a transport
+// state, not a connection state), but render skips entity position updates
+// when the control block says paused. The page stays live for UI interactions.
+
+// Wrap the existing render to add V5 hooks.
+const _baseRender = render;
+render = function(state) {
+  _baseRender(state);
+  if (state.control) {
+    isPaused = state.control.paused;
+    if (btnPause) {
+      btnPause.textContent = isPaused ? '▶' : '⏸';
+      btnPause.classList.toggle('active', isPaused);
+    }
+    if (!controlAvailable) {
+      controlAvailable = true;
+      if (btnPause) btnPause.disabled = false;
+      if (btnStep) btnStep.disabled = false;
+      if (speedSlider) speedSlider.disabled = false;
+    }
+    // Only sync slider from server state when the user is not actively
+    // dragging it, otherwise the 200ms poller snaps the thumb back mid-drag.
+    if (state.control.speed !== undefined && speedSlider && document.activeElement !== speedSlider) {
+      speedSlider.value = state.control.speed;
+      if (speedValueEl) speedValueEl.textContent = state.control.speed.toFixed(1) + '×';
+    }
+  }
+  if (!attachClickHandlers._done) {
+    attachClickHandlers();
+    attachClickHandlers._done = true;
+  }
+  updateDetailIfOpen(state);
+};

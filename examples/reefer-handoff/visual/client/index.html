@@ -31,6 +31,25 @@
       <!-- Effects layer (incident animations) — V4 -->
       <g id="effects-layer"></g>
     </svg>
+    <!-- V5: transport controls -->
+    <div id="control-bar" aria-label="Transport controls">
+      <button id="btn-pause" aria-label="Pause" title="Space">⏸</button>
+      <button id="btn-step" aria-label="Step one round" title="S">⏭</button>
+      <div class="speed-control">
+        <label for="speed-slider">Speed</label>
+        <input type="range" id="speed-slider" min="0.5" max="5" step="0.5" value="1" aria-label="Simulation speed">
+        <span id="speed-value">1.0×</span>
+      </div>
+    </div>
+    <!-- V5: entity detail panel -->
+    <aside id="detail-panel" hidden>
+      <div class="detail-header">
+        <span id="detail-title">—</span>
+        <button id="detail-close" aria-label="Close detail panel">✕</button>
+      </div>
+      <div id="detail-body"></div>
+      <div id="detail-debugger"></div>
+    </aside>
   </main>
   <!-- Event log: the last five incidents, scans, and refusals — V4 -->
   <section id="event-log-panel" aria-label="Event log">

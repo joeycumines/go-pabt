@@ -207,6 +207,9 @@ html, body {
   stroke-width: 2;
 }
 
+/* Slot glow is a pointer target, so it must not swallow entity clicks. */
+.slot-glow { pointer-events: none; }
+
 /* Legend */
 .legend-label {
   fill: var(--text-dim);
@@ -377,3 +380,125 @@ html, body {
 .event-item.event-incident .event-msg { color: var(--red); }
 .event-item.event-scan .event-msg { color: var(--accent); }
 .event-item.event-refusal .event-msg { color: var(--orange); }
+
+/* ── V5: control bar ─────────────────────────────────────────────────── */
+#control-bar {
+  position: absolute;
+  bottom: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px 14px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+  z-index: 10;
+}
+
+#control-bar button {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 16px;
+  width: 32px;
+  height: 32px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+#control-bar button:hover { background: rgba(255,255,255,0.06); border-color: var(--text-dim); }
+#control-bar button:active { background: rgba(255,255,255,0.12); }
+#control-bar button.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+#control-bar button:disabled { opacity: 0.4; cursor: default; }
+
+.speed-control {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.speed-control label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+#speed-slider { width: 80px; accent-color: var(--accent); }
+
+#speed-value {
+  font-variant-numeric: tabular-nums;
+  min-width: 32px;
+  color: var(--text);
+}
+
+/* ── V5: detail panel ────────────────────────────────────────────────── */
+#detail-panel {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  width: 240px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+  z-index: 20;
+  overflow: hidden;
+}
+
+.detail-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+#detail-title { font-size: 13px; font-weight: 700; color: var(--text); }
+
+#detail-close {
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  font-size: 14px;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+#detail-close:hover { background: rgba(255,255,255,0.08); color: var(--text); }
+
+#detail-body { padding: 10px 12px; font-size: 12px; line-height: 1.6; color: var(--text); }
+
+#detail-body .detail-row { display: flex; justify-content: space-between; }
+#detail-body .detail-label { color: var(--text-dim); }
+#detail-body .detail-value { font-weight: 600; }
+
+#detail-debugger { padding: 8px 12px; border-top: 1px solid var(--border); }
+
+#detail-debugger a {
+  display: block;
+  text-align: center;
+  background: var(--accent);
+  color: #fff;
+  text-decoration: none;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 6px 12px;
+  border-radius: 6px;
+  transition: opacity 0.15s ease;
+}
+
+#detail-debugger a:hover { opacity: 0.85; }
+
+/* Entity hover cursor and pointer-events */
+.tractor, .reefer { cursor: pointer; pointer-events: all; }
+[data-node] { cursor: pointer; }
