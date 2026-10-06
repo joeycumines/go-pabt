@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="icon" href="data:,">
+<title>Reefer Handoff — Yard Simulation</title>
+<link rel="stylesheet" href="/sim/ui/sim.css">
+</head>
+<body>
+<div id="app">
+  <header id="titlebar">
+    <div class="title-left">
+      <span class="app-title">REEFER HANDOFF</span>
+      <span class="app-subtitle">Yard Simulation</span>
+    </div>
+    <div class="title-right">
+      <span id="status-round" class="status-item">Round —</span>
+      <span id="status-cutoff" class="status-item">Cutoff —</span>
+      <span id="status-phase" class="status-item phase-running">Phase —</span>
+    </div>
+  </header>
+  <main id="yard-container">
+    <svg id="yard-svg" viewBox="0 0 840 440" preserveAspectRatio="xMidYMid meet">
+      <!-- Lanes layer (drawn first, under nodes) -->
+      <g id="lanes-layer"></g>
+      <!-- Nodes layer -->
+      <g id="nodes-layer"></g>
+      <!-- Entities layer (tractors, reefers) — V3 -->
+      <g id="entities-layer"></g>
+      <!-- Effects layer (incident animations) — V4 -->
+      <g id="effects-layer"></g>
+    </svg>
+  </main>
+  <footer id="footer">
+    <span id="connection-status" class="footer-item">Connecting…</span>
+  </footer>
+</div>
+<script type="module" src="/sim/ui/js/sim.mjs"></script>
+</body>
+</html>

@@ -1,0 +1,160 @@
+/* Reefer Handoff — Yard Simulation
+   Dark theme, matching the debugger's palette.
+   Background #0d1117, panels #161b22, borders #30363d, text #c9d1d9. */
+
+:root {
+  --bg: #0d1117;
+  --panel: #161b22;
+  --border: #30363d;
+  --text: #c9d1d9;
+  --text-dim: #8b949e;
+  --accent: #58a6ff;
+  --green: #3fb950;
+  --orange: #ffa657;
+  --red: #f85149;
+  --lane: #21262d;
+  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html, body {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 14px;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+#app {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+/* Title bar */
+#titlebar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 20px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.title-left {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.app-title {
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  color: var(--text);
+}
+
+.app-subtitle {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.title-right {
+  display: flex;
+  gap: 16px;
+}
+
+.status-item {
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+
+.status-item.phase-running { color: var(--green); }
+.status-item.phase-complete { color: var(--accent); }
+.status-item.phase-cutoff { color: var(--red); }
+
+/* Yard container */
+#yard-container {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  background: var(--bg);
+  position: relative;
+}
+
+#yard-svg {
+  width: 100%;
+  height: 100%;
+  max-width: 1200px;
+  max-height: 700px;
+}
+
+/* SVG node styling */
+.node-rect {
+  fill: var(--panel);
+  stroke: var(--border);
+  stroke-width: 1.5;
+  rx: 8;
+}
+
+.node-label {
+  fill: var(--text);
+  font-family: var(--font);
+  font-size: 12px;
+  font-weight: 600;
+  text-anchor: middle;
+  dominant-baseline: central;
+}
+
+.node-capacity {
+  fill: var(--text-dim);
+  font-family: var(--font);
+  font-size: 10px;
+  text-anchor: middle;
+  dominant-baseline: central;
+}
+
+/* Lane styling */
+.lane-path {
+  fill: none;
+  stroke: var(--lane);
+  stroke-width: 3;
+  stroke-linecap: round;
+  transition: stroke 0.3s ease;
+}
+
+.lane-path.lane-locked {
+  stroke: var(--red);
+}
+
+/* Footer */
+#footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 6px 20px;
+  background: var(--panel);
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.footer-item {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.footer-item.connected { color: var(--green); }
+.footer-item.disconnected { color: var(--red); }

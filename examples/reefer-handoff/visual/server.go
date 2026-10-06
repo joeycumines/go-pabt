@@ -21,14 +21,19 @@
 package visual
 
 import (
+	"embed"
 	"encoding/json"
 	"fmt"
 	"net"
 	"net/http"
+	"strings"
 	"sync"
 
 	"github.com/joeycumines/go-pabt/examples/reefer-handoff/sim"
 )
+
+//go:embed client
+var clientFS embed.FS
 
 // StateResponse is the JSON shape served at GET /sim/state.
 type StateResponse struct {
@@ -124,7 +129,74 @@ func NewServer(addr string, loop *sim.WorldLoop) (*Server, error) {
 		loop:     loop,
 	}
 	mux.HandleFunc("/sim/state", s.handleState)
+	s.registerClient(mux)
 	return s, nil
+}
+
+// clientAssets is the exact set of files the simulation client is made of,
+// with the media type each is served as. Names are looked up in this map
+// rather than joined onto the embedded directory, so a request cannot name a
+// file that is not listed, and the .mjs module is guaranteed the JavaScript
+// media type a browser requires in order to execute it.
+var clientAssets = map[string]string{
+	"index.html": "text/html; charset=utf-8",
+	"sim.css":    "text/css; charset=utf-8",
+	"js/sim.mjs": "text/javascript; charset=utf-8",
+}
+
+// registerClient serves the embedded simulation client at /sim/ui. No
+// capability gate: the sim page shows world state only, never durable
+// history (DD-40).
+func (s *Server) registerClient(mux *http.ServeMux) {
+	mux.HandleFunc("/sim/ui", s.handleClientShell)
+	mux.HandleFunc("/sim/ui/", s.handleClientAsset)
+}
+
+// handleClientShell serves the document the client boots from. With and
+// without the trailing slash are the same document; the asset references in
+// it are absolute, so both spellings load the same page.
+func (s *Server) handleClientShell(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	s.writeClientAsset(w, r, "index.html")
+}
+
+// handleClientAsset serves one file of the client.
+func (s *Server) handleClientAsset(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	name := strings.TrimPrefix(r.URL.Path, "/sim/ui/")
+	if name == "" {
+		name = "index.html"
+	}
+	s.writeClientAsset(w, r, name)
+}
+
+// writeClientAsset writes one embedded file with its declared media type.
+func (s *Server) writeClientAsset(w http.ResponseWriter, r *http.Request, name string) {
+	mediaType, ok := clientAssets[name]
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	body, err := clientFS.ReadFile("client/" + name)
+	if err != nil {
+		// The map names a file the embed does not carry: a build error, not a
+		// bad request.
+		http.Error(w, "the client is not built correctly", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", mediaType)
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusOK)
+	if r.Method == http.MethodHead {
+		return
+	}
+	_, _ = w.Write(body)
 }
 
 // Start serves on the listener the constructor bound.

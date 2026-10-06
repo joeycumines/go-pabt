@@ -20,7 +20,9 @@ package visual
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -194,6 +196,92 @@ func TestSimStateRejectsNonGet(t *testing.T) {
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusMethodNotAllowed {
 		t.Fatalf("POST /sim/state: status %d, want %d", resp.StatusCode, http.StatusMethodNotAllowed)
+	}
+}
+
+// TestSimUIServesClient asserts the embedded client is served at /sim/ui:
+// index.html answers with the page title and an html media type, the
+// stylesheet and the module are served with theirs, and an unknown asset is
+// a 404. The .mjs media type matters: a browser refuses to execute a module
+// that is not served as JavaScript.
+func TestSimUIServesClient(t *testing.T) {
+	loop, err := sim.NewWorldLoop(sim.ModeDeterministic)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := loop.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = loop.Shutdown(t.Context()) }()
+
+	srv, err := NewServer("127.0.0.1:0", loop)
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() { _ = srv.Start() }()
+	defer func() { _ = srv.Close() }()
+
+	base := "http://" + srv.Addr()
+	get := func(t *testing.T, path string) (int, string, string) {
+		t.Helper()
+		deadline := time.Now().Add(5 * time.Second)
+		for {
+			resp, err := http.Get(base + path) //nolint:gosec // test-only local poll
+			if err != nil {
+				if time.Now().After(deadline) {
+					t.Fatalf("sim server did not respond at %s: %v", base, err)
+				}
+				time.Sleep(10 * time.Millisecond)
+				continue
+			}
+			body, err := io.ReadAll(resp.Body)
+			_ = resp.Body.Close()
+			if err != nil {
+				t.Fatalf("reading %s: %v", path, err)
+			}
+			return resp.StatusCode, resp.Header.Get("Content-Type"), string(body)
+		}
+	}
+
+	status, ct, body := get(t, "/sim/ui")
+	if status != http.StatusOK {
+		t.Fatalf("GET /sim/ui: status %d, want 200", status)
+	}
+	if !strings.HasPrefix(ct, "text/html") {
+		t.Fatalf("GET /sim/ui: content type %q, want text/html", ct)
+	}
+	if !strings.Contains(body, "REEFER HANDOFF") {
+		t.Fatal("GET /sim/ui: body does not contain the page title")
+	}
+
+	// The trailing-slash spelling serves the same document.
+	status, _, _ = get(t, "/sim/ui/")
+	if status != http.StatusOK {
+		t.Fatalf("GET /sim/ui/: status %d, want 200", status)
+	}
+
+	for _, asset := range []struct {
+		path   string
+		wantCT string
+	}{
+		{"/sim/ui/sim.css", "text/css"},
+		{"/sim/ui/js/sim.mjs", "text/javascript"},
+	} {
+		status, ct, body = get(t, asset.path)
+		if status != http.StatusOK {
+			t.Fatalf("GET %s: status %d, want 200", asset.path, status)
+		}
+		if !strings.HasPrefix(ct, asset.wantCT) {
+			t.Fatalf("GET %s: content type %q, want prefix %q", asset.path, ct, asset.wantCT)
+		}
+		if len(body) == 0 {
+			t.Fatalf("GET %s: empty body", asset.path)
+		}
+	}
+
+	status, _, _ = get(t, "/sim/ui/does-not-exist.js")
+	if status != http.StatusNotFound {
+		t.Fatalf("GET /sim/ui/does-not-exist.js: status %d, want 404", status)
 	}
 }
 
