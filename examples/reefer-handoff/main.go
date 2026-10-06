@@ -53,6 +53,7 @@ import (
 	"github.com/joeycumines/go-pabt/examples/reefer-handoff/logic"
 	"github.com/joeycumines/go-pabt/examples/reefer-handoff/sim"
 	"github.com/joeycumines/go-pabt/examples/reefer-handoff/tui"
+	"github.com/joeycumines/go-pabt/examples/reefer-handoff/visual"
 	"github.com/joeycumines/go-pabt/pabtdebug"
 )
 
@@ -79,6 +80,8 @@ func run() error {
 		"the directory the per-tractor store files land in")
 	fleetMode := flag.Bool("fleet", false,
 		"give each tractor its own independent world loop (fleet isolation)")
+	simAddr := flag.String("sim-addr", "127.0.0.1:0",
+		"the loopback address for the visual simulation server")
 	flag.Parse()
 
 	// The handler goes in before anything that can block, so a signal during
@@ -131,10 +134,30 @@ func run() error {
 	}
 	defer teardown(cells, loop, tractors)
 
-	served := make(chan error, len(tractors))
+	// The visual simulation reads the ground-truth world: the shared loop in
+	// default mode, the first cell's loop in fleet mode — the same source the
+	// TUI monitors.
+	var simLoop *sim.WorldLoop
+	if len(cells) > 0 {
+		simLoop = cells[0].Loop
+	} else {
+		simLoop = loop
+	}
+	simServer, err := visual.NewServer(*simAddr, simLoop)
+	if err != nil {
+		return fmt.Errorf("starting the sim server: %w", err)
+	}
+	defer func() {
+		if err := simServer.Close(); err != nil {
+			fmt.Fprintf(os.Stderr, "reefer-handoff: closing the sim server: %v\n", err)
+		}
+	}()
+
+	served := make(chan error, len(tractors)+1)
 	for _, t := range tractors {
 		go func(t *tractor) { served <- t.server.Start() }(t)
 	}
+	go func() { served <- simServer.Start() }()
 
 	// The attach points are printed before the first tick, so a browser can
 	// be open while the records arrive.
@@ -142,6 +165,7 @@ func run() error {
 		fmt.Printf("%s  http://%s/debug/pabt/ui  capability %s\n",
 			t.tug, t.server.Addr(), t.server.Capability())
 	}
+	fmt.Printf("SIM   http://%s/sim/ui\n", simServer.Addr())
 
 	ctrl := NewController()
 
