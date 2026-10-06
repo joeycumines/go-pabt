@@ -19,6 +19,7 @@ package pabtdebug
 import (
 	"context"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"fmt"
 )
@@ -114,12 +115,92 @@ func (s *SQLiteStore) Evict(ctx context.Context, key RunKey, policy RetentionPol
 		return EvictResult{}, fmt.Errorf("pabtdebug: evict promotion iteration: %w", err)
 	}
 
-	// Promote: clear the delta fields so the representation becomes a keyframe.
+	// Promote: for each delta whose base is being evicted, reconstruct the
+	// full tree by applying the delta onto its base, write the result into
+	// tree_json/tree_sha256, and then clear the delta columns. Without this
+	// reconstruction the promoted representation would hold a stale tree_json
+	// (the delta's target, not the reconstructed result) or an empty one,
+	// making TreeAt return corrupt data.
 	for _, uid := range promoteUIDs {
+		// Read the delta's current tree_json (which holds the target tree for
+		// deltas that were stored alongside their keyframe), base_seq, and
+		// delta_json.
+		var (
+			treeRaw  []byte
+			baseSeq  sql.NullInt64
+			deltaRaw []byte
+		)
+		err := tx.QueryRowContext(ctx,
+			"SELECT tree_json, base_seq, delta_json FROM representations "+
+				"WHERE session_id = ? AND event_uid = ?",
+			key.SessionID, uid).Scan(&treeRaw, &baseSeq, &deltaRaw)
+		if err != nil {
+			return EvictResult{}, fmt.Errorf("pabtdebug: evict read delta %s: %w", uid, err)
+		}
+
+		// If there is no delta_json, this is already a keyframe — just clear
+		// the base reference.
+		if len(deltaRaw) == 0 {
+			if _, err := tx.ExecContext(ctx,
+				"UPDATE representations SET base_event_uid = NULL, base_seq = NULL "+
+					"WHERE session_id = ? AND event_uid = ?",
+				key.SessionID, uid); err != nil {
+				return EvictResult{}, fmt.Errorf("pabtdebug: evict promote keyframe %s: %w", uid, err)
+			}
+			continue
+		}
+
+		// Read the base tree from the representation at base_seq.
+		if !baseSeq.Valid {
+			return EvictResult{}, fmt.Errorf("pabtdebug: evict promote %s: delta has no base_seq", uid)
+		}
+		var baseRaw []byte
+		err = tx.QueryRowContext(ctx,
+			"SELECT tree_json FROM representations "+
+				"WHERE session_id = ? AND run_id = ? AND seq = ?",
+			key.SessionID, key.RunID, uint64(baseSeq.Int64)).Scan(&baseRaw)
+		if err != nil {
+			return EvictResult{}, fmt.Errorf("pabtdebug: evict read base for %s at seq %d: %w",
+				uid, baseSeq.Int64, err)
+		}
+
+		var baseTree StoredTree
+		if err := CanonicalDecode(baseRaw, &baseTree); err != nil {
+			return EvictResult{}, fmt.Errorf("pabtdebug: evict decode base tree for %s: %w", uid, err)
+		}
+
+		var delta ExactTreeDelta
+		if err := CanonicalDecode(deltaRaw, &delta); err != nil {
+			return EvictResult{}, fmt.Errorf("pabtdebug: evict decode delta for %s: %w", uid, err)
+		}
+
+		// Reconstruct the full tree.
+		reconstructed, err := ApplyExactDelta(baseTree, delta)
+		if err != nil {
+			return EvictResult{}, fmt.Errorf("pabtdebug: evict apply delta for %s: %w", uid, err)
+		}
+
+		// Encode and hash the reconstructed tree.
+		newTreeJSON, err := CanonicalEncode(reconstructed)
+		if err != nil {
+			return EvictResult{}, fmt.Errorf("pabtdebug: evict encode promoted tree for %s: %w", uid, err)
+		}
+		newDigest, err := HashTree(reconstructed)
+		if err != nil {
+			return EvictResult{}, fmt.Errorf("pabtdebug: evict hash promoted tree for %s: %w", uid, err)
+		}
+		newDigestBytes, err := hex.DecodeString(newDigest)
+		if err != nil {
+			return EvictResult{}, fmt.Errorf("pabtdebug: evict hex digest for %s: %w", uid, err)
+		}
+
+		// Write the reconstructed tree and clear delta columns in one update.
 		if _, err := tx.ExecContext(ctx,
-			"UPDATE representations SET base_event_uid = NULL, base_seq = NULL, "+
-				"delta_json = NULL, delta_sha256 = NULL WHERE session_id = ? AND event_uid = ?",
-			key.SessionID, uid); err != nil {
+			"UPDATE representations SET tree_json = ?, tree_sha256 = ?, "+
+				"base_event_uid = NULL, base_seq = NULL, "+
+				"delta_json = NULL, delta_sha256 = NULL, operation_count = 0 "+
+				"WHERE session_id = ? AND event_uid = ?",
+			newTreeJSON, newDigestBytes, key.SessionID, uid); err != nil {
 			return EvictResult{}, fmt.Errorf("pabtdebug: evict promote %s: %w", uid, err)
 		}
 	}

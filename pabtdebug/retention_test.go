@@ -161,3 +161,133 @@ func TestEvictedRecordReturnsErrEvictedNotErrNotFound(t *testing.T) {
 		t.Errorf("RecordAt(1) = %v, want ErrEvicted", err)
 	}
 }
+
+// commitTreeRecord commits a record with a tree, creating a representation row.
+// The root node's ID is always "root" (from smallTree); rootName sets only the
+// Name field, matching bundleFixture's pattern so deltas between records are
+// well-formed (same node IDs, different names).
+func commitTreeRecord(t *testing.T, store *SQLiteStore, key RunKey, rootName string) {
+	t.Helper()
+	ctx := context.Background()
+	ticket, err := store.Begin(ctx, BeginRequest{RunKey: key, ExpectedPlanRevision: testPlanRevision})
+	if err != nil {
+		t.Fatalf("Begin: %v", err)
+	}
+	tree := smallTree("root")
+	tree.RunKey = key
+	tree.Nodes[0].Name = rootName
+	sealed := reseal(t, *tree)
+	record := makeRecord(&sealed)
+	if _, err := store.Commit(ctx, ticket, record); err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+}
+
+// commitDeltaRecord commits a record whose representation is stored as a delta
+// against a base sequence. It follows the same pattern as bundleFixture:
+// read the base via DeltaBase, create a modified target tree (same node IDs,
+// different Name), compute the exact delta, and commit with CommitWithDelta.
+func commitDeltaRecord(t *testing.T, store *SQLiteStore, key RunKey, rootName string) {
+	t.Helper()
+	ctx := context.Background()
+
+	ticket, err := store.Begin(ctx, BeginRequest{RunKey: key, ExpectedPlanRevision: testPlanRevision})
+	if err != nil {
+		t.Fatalf("Begin: %v", err)
+	}
+
+	// Build the target tree: same root ID as the base, different Name.
+	target := smallTree("root")
+	target.RunKey = key
+	target.Nodes[0].Name = rootName
+	sealed := reseal(t, *target)
+
+	record := makeRecord(&sealed)
+
+	// Try to compute a delta against the eligible base.
+	var delta *ExactTreeDelta
+	if base, found, baseErr := store.DeltaBase(ctx, key, ticket.Sequence); baseErr == nil && found {
+		if computed, compErr := ComputeExactDelta(base, sealed); compErr == nil {
+			delta = computed
+		}
+	}
+
+	if _, err := store.CommitWithDelta(ctx, ticket, record, delta); err != nil {
+		t.Fatalf("CommitWithDelta: %v", err)
+	}
+}
+
+func TestEvictPromotesDeltaToKeyframe(t *testing.T) {
+	store, key := openRetentionStore(t)
+	ctx := context.Background()
+
+	// Seq 1: keyframe (base).
+	commitTreeRecord(t, store, key, "base-root")
+
+	// Seq 2: delta based on seq 1.
+	commitDeltaRecord(t, store, key, "delta-root")
+
+	// Verify seq 2 has a delta before eviction.
+	tree2Before, base2Before, delta2Before, err := store.Representation(ctx, key, 2)
+	if err != nil {
+		t.Fatalf("Representation(2) before evict: %v", err)
+	}
+	if delta2Before == nil {
+		t.Fatal("precondition: seq 2 should have a delta before eviction")
+	}
+	_ = tree2Before
+	_ = base2Before
+
+	// Evict seq 1 (keep only 1 record = seq 2).
+	result, err := store.Evict(ctx, key, RetentionPolicy{MaxRecords: 1})
+	if err != nil {
+		t.Fatalf("Evict: %v", err)
+	}
+	if result.PromotedCount != 1 {
+		t.Errorf("PromotedCount = %d, want 1", result.PromotedCount)
+	}
+	if result.RemovedCount != 1 {
+		t.Errorf("RemovedCount = %d, want 1", result.RemovedCount)
+	}
+
+	// Seq 1 should be evicted.
+	_, err = store.RecordAt(ctx, key, 1)
+	if !errors.Is(err, ErrEvicted) {
+		t.Errorf("RecordAt(1) = %v, want ErrEvicted", err)
+	}
+
+	// Seq 2's representation should now be a keyframe (no delta, no base).
+	tree2, base2, delta2, err := store.Representation(ctx, key, 2)
+	if err != nil {
+		t.Fatalf("Representation(2) after evict: %v", err)
+	}
+	if delta2 != nil {
+		t.Error("seq 2 still has a delta after promotion; should be a keyframe")
+	}
+	if base2 != nil {
+		t.Error("seq 2 still has a base reference after promotion; should be nil")
+	}
+
+	// The promoted tree must be readable. RootID is "root" because smallTree
+	// uses the same node ID for delta compatibility; the Name field carries
+	// the differentiation.
+	if tree2.RootID != "root" {
+		t.Errorf("promoted tree RootID = %q, want %q", tree2.RootID, "root")
+	}
+	if len(tree2.Nodes) == 0 || tree2.Nodes[0].Name != "delta-root" {
+		t.Errorf("promoted tree root node Name = %q, want %q", tree2.Nodes[0].Name, "delta-root")
+	}
+
+	// TreeAt must succeed on the promoted representation — this is the
+	// critical assertion proving the tree was reconstructed, not left empty.
+	readTree, err := store.TreeAt(ctx, key, 2)
+	if err != nil {
+		t.Fatalf("TreeAt(2) after promotion: %v (tree was not reconstructed)", err)
+	}
+	if readTree.RootID != "root" {
+		t.Errorf("TreeAt(2).RootID = %q, want %q", readTree.RootID, "root")
+	}
+	if len(readTree.Nodes) == 0 || readTree.Nodes[0].Name != "delta-root" {
+		t.Errorf("TreeAt(2) root node Name = %q, want %q", readTree.Nodes[0].Name, "delta-root")
+	}
+}
