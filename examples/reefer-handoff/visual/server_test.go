@@ -310,3 +310,58 @@ func pollState(t *testing.T, addr string) StateResponse {
 		return state
 	}
 }
+
+// TestSimStateReceiptLedger drives the world loop with one applied command
+// and one refused command, then asserts /sim/state serves both through the
+// receipt ledger with their typed outcomes and reasons. The ledger is world
+// state, so this is the data the V4 client animates command outcomes from.
+func TestSimStateReceiptLedger(t *testing.T) {
+	loop, err := sim.NewWorldLoop(sim.ModeDeterministic)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := loop.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = loop.Shutdown(t.Context()) }()
+
+	srv, err := NewServer("127.0.0.1:0", loop)
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() { _ = srv.Start() }()
+	defer func() { _ = srv.Close() }()
+
+	// An applied ClaimJob: TUG-1 takes one job.
+	ch, err := loop.Submit(sim.Command{
+		ID: "c1", IdempotencyKey: "k1", Kind: sim.CmdClaimJob, Tractor: sim.Tug1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-ch
+
+	// A refused MoveTo: STAGING has no lane to the bay, so the world declines
+	// it and the refusal lands in the ledger with a typed reason.
+	ch, err = loop.Submit(sim.Command{
+		ID: "c2", IdempotencyKey: "k2", Kind: sim.CmdMoveTo, Tractor: sim.Tug2, Node: sim.NodeBay,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-ch
+
+	resp := pollState(t, srv.Addr())
+	if resp.CommandSeq != 2 {
+		t.Fatalf("commandSeq = %d, want 2", resp.CommandSeq)
+	}
+	if len(resp.Receipts) != 2 {
+		t.Fatalf("receipts: got %d, want 2", len(resp.Receipts))
+	}
+	if resp.Receipts[0].Outcome != sim.OutcomeApplied || resp.Receipts[0].Kind != sim.CmdClaimJob {
+		t.Fatalf("receipt[0] = %s/%s, want Applied/ClaimJob", resp.Receipts[0].Outcome, resp.Receipts[0].Kind)
+	}
+	if resp.Receipts[1].Outcome != sim.OutcomeRefused || resp.Receipts[1].Reason != sim.ReasonNotAdjacent {
+		t.Fatalf("receipt[1] = %s/%s, want Refused/NotAdjacent", resp.Receipts[1].Outcome, resp.Receipts[1].Reason)
+	}
+}

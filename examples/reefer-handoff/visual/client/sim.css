@@ -233,3 +233,147 @@ html, body {
 
 .footer-item.connected { color: var(--green); }
 .footer-item.disconnected { color: var(--red); }
+
+/* ── V4: incident effects ────────────────────────────────────────────── */
+
+/* Wind lockout: the locked lane pulses red. */
+.lane-path.lane-lock-pulse {
+  animation: lane-lock-pulse 2s ease-in-out;
+}
+
+@keyframes lane-lock-pulse {
+  0%, 100% { stroke: var(--red); stroke-width: 3; opacity: 1; }
+  50% { stroke: #ff7b72; stroke-width: 5; opacity: 0.7; }
+}
+
+/* Lane reopened: a brief green flash, then normal. */
+.lane-path.lane-reopen-flash {
+  stroke: var(--green);
+  animation: lane-reopen-flash 0.9s ease-out;
+}
+
+@keyframes lane-reopen-flash {
+  0% { stroke: var(--green); stroke-width: 5; opacity: 1; }
+  100% { stroke: var(--lane); stroke-width: 3; opacity: 1; }
+}
+
+/* Lock icon on a locked lane. */
+.lock-icon .lock-body {
+  fill: var(--red);
+  stroke: #fff;
+  stroke-width: 1;
+}
+
+.lock-icon .lock-shackle {
+  fill: none;
+  stroke: var(--red);
+  stroke-width: 2.5;
+  stroke-linecap: round;
+}
+
+/* RFID scan-line over a reefer. */
+.scan-effect .scan-line {
+  stroke: var(--accent);
+  stroke-width: 2;
+  stroke-linecap: round;
+  animation: scan-line 1.2s ease-in-out;
+  opacity: 0;
+}
+
+@keyframes scan-line {
+  0% { transform: translateY(-12px); opacity: 0; }
+  20% { opacity: 1; }
+  80% { opacity: 1; }
+  100% { transform: translateY(12px); opacity: 0; }
+}
+
+/* Bay contention: the bay border flashes orange. */
+[data-node="BAY"].bay-contention-flash .node-rect {
+  stroke: var(--orange);
+  stroke-width: 3;
+  animation: bay-contention 1s ease-in-out;
+}
+
+@keyframes bay-contention {
+  0%, 100% { stroke-width: 2; }
+  50% { stroke-width: 4; }
+}
+
+/* Power rejection: the slot glow flashes red and a brief X marks it. */
+.slot-glow.slot-reject-flash {
+  stroke: var(--red);
+  opacity: 1;
+  animation: slot-reject 1s ease-in-out;
+}
+
+@keyframes slot-reject {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 1; }
+}
+
+.slot-reject-x {
+  fill: var(--red);
+  font-family: var(--font);
+  font-size: 20px;
+  font-weight: 700;
+  text-anchor: middle;
+  dominant-baseline: central;
+  pointer-events: none;
+  animation: slot-reject-x 1s ease-in-out;
+}
+
+@keyframes slot-reject-x {
+  0%, 100% { opacity: 0; }
+  30%, 70% { opacity: 1; }
+}
+
+/* ── V4: event log panel ─────────────────────────────────────────────── */
+#event-log-panel {
+  flex-shrink: 0;
+  background: var(--panel);
+  border-top: 1px solid var(--border);
+  padding: 4px 20px 6px;
+}
+
+.event-log-header {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  margin-bottom: 2px;
+}
+
+#event-log {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-height: 70px;
+}
+
+.event-item {
+  display: flex;
+  gap: 10px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.4;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.event-time {
+  color: var(--text-dim);
+  flex-shrink: 0;
+}
+
+.event-msg {
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.event-item.event-incident .event-msg { color: var(--red); }
+.event-item.event-scan .event-msg { color: var(--accent); }
+.event-item.event-refusal .event-msg { color: var(--orange); }

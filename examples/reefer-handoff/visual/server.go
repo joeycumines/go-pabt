@@ -37,15 +37,31 @@ var clientFS embed.FS
 
 // StateResponse is the JSON shape served at GET /sim/state.
 type StateResponse struct {
-	Round    int            `json:"round"`
-	WorldSeq uint64         `json:"worldSeq"`
-	Phase    sim.Phase      `json:"phase"`
-	Cutoff   int            `json:"cutoff"`
-	Tractors []TractorState `json:"tractors"`
-	Reefers  []ReeferState  `json:"reefers"`
-	Slots    []SlotState    `json:"slots"`
-	Lanes    []LaneState    `json:"lanes"`
-	Nodes    []NodeState    `json:"nodes"`
+	Round      int            `json:"round"`
+	WorldSeq   uint64         `json:"worldSeq"`
+	CommandSeq uint64         `json:"commandSeq"`
+	Phase      sim.Phase      `json:"phase"`
+	Cutoff     int            `json:"cutoff"`
+	Tractors   []TractorState `json:"tractors"`
+	Reefers    []ReeferState  `json:"reefers"`
+	Slots      []SlotState    `json:"slots"`
+	Lanes      []LaneState    `json:"lanes"`
+	Nodes      []NodeState    `json:"nodes"`
+	Receipts   []ReceiptState `json:"receipts"`
+}
+
+// ReceiptState is one command outcome from the world's receipt ledger. The
+// ledger is world state, not durable history, so it is served without a
+// capability gate (DD-40): the simulation reads what the world itself records,
+// never a tractor's private causality records. The client diffs consecutive
+// responses on CommandSeq and animates newly applied commands and refusals.
+type ReceiptState struct {
+	CommandSeq uint64          `json:"commandSeq"`
+	Kind       sim.CommandKind `json:"kind"`
+	Tractor    sim.TractorID   `json:"tractor"`
+	Outcome    sim.Outcome     `json:"outcome"`
+	Reason     sim.Reason      `json:"reason"`
+	Holder     string          `json:"holder"`
 }
 
 // TractorState is one tractor's position and assignment.
@@ -281,15 +297,30 @@ func buildStateResponse(world sim.World) StateResponse {
 		nStates[i] = NodeState{ID: n.ID, Capacity: n.Capacity, ReeferDestination: n.ReeferDestination}
 	}
 
+	receipts := world.Receipts()
+	rcStates := make([]ReceiptState, len(receipts))
+	for i, r := range receipts {
+		rcStates[i] = ReceiptState{
+			CommandSeq: r.CommandSeq,
+			Kind:       r.Kind,
+			Tractor:    r.Tractor,
+			Outcome:    r.Outcome,
+			Reason:     r.Reason,
+			Holder:     r.Holder,
+		}
+	}
+
 	return StateResponse{
-		Round:    world.Round(),
-		WorldSeq: world.WorldSeq(),
-		Phase:    world.Phase(),
-		Cutoff:   sim.CutoffRound,
-		Tractors: tStates,
-		Reefers:  rStates,
-		Slots:    sStates,
-		Lanes:    lStates,
-		Nodes:    nStates,
+		Round:      world.Round(),
+		WorldSeq:   world.WorldSeq(),
+		CommandSeq: world.CommandSeq(),
+		Phase:      world.Phase(),
+		Cutoff:     sim.CutoffRound,
+		Tractors:   tStates,
+		Reefers:    rStates,
+		Slots:      sStates,
+		Lanes:      lStates,
+		Nodes:      nStates,
+		Receipts:   rcStates,
 	}
 }
