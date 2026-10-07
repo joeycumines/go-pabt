@@ -565,11 +565,18 @@ async function pollState() {
     render(await resp.json());
     connEl.textContent = 'Connected';
     connEl.className = 'footer-item connected';
+    // V7: dismiss loading overlay on first successful render.
+    if (loadingOverlay && !loadingOverlay.classList.contains('hidden')) {
+      loadingOverlay.classList.add('hidden');
+    }
   } catch {
     connEl.textContent = 'Disconnected';
     connEl.className = 'footer-item disconnected';
   }
 }
+
+// V7: hide loading overlay on first successful state.
+const loadingOverlay = document.getElementById('loading-overlay');
 
 pollState();
 setInterval(pollState, 200);
