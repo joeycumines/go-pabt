@@ -194,11 +194,17 @@ func (d *durable) writeReady(addr string) error {
 // can be guessed a byte at a time is not a token.
 func (s *Server) requireCapability(next *http.ServeMux) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodOptions {
+			s.handleOptions(w, r)
+			return
+		}
 		if !s.authenticated(r) {
+			setCorsHeaders(w)
 			w.Header().Set("WWW-Authenticate", `Bearer realm="pabtdebug"`)
 			http.Error(w, "unauthenticated", http.StatusUnauthorized)
 			return
 		}
+		setCorsHeaders(w)
 		next.ServeHTTP(w, r)
 	})
 }
@@ -207,11 +213,17 @@ func (s *Server) requireCapability(next *http.ServeMux) http.Handler {
 // outside the durable subtree where the guard does not reach.
 func (s *Server) requireCapabilityHandler(next http.HandlerFunc) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodOptions {
+			s.handleOptions(w, r)
+			return
+		}
 		if !s.authenticated(r) {
+			setCorsHeaders(w)
 			w.Header().Set("WWW-Authenticate", `Bearer realm="pabtdebug"`)
 			http.Error(w, "unauthenticated", http.StatusUnauthorized)
 			return
 		}
+		setCorsHeaders(w)
 		next(w, r)
 	})
 }
@@ -225,6 +237,26 @@ func (s *Server) authenticated(r *http.Request) bool {
 
 // capabilityHeader is where the token is presented.
 const capabilityHeader = "X-PABT-Capability"
+
+// setCorsHeaders marks the response as readable by any origin. The debugger
+// serves loopback only and every route except the shell is capability-gated, so
+// the origin header is a browser formality, not a security boundary. Without
+// it, a sim page on a different loopback port cannot read committed records
+// for replay (V6).
+func setCorsHeaders(w http.ResponseWriter) {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Headers", capabilityHeader)
+	w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
+}
+
+// handleOptions answers the CORS preflight the browser sends before a
+// cross-origin request that carries the capability header. It is outside the
+// auth check by construction: a preflight carries no custom headers, so it
+// cannot present the capability, and answering it reveals nothing.
+func (s *Server) handleOptions(w http.ResponseWriter, r *http.Request) {
+	setCorsHeaders(w)
+	w.WriteHeader(http.StatusNoContent)
+}
 
 // server registers the route set.
 func (d *durable) server(s *Server) {

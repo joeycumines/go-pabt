@@ -502,3 +502,138 @@ html, body {
 /* Entity hover cursor and pointer-events */
 .tractor, .reefer { cursor: pointer; pointer-events: all; }
 [data-node] { cursor: pointer; }
+
+/* ── V6: mode toggle and replay panel ──────────────────────────────── */
+
+.mode-toggle {
+  display: flex;
+  gap: 2px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+  margin-left: 8px;
+}
+
+.mode-btn {
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 4px 10px;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.mode-btn:hover { background: rgba(255,255,255,0.06); color: var(--text); }
+.mode-btn.active { background: var(--accent); color: #fff; }
+
+#replay-panel {
+  position: absolute;
+  bottom: 52px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 16px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+  z-index: 15;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 320px;
+}
+
+#replay-setup {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+#replay-setup label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  flex-shrink: 0;
+}
+
+#replay-capability {
+  flex: 1;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 12px;
+  padding: 5px 8px;
+  outline: none;
+  transition: border-color 0.15s ease;
+}
+
+#replay-capability:focus { border-color: var(--accent); }
+
+#btn-replay-load {
+  background: var(--accent);
+  border: none;
+  border-radius: 6px;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 5px 12px;
+  cursor: pointer;
+  transition: opacity 0.15s ease;
+  flex-shrink: 0;
+}
+
+#btn-replay-load:hover { opacity: 0.85; }
+#btn-replay-load:disabled { opacity: 0.4; cursor: default; }
+
+#replay-status {
+  font-size: 11px;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 160px;
+}
+
+#replay-scrub {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+#replay-slider {
+  flex: 1;
+  accent-color: var(--accent);
+}
+
+#replay-frame {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+  white-space: nowrap;
+  min-width: 70px;
+  text-align: right;
+}
+
+.replay-badge {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(210, 153, 34, 0.9);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 4px 14px;
+  border-radius: 6px;
+  z-index: 25;
+  pointer-events: none;
+}

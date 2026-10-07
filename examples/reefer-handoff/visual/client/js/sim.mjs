@@ -555,7 +555,10 @@ function render(state) {
 }
 
 // ── Polling ─────────────────────────────────────────────────────────────
+let liveMode = true; // V6: false when replay is active
+
 async function pollState() {
+  if (!liveMode) return; // V6: replay owns the renderer
   try {
     const resp = await fetch('/sim/state', { cache: 'no-store' });
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
@@ -657,6 +660,343 @@ document.addEventListener('keydown', (e) => {
       break;
   }
 });
+
+// ── V6: replay mode ─────────────────────────────────────────────────────
+//
+// Replay reconstructs world states from committed causality records. The
+// page reads one tractor's /debug/pabt/records endpoint (capability-gated,
+// prompted once), extracts world events from causality envelopes, and
+// replays them through the same SVG renderer. The reconstruction is
+// approximate — world events give entity state changes, not full snapshots —
+// and the page labels it as such.
+const btnModeLive = document.getElementById('btn-mode-live');
+const btnModeReplay = document.getElementById('btn-mode-replay');
+const replayPanel = document.getElementById('replay-panel');
+const replayCapability = document.getElementById('replay-capability');
+const btnReplayLoad = document.getElementById('btn-replay-load');
+const replayStatus = document.getElementById('replay-status');
+const replayScrub = document.getElementById('replay-scrub');
+const replaySlider = document.getElementById('replay-slider');
+const replayFrame = document.getElementById('replay-frame');
+
+// replayFrames is the reconstructed timeline: an array of state objects
+// shaped like /sim/state responses, one per world event.
+let replayFrames = [];
+let replayEvents = []; // raw events for the log
+let replayActive = false;
+
+// initialManifest is the known starting state, hardcoded from the domain.
+// The reconstruction begins here and applies events forward.
+function initialReplayState() {
+  return {
+    round: 1,
+    worldSeq: 0,
+    commandSeq: 0,
+    phase: 'Running',
+    cutoff: 120,
+    tractors: [
+      { id: 'TUG-1', at: 'STAGING', job: '', hold: '', generation: 0 },
+      { id: 'TUG-2', at: 'STAGING', job: '', hold: '', generation: 0 },
+      { id: 'TUG-3', at: 'STAGING', job: '', hold: '', generation: 0 },
+    ],
+    reefers: [
+      { id: 'REEFER-1', tempC: -22, tagReadable: true, at: 'STAGING', custodian: '' },
+      { id: 'REEFER-2', tempC: -8, tagReadable: false, at: 'STAGING', custodian: '' },
+      { id: 'REEFER-3', tempC: -8, tagReadable: true, at: 'STAGING', custodian: '' },
+    ],
+    slots: [
+      { id: 'SLOT-1', node: 'SLOT-1', ratedMaxC: -30, plugged: true, occupied: '', version: 1 },
+      { id: 'SLOT-2', node: 'SLOT-2', ratedMaxC: -18, plugged: true, occupied: '', version: 1 },
+      { id: 'SLOT-3', node: 'SLOT-3', ratedMaxC: -30, plugged: true, occupied: '', version: 1 },
+    ],
+    lanes: [
+      { id: 'lane-west', a: 'STAGING', b: 'WEST', locked: false },
+      { id: 'lane-east', a: 'STAGING', b: 'EAST', locked: false },
+      { id: 'lane-bay-west', a: 'WEST', b: 'BAY', locked: false },
+      { id: 'lane-bay-east', a: 'EAST', b: 'BAY', locked: false },
+      { id: 'lane-slot-1', a: 'BAY', b: 'SLOT-1', locked: false },
+      { id: 'lane-slot-2', a: 'BAY', b: 'SLOT-2', locked: false },
+      { id: 'lane-slot-3', a: 'BAY', b: 'SLOT-3', locked: false },
+    ],
+    nodes: [
+      { id: 'STAGING', capacity: 0, reeferDestination: false },
+      { id: 'WEST', capacity: 1, reeferDestination: false },
+      { id: 'EAST', capacity: 1, reeferDestination: false },
+      { id: 'BAY', capacity: 1, reeferDestination: false },
+      { id: 'SLOT-1', capacity: 1, reeferDestination: true },
+      { id: 'SLOT-2', capacity: 1, reeferDestination: true },
+      { id: 'SLOT-3', capacity: 1, reeferDestination: true },
+    ],
+    receipts: [],
+  };
+}
+
+// applyEvent mutates a state copy according to one world event kind.
+// Returns the mutated state (same object, for chaining).
+function applyEvent(state, ev) {
+  switch (ev.kind) {
+    case 'JobClaimed': {
+      const t = state.tractors.find(x => x.id === ev.tractor);
+      if (t) t.job = ev.tractor; // job ID matches reefer ID by convention
+      break;
+    }
+    case 'TagScanned': {
+      const r = state.reefers.find(x => x.id === ev.reefer);
+      if (r) r.tagReadable = true;
+      break;
+    }
+    case 'PickedUp': {
+      const r = state.reefers.find(x => x.id === ev.reefer);
+      const t = state.tractors.find(x => x.id === ev.tractor);
+      if (r && t) { r.custodian = ev.tractor; t.hold = ev.reefer; }
+      break;
+    }
+    case 'Moved': {
+      const t = state.tractors.find(x => x.id === ev.tractor);
+      if (t && ev.node) t.at = ev.node;
+      break;
+    }
+    case 'Placed': {
+      const r = state.reefers.find(x => x.id === ev.reefer);
+      const t = state.tractors.find(x => x.id === ev.tractor);
+      const s = state.slots.find(x => x.id === ev.slot);
+      if (r) { r.custodian = ''; r.at = ev.slot; }
+      if (t) t.hold = '';
+      if (s) { s.occupied = ev.reefer; s.version++; }
+      break;
+    }
+    case 'JobCompleted': {
+      const t = state.tractors.find(x => x.id === ev.tractor);
+      if (t) t.job = '';
+      break;
+    }
+    case 'LaneLocked': {
+      const lane = state.lanes.find(x => x.id === ev.lane);
+      if (lane) lane.locked = true;
+      break;
+    }
+    case 'LaneReopened': {
+      const lane = state.lanes.find(x => x.id === ev.lane);
+      if (lane) lane.locked = false;
+      break;
+    }
+    case 'SlotPowerChanged': {
+      const s = state.slots.find(x => x.id === ev.slot);
+      if (s) { s.plugged = !s.plugged; s.version++; }
+      break;
+    }
+    case 'CutoffReached': {
+      state.phase = 'Cutoff';
+      break;
+    }
+    case 'WorldComplete': {
+      state.phase = 'Complete';
+      break;
+    }
+  }
+  return state;
+}
+
+// extractEvents pulls all world events from a records response, in order.
+// Each record's causality envelope carries settled (with their events) and
+// exogenous events.
+function extractEvents(records) {
+  const events = [];
+  for (const rec of records) {
+    const c = rec.causality;
+    if (!c) continue;
+    for (const st of (c.settled || [])) {
+      for (const ev of (st.events || [])) {
+        events.push(ev);
+      }
+    }
+    for (const ev of (c.exogenous || [])) {
+      events.push(ev);
+    }
+  }
+  // Sort by worldSeq to get chronological order.
+  events.sort((a, b) => a.worldSeq - b.worldSeq);
+  return events;
+}
+
+// buildReplayFrames reconstructs the timeline from events.
+function buildReplayFrames(events) {
+  const frames = [];
+  let state = initialReplayState();
+  frames.push(JSON.parse(JSON.stringify(state)));
+  for (const ev of events) {
+    state = applyEvent(state, ev);
+    // Update worldSeq from the event.
+    if (ev.worldSeq) state.worldSeq = ev.worldSeq;
+    frames.push(JSON.parse(JSON.stringify(state)));
+  }
+  return frames;
+}
+
+// StoredValue text extraction: pabtdebug StoredValues may be objects with
+// a "text" field or plain strings depending on encoding.
+function svText(v) {
+  if (v === null || v === undefined) return '';
+  if (typeof v === 'string') return v;
+  if (typeof v === 'object') {
+    // StoredValue carries no json tags, so fields are PascalCase.
+    // Display is canonical JSON text; for strings it arrives quoted.
+    if (v.Display !== undefined && v.Display !== '') {
+      try {
+        const parsed = JSON.parse(v.Display);
+        if (typeof parsed === 'string') return parsed;
+        return v.Display;
+      } catch {
+        return v.Display;
+      }
+    }
+  }
+  return '';
+}
+
+// normalizeEvent converts a stored world event to the shape applyEvent expects.
+function normalizeEvent(ev) {
+  return {
+    kind: svText(ev.kind),
+    worldSeq: ev.worldSeq || 0,
+    tractor: svText(ev.tractor),
+    reefer: svText(ev.reefer),
+    slot: svText(ev.slot),
+    node: svText(ev.node),
+    lane: svText(ev.lane),
+  };
+}
+
+// loadReplay fetches records and builds the timeline.
+async function loadReplay() {
+  const cap = replayCapability.value.trim();
+  if (!cap) { replayStatus.textContent = 'Enter a capability token.'; return; }
+  replayStatus.textContent = 'Loading…';
+  btnReplayLoad.disabled = true;
+  try {
+    // Get the first tractor's debugger URL.
+    const dbgResp = await fetch('/sim/debuggers', { cache: 'no-store' });
+    if (!dbgResp.ok) throw new Error(`debuggers: HTTP ${dbgResp.status}`);
+    const dbgData = await dbgResp.json();
+    if (!dbgData.debuggers || dbgData.debuggers.length === 0) {
+      throw new Error('No debugger servers registered');
+    }
+    // Use the first debugger's base URL.
+    const baseUrl = dbgData.debuggers[0].url.replace(/\/ui.*$/, '');
+    // Fetch all records using pagination. The response shape is
+    // RecordPageResponse{page: RecordPage, cursor: Cursor}. RecordPage
+    // carries no json tags, so its fields are PascalCase: Records, Through,
+    // HasMore.
+    const records = [];
+    let after = '0';
+    for (;;) {
+      // baseUrl already ends in /debug/pabt (the debugger URL minus /ui).
+      const recordsUrl = `${baseUrl}/records?after=${after}`;
+      const recResp = await fetch(recordsUrl, {
+        headers: { 'X-PABT-Capability': cap },
+      });
+      if (recResp.status === 401) {
+        throw new Error('Invalid capability — 401 Unauthorized');
+      }
+      if (!recResp.ok) throw new Error(`records: HTTP ${recResp.status}`);
+      const data = await recResp.json();
+      const page = data.page;
+      if (!page || !Array.isArray(page.Records)) break;
+      for (const rec of page.Records) {
+        records.push(rec);
+      }
+      if (page.Records.length === 0) break;
+      if (!page.HasMore) break;
+      after = String(page.Through);
+    }
+    if (records.length === 0) {
+      throw new Error('No committed records found');
+    }
+    // Extract and normalize events.
+    const rawEvents = extractEvents(records);
+    replayEvents = rawEvents.map(normalizeEvent);
+    replayFrames = buildReplayFrames(replayEvents);
+    // Setup scrubber.
+    replaySlider.max = replayFrames.length - 1;
+    replaySlider.value = 0;
+    replayFrame.textContent = `Frame 1/${replayFrames.length}`;
+    replayScrub.hidden = false;
+    replayStatus.textContent = `${records.length} records, ${replayFrames.length} frames`;
+    // Enter replay rendering.
+    replayActive = true;
+    liveMode = false;
+    renderReplayFrame(0);
+  } catch (e) {
+    replayStatus.textContent = `Error: ${e.message}`;
+  } finally {
+    btnReplayLoad.disabled = false;
+  }
+}
+
+// renderReplayFrame draws one reconstructed frame through the same renderer.
+function renderReplayFrame(idx) {
+  if (idx < 0 || idx >= replayFrames.length) return;
+  const frame = replayFrames[idx];
+  // Suppress V4 diff effects during replay scrubbing — they would fire
+  // spuriously on every frame change. Instead, we render state directly.
+  prevState = null; // reset so laneEffects/tagScanEffects skip
+  lastCommandSeq = null;
+  render(frame);
+  prevState = frame; // set for next frame's diff
+  replayFrame.textContent = `Frame ${idx + 1}/${replayFrames.length}`;
+  roundEl.textContent = `Round ${frame.round || '—'}`;
+}
+
+// Mode toggle handlers.
+if (btnModeLive) {
+  btnModeLive.addEventListener('click', () => {
+    liveMode = true;
+    replayActive = false;
+    btnModeLive.classList.add('active');
+    btnModeReplay.classList.remove('active');
+    replayPanel.hidden = true;
+    connEl.textContent = 'Connected';
+    connEl.className = 'footer-item connected';
+    // Remove replay badge.
+    const badge = document.querySelector('.replay-badge');
+    if (badge) badge.remove();
+  });
+}
+
+if (btnModeReplay) {
+  btnModeReplay.addEventListener('click', () => {
+    liveMode = false;
+    btnModeReplay.classList.add('active');
+    btnModeLive.classList.remove('active');
+    replayPanel.hidden = false;
+    connEl.textContent = 'Replay';
+    connEl.className = 'footer-item disconnected';
+    // Add replay badge.
+    if (!document.querySelector('.replay-badge')) {
+      const badge = document.createElement('div');
+      badge.className = 'replay-badge';
+      badge.textContent = 'REPLAY — reconstructed from committed records';
+      document.querySelector('main').appendChild(badge);
+    }
+  });
+}
+
+if (btnReplayLoad) {
+  btnReplayLoad.addEventListener('click', loadReplay);
+}
+
+if (replayCapability) {
+  replayCapability.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') loadReplay();
+  });
+}
+
+if (replaySlider) {
+  replaySlider.addEventListener('input', () => {
+    const idx = parseInt(replaySlider.value, 10);
+    renderReplayFrame(idx);
+  });
+}
 
 // ── V5: entity inspection ───────────────────────────────────────────────
 //

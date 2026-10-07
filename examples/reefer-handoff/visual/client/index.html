@@ -40,6 +40,23 @@
         <input type="range" id="speed-slider" min="0.5" max="5" step="0.5" value="1" aria-label="Simulation speed">
         <span id="speed-value">1.0×</span>
       </div>
+      <div class="mode-toggle">
+        <button id="btn-mode-live" class="mode-btn active" aria-label="Live mode">Live</button>
+        <button id="btn-mode-replay" class="mode-btn" aria-label="Replay mode">Replay</button>
+      </div>
+    </div>
+    <!-- V6: replay panel -->
+    <div id="replay-panel" hidden>
+      <div id="replay-setup">
+        <label for="replay-capability">Capability</label>
+        <input type="text" id="replay-capability" placeholder="Enter capability token" aria-label="Capability token">
+        <button id="btn-replay-load" aria-label="Load replay">Load</button>
+        <span id="replay-status"></span>
+      </div>
+      <div id="replay-scrub" hidden>
+        <input type="range" id="replay-slider" min="0" max="0" value="0" aria-label="Replay scrubber">
+        <span id="replay-frame">Frame 1/1</span>
+      </div>
     </div>
     <!-- V5: entity detail panel -->
     <aside id="detail-panel" hidden>
