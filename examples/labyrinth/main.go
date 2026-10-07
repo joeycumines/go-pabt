@@ -17,6 +17,10 @@ import (
 	"os/signal"
 	"syscall"
 	"time"
+
+	"github.com/joeycumines/go-pabt/examples/labyrinth/loop"
+	"github.com/joeycumines/go-pabt/examples/labyrinth/maze"
+	"github.com/joeycumines/go-pabt/examples/labyrinth/world"
 )
 
 //go:embed client
@@ -35,6 +39,14 @@ func main() {
 		*seed = binary.LittleEndian.Uint64(b[:])
 	}
 
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	// Build the world and authoritative loop.
+	m := maze.Generate(*seed, 21, 21)
+	w := world.New(m)
+	gameLoop := loop.New(w)
+
 	ln, err := net.Listen("tcp", *addr)
 	if err != nil {
 		log.Fatalf("labyrinth: listen %s: %v", *addr, err)
@@ -50,22 +62,25 @@ func main() {
 
 	srv := &http.Server{Handler: mux}
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-
 	go func() {
 		if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			log.Fatalf("labyrinth: serve: %v", err)
 		}
 	}()
 
+	// Start the authoritative loop.
+	go gameLoop.Run(ctx)
+
 	log.Printf("GAME  http://%s/  seed %d", ln.Addr(), *seed)
 
 	<-ctx.Done()
+
+	// Shutdown the HTTP server.
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		log.Printf("labyrinth: shutdown: %v", err)
 	}
+
 	log.Printf("labyrinth: stopped")
 }
