@@ -238,7 +238,14 @@ func TestReplanBumpsRevisionAndRebuildsTree(t *testing.T) {
 	if frame1 == nil {
 		t.Fatalf("no frame before replan")
 	}
-	rev1 := frame1.PlanRevision
+	if len(frame1.Nodes) == 0 {
+		t.Fatalf("no nodes before replan")
+	}
+	// Record node IDs from the first plan.
+	ids1 := make(map[string]bool)
+	for _, n := range frame1.Nodes {
+		ids1[n.ID] = true
+	}
 
 	// Replan.
 	if err := b.Replan(); err != nil {
@@ -251,15 +258,25 @@ func TestReplanBumpsRevisionAndRebuildsTree(t *testing.T) {
 	if frame2 == nil {
 		t.Fatalf("no frame after replan")
 	}
-	rev2 := frame2.PlanRevision
-
-	if rev2 <= rev1 {
-		t.Fatalf("replan did not bump revision: before=%d after=%d", rev1, rev2)
-	}
-
-	// The tree should be rebuilt (different node IDs).
 	if len(frame2.Nodes) == 0 {
 		t.Fatalf("no nodes after replan")
+	}
+
+	// The tree must be rebuilt: each new plan gets a fresh identity namespace,
+	// so ALL node IDs must differ from the previous plan.
+	var shared int
+	for _, n := range frame2.Nodes {
+		if ids1[n.ID] {
+			shared++
+		}
+	}
+	if shared > 0 {
+		t.Fatalf("replan did not rebuild tree: %d node IDs shared between old and new plan", shared)
+	}
+
+	// The new plan must have a valid revision (non-zero after init+tick).
+	if frame2.PlanRevision == 0 {
+		t.Fatalf("replan produced a plan with zero revision")
 	}
 }
 

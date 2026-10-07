@@ -133,7 +133,7 @@ func (a *SearchAction) Conditions() []Conditions {
 
 func (a *SearchAction) Effects() Effects {
 	return Effects{
-		&effect{K: KeyPlayerDetected, V: true},
+		&effect{K: KeySearchExhausted, V: true},
 	}
 }
 
