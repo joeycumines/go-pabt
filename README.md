@@ -174,184 +174,19 @@ export.
 calls it: every route it serves answers from a committed record, so a browser
 reading history cannot race a tick that is still expanding the tree.
 
-## Debug Server
+## Labyrinth
 
-The `pabtdebug` package serves a plan's recorded history over HTTP and to a
-browser. It records every tick into a store on disk, so the history survives a
-restart, is reconstructable, and can be exported and imported as a verified
-bundle. No route on it reads a live plan.
+ARIADNE is a networked first-person maze game where PA-BT planners visibly
+drive every hunter. The browser page renders each hunter's live plan tree
+while the game is being played — the BT explorer is part of the game, not a
+separate tool.
 
-### Setup
-
-```go
-ctx := context.Background()
-
-store, err := pabtdebug.OpenSQLiteStore(ctx, pabtdebug.SQLiteStoreConfig{
-    Path: "run.db",
-})
-if err != nil {
-    return err
-}
-defer store.Close()
-
-identity, err := store.Bootstrap(ctx, pabtdebug.BootstrapRequest{
-    PlanID: "my-plan",
-    RunID:  "my-run",
-    Title:  "My run",
-})
-if err != nil {
-    return err
-}
-
-// A captured planner is what the session drives. NewCaptured is opt-in; a plan
-// built with New behaves exactly as it always did. The goal is a slice of
-// condition groups, not a flat list: each element is the set of conditions that
-// must all hold for one goal.
-planner, err := pabt.NewCaptured[MyCondition](state, goal)
-if err != nil {
-    return err
-}
-
-server, err := pabtdebug.NewDurableServer(store, pabtdebug.DurableServerConfig{
-    Addr: "127.0.0.1:0", // empty port asks the kernel for one
-})
-if err != nil {
-    return err
-}
-defer server.Close()
-
-session, err := pabtdebug.OpenSession(ctx, store, planner, pabtdebug.SessionConfig{
-    Identity: identity,
-    Announce: server.Announce,
-})
-if err != nil {
-    return err
-}
-
-// The capability is minted by the server and is written to no file and no log.
-// Printing it is the application's job; that is how an operator obtains it.
-fmt.Println("debugger at", server.Addr())
-fmt.Println("capability", server.Capability())
-
-go server.Start()
-
-// Each tick goes through the session, which orders intent, execution, bundle,
-// and commit. Every path out of Tick either commits exactly one terminal record
-// or returns an error with the sequence released, so a tick is never half
-// recorded and a sequence is never used without a record.
-result := session.Tick(ctx)
-if result.Err != nil {
-    return result.Err
-}
-```
-
-The listener is created by `NewDurableServer` rather than by `Start`, so the
-address is known before anything is served. It binds loopback only, and a
-hostname is refused rather than resolved. This is a trusted-local debugger: the
-loopback listener is the first boundary and the capability is the second.
-
-### Durable endpoints
-
-Every route under `/debug/pabt/` requires the `X-PABT-Capability` header. The
-token is read from the header so it never reaches a URL, an access log, a
-referrer, or a shell history.
-
-The exception is the client shell, which is the subtree `/debug/pabt/ui` and
-everything under it — the document and its assets. It carries no record and no
-token; see [Browser client](#browser-client).
-
-| Endpoint | Description |
-|---|---|
-| `GET /debug/pabt/state` | Store identity, generation, recovery, the active run and its head. A client bootstraps from this. |
-| `GET /debug/pabt/records?after=N` | A bounded page of whole records, plus a cursor for the position it leaves the client at. |
-| `GET /debug/pabt/records/{n}` | One whole record. |
-| `GET /debug/pabt/trees/{n}` | The tree that record committed. |
-| `GET /debug/pabt/representations/{n}` | That tree plus the delta that produced it and a named base. |
-| `GET /debug/pabt/stream?cursor=` | SSE. A `behind` event ends the connection with a cursor to resume from. |
-| `GET /debug/pabt/cursor?after=N` | Mints a cursor, so a client never has to construct one. |
-| `GET /debug/pabt/export` | The run's history as a bundle, media type `application/vnd.pabtdebug.bundle`. |
-| `POST /debug/pabt/import` | Stages a bundle and activates it as an independently rewritten session. |
-
-The export's digest is in the `X-PABT-Bundle-SHA256` response header. A bundle
-is unkeyed, so every digest in it is recomputable for free: what it proves is
-damage, truncation, reordering, and frame exchange, never authorship.
-
-The routes are registered in `durableserver.go`; export and import are in
-`durabletransfer.go` and the stream in `durablestream.go`.
-
-### Browser client
-
-`GET /debug/pabt/ui` serves the client — `index.html`, `app.css`, and eight ES
-modules, listed in `clientAssets` in `pabtdebug/uiclient.go`. A request cannot
-name a file that is not in that map.
-
-The shell is served **outside** the guarded subtree, and that is deliberate: it
-carries no record and no token, and keeping it out is what leaves "every route
-requires the capability" true as a property. The consequence is that the shell is
-reachable by anything that can reach the port, and the token is what keeps the
-history private. The page asks for the capability and keeps it in
-`sessionStorage`, which dies with the tab.
-
-The client reads history, not a live plan. Selecting an occurrence shows its
-preconditions with the four evidence fields — expected, current, observed, and
-uncertainty — each labelled separately. An expected value the application did not
-declare renders as unavailable, with the record's own reason; it is never inferred
-from the condition's key.
-
-## Examples
-
-### tcell-pick-and-place
-
-![tcell-pick-and-place demo 1](https://imgur.com/W0NfhSY.gif "A demonstration of the example")
+All labyrinth code is behind `//go:build example`, so it is invisible to
+`go build ./...` and `go test ./...`.
 
 ```
-go run -tags example ./examples/tcell-pick-and-place
+go run -tags example ./examples/labyrinth
 ```
 
-It is a terminal application, so it needs a real TTY; without one it reports
-`screen init error: open /dev/tty` on stderr and exits 1. Pass `-logfile=path` to
-send its log to a file, and `-exit` to stop once every plan succeeds.
-
-### reefer-handoff — contract written, not yet implemented
-
-Three autonomous yard tractors must move three reefer containers from quay
-staging through one shared transfer bay into three powered slots before a vessel
-cutoff at round 120. A wind controller closes a lane, one RFID tag will not read,
-two tractors contend for the single bay, and a placement is refused after a slot
-loses power. The contract is
-[`examples/reefer-handoff/DESIGN.md`](examples/reefer-handoff/DESIGN.md); it
-records the physical system, the actors, the incident, the plan/job relationship,
-the success and failure conditions, the debugger proof, and the
-`go-eventloop v0.1.0` and pabt API contracts. There is no Go source here yet.
-
-### harbor-panic — retired
-
-A load fixture rather than a product demo: four carriers, six containers, four
-goals, a human forklift that steals them, and a storm that relocates the goals
-every 120 ticks. **Withdrawn on 2026-09-27** after adversarial review. It is kept
-for its benchmark and stress tests and is migration input for the replacement. Its
-README and storyboard are not requirements.
-
-All the examples are behind `//go:build example`, so they are invisible to
-`go build ./...` and to `go test ./...`, and they need the tag to run or to test.
-The retired fixture's checks are:
-
-```
-go test -tags example ./examples/harbor-panic/... -count=1
-go vet -tags example ./examples/harbor-panic/...
-```
-
-Harbor loads the planner and the simulator; it does not serve or attach to the
-debug server. Read its README as fixture context.
-
-## Research input
-
-`docs/research/` holds audits of behaviour-tree planning, partial observability,
-and pipeline linearization. They are **constraint input**: the reasoning a design
-was checked against, not evidence that anything in this repository behaves a
-particular way. Nothing in `docs/research/` is a specification this code
-implements, and a claim about what the code does has to be checked against the
-code.
-
-`docs/rearch.md` is the design input for the earlier in-memory debug server, which
-the durable server replaced. It is history, not a description of this code.
+Flags: `-addr` (default `127.0.0.1:0`) sets the listen address, `-seed`
+(default random) sets the maze seed.
