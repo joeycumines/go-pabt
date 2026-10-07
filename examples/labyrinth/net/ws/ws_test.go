@@ -146,118 +146,159 @@ func TestConnReadMessageFragmentation(t *testing.T) {
 // server's pong reply therefore blocks inside ReadMessage until something
 // drains the client side, so a dedicated client goroutine reads all inbound
 // frames while the test main goroutine drives the server.
+// TestPingPong uses a real TCP loopback connection. net.Pipe is synchronous
+// and unbuffered; bidirectional control-frame exchanges (server writes pong
+// while also needing to read the next frame) deadlock on it because every
+// Write blocks until the remote Read consumes the bytes. TCP has kernel
+// buffering, so writes and reads proceed independently.
 func TestPingPong(t *testing.T) {
-	server, client := net.Pipe()
-	defer server.Close()
-	defer client.Close()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer ln.Close()
 
-	pongCh := make(chan Frame, 1)
-	textCh := make(chan Frame, 1)
-	go func() {
-		buf := bufio.NewReader(client)
-		for {
-			f, err := ReadFrame(buf)
-			if err != nil {
-				return
-			}
-			switch f.Opcode {
-			case OpPong:
-				pongCh <- f
-			case OpText:
-				textCh <- f
-				return
-			}
-		}
-	}()
+	type result struct {
+		op      Opcode
+		payload []byte
+		err     error
+	}
+	serverDone := make(chan result, 1)
 
-	// Send ping, then the text message that ends ReadMessage.
-	sendCh := make(chan error, 2)
+	// Server goroutine: accept, wrap in Conn, read messages.
 	go func() {
-		if err := WriteFrame(client, true, OpPing, []byte("ping-data"), nil); err != nil {
-			sendCh <- err
+		conn, err := ln.Accept()
+		if err != nil {
+			serverDone <- result{err: err}
 			return
 		}
-		sendCh <- WriteFrame(client, true, OpText, []byte("after-ping"), nil)
+		defer conn.Close()
+		srvConn := NewConn(conn, bufio.NewReader(conn), 10)
+		op, payload, err := srvConn.ReadMessage()
+		serverDone <- result{op: op, payload: payload, err: err}
 	}()
 
-	srvConn := NewConn(server, bufio.NewReader(server), 10)
-	op, payload, err := srvConn.ReadMessage()
+	// Client: dial and send ping then text.
+	client, err := net.DialTimeout("tcp", ln.Addr().String(), 2*time.Second)
 	if err != nil {
-		t.Fatalf("ReadMessage: %v", err)
+		t.Fatalf("dial: %v", err)
 	}
-	if op != OpText {
-		t.Errorf("opcode = %d, want OpText", op)
+	defer client.Close()
+	client.SetDeadline(time.Now().Add(5 * time.Second))
+
+	if err := WriteFrame(client, true, OpPing, []byte("ping-data"), nil); err != nil {
+		t.Fatalf("write ping: %v", err)
 	}
-	if string(payload) != "after-ping" {
-		t.Errorf("payload = %q, want %q", payload, "after-ping")
+	if err := WriteFrame(client, true, OpText, []byte("after-ping"), nil); err != nil {
+		t.Fatalf("write text: %v", err)
 	}
 
-	// The pong must have been sent in response to the ping.
-	select {
-	case pong := <-pongCh:
-		if string(pong.Payload) != "ping-data" {
-			t.Errorf("pong payload = %q, want %q", pong.Payload, "ping-data")
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("no pong received")
+	// Client reads the pong reply.
+	clientReader := bufio.NewReader(client)
+	pongFrame, err := ReadFrame(clientReader)
+	if err != nil {
+		t.Fatalf("read pong: %v", err)
 	}
-	for i := 0; i < 2; i++ {
-		if err := <-sendCh; err != nil {
-			t.Fatalf("client write %d: %v", i, err)
+	if pongFrame.Opcode != OpPong {
+		t.Fatalf("expected pong, got opcode %d", pongFrame.Opcode)
+	}
+	if string(pongFrame.Payload) != "ping-data" {
+		t.Errorf("pong payload = %q, want %q", pongFrame.Payload, "ping-data")
+	}
+
+	// Server must have returned the text message.
+	select {
+	case res := <-serverDone:
+		if res.err != nil {
+			t.Fatalf("server ReadMessage: %v", res.err)
 		}
+		if res.op != OpText {
+			t.Errorf("opcode = %d, want OpText", res.op)
+		}
+		if string(res.payload) != "after-ping" {
+			t.Errorf("payload = %q, want %q", res.payload, "after-ping")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("server timed out")
 	}
 }
 
-// TestCloseEcho tests that a close frame is echoed back. As with ping/pong,
-// a client goroutine drains inbound frames so the server's synchronous echo
-// write cannot deadlock the pipe.
+// TestCloseEcho uses a real TCP loopback connection for the same reason as
+// TestPingPong: bidirectional control-frame exchange deadlocks on net.Pipe.
 func TestCloseEcho(t *testing.T) {
-	server, client := net.Pipe()
-	defer server.Close()
-	defer client.Close()
-
-	echoCh := make(chan Frame, 1)
-	go func() {
-		buf := bufio.NewReader(client)
-		f, err := ReadFrame(buf)
-		if err == nil {
-			echoCh <- f
-		}
-	}()
-
-	sendCh := make(chan error, 1)
-	go func() {
-		closePayload := make([]byte, 2)
-		binary.BigEndian.PutUint16(closePayload, 1000)
-		sendCh <- WriteFrame(client, true, OpClose, closePayload, nil)
-	}()
-
-	srvConn := NewConn(server, bufio.NewReader(server), 10)
-	op, payload, err := srvConn.ReadMessage()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
-		t.Fatalf("ReadMessage: %v", err)
+		t.Fatalf("listen: %v", err)
 	}
-	if op != OpClose {
-		t.Errorf("opcode = %d, want OpClose", op)
+	defer ln.Close()
+
+	type result struct {
+		op      Opcode
+		payload []byte
+		err     error
 	}
-	if len(payload) < 2 {
-		t.Fatalf("close payload too short: %d", len(payload))
+	serverDone := make(chan result, 1)
+
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			serverDone <- result{err: err}
+			return
+		}
+		defer conn.Close()
+		srvConn := NewConn(conn, bufio.NewReader(conn), 10)
+		op, payload, err := srvConn.ReadMessage()
+		serverDone <- result{op: op, payload: payload, err: err}
+	}()
+
+	client, err := net.DialTimeout("tcp", ln.Addr().String(), 2*time.Second)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
 	}
-	code := binary.BigEndian.Uint16(payload[:2])
-	if code != 1000 {
-		t.Errorf("close code = %d, want 1000", code)
+	defer client.Close()
+	client.SetDeadline(time.Now().Add(5 * time.Second))
+
+	closePayload := make([]byte, 2)
+	binary.BigEndian.PutUint16(closePayload, 1000)
+	if err := WriteFrame(client, true, OpClose, closePayload, nil); err != nil {
+		t.Fatalf("write close: %v", err)
 	}
 
-	select {
-	case echo := <-echoCh:
-		if echo.Opcode != OpClose {
-			t.Errorf("expected close echo, got opcode %d", echo.Opcode)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("no close echo received")
+	// Read the echoed close frame.
+	clientReader := bufio.NewReader(client)
+	echoFrame, err := ReadFrame(clientReader)
+	if err != nil {
+		t.Fatalf("read close echo: %v", err)
 	}
-	if err := <-sendCh; err != nil {
-		t.Fatalf("client write: %v", err)
+	if echoFrame.Opcode != OpClose {
+		t.Fatalf("expected close echo, got opcode %d", echoFrame.Opcode)
+	}
+	if len(echoFrame.Payload) < 2 {
+		t.Fatalf("echo payload too short: %d", len(echoFrame.Payload))
+	}
+	echoCode := binary.BigEndian.Uint16(echoFrame.Payload[:2])
+	if echoCode != 1000 {
+		t.Errorf("echo close code = %d, want 1000", echoCode)
+	}
+
+	// Server must have returned the close frame.
+	select {
+	case res := <-serverDone:
+		if res.err != nil {
+			t.Fatalf("server ReadMessage: %v", res.err)
+		}
+		if res.op != OpClose {
+			t.Errorf("opcode = %d, want OpClose", res.op)
+		}
+		if len(res.payload) < 2 {
+			t.Fatalf("close payload too short: %d", len(res.payload))
+		}
+		code := binary.BigEndian.Uint16(res.payload[:2])
+		if code != 1000 {
+			t.Errorf("close code = %d, want 1000", code)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("server timed out")
 	}
 }
 
