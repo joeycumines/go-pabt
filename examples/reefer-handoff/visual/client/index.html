@@ -13,6 +13,7 @@
     <div class="title-left">
       <span class="app-title">REEFER HANDOFF</span>
       <span class="app-subtitle">Yard Simulation</span>
+      <button id="btn-help" aria-label="What am I watching?" title="What am I watching?">?</button>
     </div>
     <div class="title-right">
       <span id="status-round" class="status-item">Round —</span>
@@ -63,6 +64,42 @@
         <span id="replay-frame">Frame 1/1</span>
       </div>
     </div>
+    <!-- Help panel: plain-English description with everyday analogies -->
+    <aside id="help-panel" hidden>
+      <div class="help-header">
+        <span class="help-title">What you're watching</span>
+        <button id="help-close" aria-label="Close help">✕</button>
+      </div>
+      <div class="help-body">
+        <p>Three <strong>refrigerated trucks</strong> (the colored rectangles labeled T1, T2, T3) must pick up cold cargo containers and deliver them to powered parking spots before time runs out.</p>
+
+        <h3>The places</h3>
+        <ul>
+          <li><strong>STAGING</strong> — the loading dock. Everything starts here, like a warehouse parking lot.</li>
+          <li><strong>WEST / EAST</strong> — waypoints along the route, like intersections or rest stops.</li>
+          <li><strong>BAY</strong> — the transfer station. Only one truck at a time, like a single-lane car wash.</li>
+          <li><strong>SLOT-1/2/3</strong> — the destinations. Each is a powered parking spot with a plug, like an RV campground hookup. The cargo must stay cold, so it needs a powered slot.</li>
+        </ul>
+
+        <h3>The cargo</h3>
+        <p>Each container shows a temperature badge. <span style="color:#79c0ff">Blue</span> means deep freeze (−22°C, like your home freezer). <span style="color:#ffa657">Orange</span> means chilled (−8°C, like your fridge). Slots have minimum temperature ratings — cargo must go somewhere cold enough.</p>
+
+        <h3>The problems</h3>
+        <ul>
+          <li><strong>Wind lockout</strong> — a lane (road) closes, like a highway shut down in a storm. Trucks must reroute.</li>
+          <li><strong>Bay contention</strong> — two trucks want the BAY at once. One gets turned away, like a full drive-through.</li>
+          <li><strong>Power rejection</strong> — a truck arrives at a slot but the power is out, like plugging in an RV to a dead outlet. The truck must go elsewhere.</li>
+          <li><strong>RFID scan</strong> — a cargo's tracking tag gets read, like scanning a package barcode.</li>
+        </ul>
+
+        <h3>The goal</h3>
+        <p>Get all three cold containers from STAGING to their powered slots before the cutoff (round 120). Watch the trucks navigate, deal with closures, and deliver.</p>
+
+        <h3>Controls</h3>
+        <p><kbd>Space</kbd> pause/resume · <kbd>S</kbd> step one round · <kbd>+</kbd>/<kbd>−</kbd> speed · Click any entity to inspect it · Switch to <strong>Replay</strong> to scrub through recorded history.</p>
+      </div>
+    </aside>
+
     <!-- V5: entity detail panel -->
     <aside id="detail-panel" hidden>
       <div class="detail-header">

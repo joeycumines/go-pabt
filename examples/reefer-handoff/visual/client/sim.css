@@ -69,6 +69,26 @@ html, body {
   color: var(--text-dim);
 }
 
+#btn-help {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  color: var(--text-dim);
+  font-size: 13px;
+  font-weight: 700;
+  width: 22px;
+  height: 22px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: 8px;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+
+#btn-help:hover { background: rgba(255,255,255,0.08); color: var(--text); border-color: var(--text-dim); }
+#btn-help.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+
 .title-right {
   display: flex;
   gap: 16px;
@@ -437,6 +457,93 @@ html, body {
 #speed-value {
   font-variant-numeric: tabular-nums;
   min-width: 32px;
+  color: var(--text);
+}
+
+/* ── Help panel ──────────────────────────────────────────────────────── */
+#help-panel {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 440px;
+  max-width: calc(100vw - 40px);
+  max-height: calc(100vh - 120px);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.6);
+  z-index: 50;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+#help-panel[hidden] {
+  display: none;
+}
+
+.help-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.help-title { font-size: 15px; font-weight: 700; color: var(--text); }
+
+#help-close {
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  font-size: 16px;
+  cursor: pointer;
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+
+#help-close:hover { background: rgba(255,255,255,0.08); color: var(--text); }
+
+.help-body {
+  padding: 14px 16px 18px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text);
+  overflow-y: auto;
+}
+
+.help-body h3 {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--accent);
+  margin: 14px 0 6px;
+}
+
+.help-body h3:first-of-type { margin-top: 8px; }
+
+.help-body p { margin: 6px 0; color: var(--text); }
+
+.help-body ul {
+  margin: 4px 0 8px;
+  padding-left: 18px;
+  list-style: disc;
+}
+
+.help-body li { margin: 3px 0; color: var(--text); }
+.help-body li strong { color: var(--text); }
+
+.help-body kbd {
+  display: inline-block;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 5px;
+  font-size: 11px;
+  font-family: var(--font);
   color: var(--text);
 }
 

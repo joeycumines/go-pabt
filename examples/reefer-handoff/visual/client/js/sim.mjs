@@ -581,6 +581,27 @@ const loadingOverlay = document.getElementById('loading-overlay');
 pollState();
 setInterval(pollState, 200);
 
+// ── Help panel ──────────────────────────────────────────────────────────
+const btnHelp = document.getElementById('btn-help');
+const helpPanel = document.getElementById('help-panel');
+const helpClose = document.getElementById('help-close');
+
+if (btnHelp) {
+  btnHelp.addEventListener('click', () => {
+    if (helpPanel) {
+      helpPanel.hidden = !helpPanel.hidden;
+      btnHelp.classList.toggle('active', !helpPanel.hidden);
+    }
+  });
+}
+
+if (helpClose) {
+  helpClose.addEventListener('click', () => {
+    if (helpPanel) helpPanel.hidden = true;
+    if (btnHelp) btnHelp.classList.remove('active');
+  });
+}
+
 // ── V5: transport controls ──────────────────────────────────────────────
 //
 // The page drives the host transport gate through POST /sim/control. The
