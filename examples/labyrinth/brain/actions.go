@@ -75,10 +75,10 @@ func NewPursueAction(s *State) *PursueAction {
 }
 
 func (a *PursueAction) Conditions() []Conditions {
-	// Pursue requires the player to be detected and the minotaur not stunned.
+	// Pursue requires the player to be detected AND the minotaur not stunned.
+	// Both conditions are in one AND group (a single Conditions slice).
 	return []Conditions{
-		{&BoolCond{K: KeyPlayerDetected, Want: true}},
-		{&BoolCond{K: KeyStunned, Want: false}},
+		{&BoolCond{K: KeyPlayerDetected, Want: true}, &BoolCond{K: KeyStunned, Want: false}},
 	}
 }
 
@@ -142,9 +142,10 @@ func (a *SearchAction) Node() bt.Node {
 		if a.path == nil && !a.done {
 			a.path = a.state.maze.Path(*a.state.selfPos, a.state.belief.LastKnownPos)
 			if a.path == nil {
-				// Cannot reach last-known: search exhausted.
+				// Cannot reach last-known: the search is exhausted.
+				a.done = true
 				a.state.belief.SearchExhausted = true
-				return bt.Failure, nil
+				return bt.Success, nil
 			}
 		}
 		status, err := a.advance()
@@ -152,9 +153,10 @@ func (a *SearchAction) Node() bt.Node {
 			return bt.Failure, err
 		}
 		if status == bt.Success {
-			// Arrived at last-known: the player is not here.
+			// Arrived at last-known and the player is not here (they would
+			// have been re-detected by UpdateBelief otherwise): the search is
+			// exhausted.
 			a.state.belief.SearchExhausted = true
-			return bt.Failure, nil
 		}
 		return status, nil
 	})

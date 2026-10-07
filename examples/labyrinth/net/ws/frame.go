@@ -22,10 +22,10 @@ const (
 
 // Frame is one WebSocket frame.
 type Frame struct {
-	FIN    bool
-	Opcode Opcode
-	Masked bool
-	Mask   [4]byte
+	FIN     bool
+	Opcode  Opcode
+	Masked  bool
+	Mask    [4]byte
 	Payload []byte
 }
 
@@ -116,23 +116,25 @@ func WriteFrame(w io.Writer, fin bool, opcode Opcode, payload []byte, mask *[4]b
 		hdr = append(hdr, mask[:]...)
 	}
 
-	if _, err := w.Write(hdr); err != nil {
-		return err
-	}
-
+	// Build the entire frame (header + payload) and issue a single Write so
+	// the frame is atomic on the wire. Splitting header and payload into two
+	// writes deadlocks on synchronous transports (net.Pipe) and risks
+	// interleaving under concurrent writes on real sockets.
 	if n == 0 {
-		return nil
+		_, err := w.Write(hdr)
+		return err
 	}
 
 	if masked {
 		buf := make([]byte, n)
 		copy(buf, payload)
 		unmask(buf, *mask)
-		_, err := w.Write(buf)
-		return err
+		hdr = append(hdr, buf...)
+	} else {
+		hdr = append(hdr, payload...)
 	}
 
-	_, err := w.Write(payload)
+	_, err := w.Write(hdr)
 	return err
 }
 

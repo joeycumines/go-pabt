@@ -110,7 +110,10 @@ func TestLossOfSightTriggersSearch(t *testing.T) {
 	for i := 0; i < 200; i++ {
 		snap = w.Copy()
 		b.UpdateBelief(snap, minotaur)
-		b.Tick("attempt")
+		_, diag := b.TickDebug("attempt")
+		if i < 10 || i%20 == 0 {
+			t.Logf("tick %d: %s", i, diag)
+		}
 		if b.belief.SearchExhausted {
 			break
 		}

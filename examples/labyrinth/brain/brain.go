@@ -3,6 +3,7 @@
 package brain
 
 import (
+	"fmt"
 	"sync/atomic"
 
 	"github.com/joeycumines/go-pabt"
@@ -127,6 +128,34 @@ func (b *Brain) Tick(attemptID string) *BTFrame {
 	frame := EncodeFrame(result.Snapshot, path)
 	b.lastFrame = frame
 	return frame
+}
+
+// TickDebug runs one planner tick and returns the frame plus a human-readable
+// diagnostic of the tick outcome. For debugging only.
+func (b *Brain) TickDebug(attemptID string) (*BTFrame, string) {
+	if b.paused {
+		return nil, "paused"
+	}
+	result := b.plan.TickCaptured(pabt.TickEnvironment{AttemptID: attemptID})
+	path := pabt.GetPath(b.plan)
+	frame := EncodeFrame(result.Snapshot, path)
+	b.lastFrame = frame
+
+	diag := fmt.Sprintf("status=%v statusKnown=%v", result.Status, result.StatusKnown)
+	if result.PlannerError != nil {
+		diag += " plannerErr=" + result.PlannerError.Message
+	}
+	if result.CaptureError != nil {
+		diag += " captureErr=" + result.CaptureError.Message
+	}
+	diag += fmt.Sprintf(" rev=%d nodes=%d conds=%d actions=%d execs=%d path=%q",
+		result.Snapshot.PlanRevision, len(result.Snapshot.Nodes),
+		len(result.Snapshot.Conditions), len(result.Snapshot.Actions),
+		len(result.Snapshot.Executions), frame.Path)
+	for _, c := range result.Snapshot.Conditions {
+		diag += fmt.Sprintf(" cond[%v truth=%v known=%v]", c.Key, c.Truth, c.TruthKnown)
+	}
+	return frame, diag
 }
 
 // LastFrame returns the most recent encoded BT frame.

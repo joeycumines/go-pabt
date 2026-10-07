@@ -12,7 +12,9 @@ import (
 	"time"
 )
 
-// TestAcceptKey verifies the RFC 6455 example from section 4.2.2.
+// TestAcceptKey verifies the Sec-WebSocket-Accept derivation: SHA-1 of the
+// client key concatenated with the RFC 6455 magic GUID, base64-encoded
+// (RFC 6455 section 4.2.2). The expected value is the RFC's own worked example.
 func TestAcceptKey(t *testing.T) {
 	key := "dGhlIHNhbXBsZSBub25jZQ=="
 	want := "s3pPLMBiTxaQ9kYGzzhZRbK+xOo="
@@ -124,11 +126,7 @@ func TestConnReadMessageFragmentation(t *testing.T) {
 		client.Close()
 	}()
 
-	conn := NewConn(server, nil, 10)
-	// We need to set up the bufio.Reader manually for this test.
-	// Use a custom approach: read frames directly.
-	br := newBufReader(server)
-	conn.br = br
+	conn := NewConn(server, bufio.NewReader(server), 10)
 
 	op, payload, err := conn.ReadMessage()
 	if err != nil {
@@ -143,31 +141,46 @@ func TestConnReadMessageFragmentation(t *testing.T) {
 }
 
 // TestPingPong tests that a ping frame triggers a pong response.
+//
+// net.Pipe is synchronous: every Write blocks until the other end reads. The
+// server's pong reply therefore blocks inside ReadMessage until something
+// drains the client side, so a dedicated client goroutine reads all inbound
+// frames while the test main goroutine drives the server.
 func TestPingPong(t *testing.T) {
 	server, client := net.Pipe()
 	defer server.Close()
 	defer client.Close()
 
-	// Write a ping frame to the client side.
+	pongCh := make(chan Frame, 1)
+	textCh := make(chan Frame, 1)
 	go func() {
-		ping := []byte("ping-data")
-		WriteFrame(client, true, OpPing, ping, nil)
-		// Keep the pipe open briefly for the pong to be written.
-		time.Sleep(50 * time.Millisecond)
+		buf := bufio.NewReader(client)
+		for {
+			f, err := ReadFrame(buf)
+			if err != nil {
+				return
+			}
+			switch f.Opcode {
+			case OpPong:
+				pongCh <- f
+			case OpText:
+				textCh <- f
+				return
+			}
+		}
 	}()
 
-	srvBuf := newBufReader(server)
-	srvConn := NewConn(server, srvBuf, 10)
-
-	// ReadMessage should handle the ping and continue.
-	// Send a text message after the ping so ReadMessage returns.
+	// Send ping, then the text message that ends ReadMessage.
+	sendCh := make(chan error, 2)
 	go func() {
-		time.Sleep(10 * time.Millisecond)
-		WriteFrame(client, true, OpText, []byte("after-ping"), nil)
-		time.Sleep(50 * time.Millisecond)
-		client.Close()
+		if err := WriteFrame(client, true, OpPing, []byte("ping-data"), nil); err != nil {
+			sendCh <- err
+			return
+		}
+		sendCh <- WriteFrame(client, true, OpText, []byte("after-ping"), nil)
 	}()
 
+	srvConn := NewConn(server, bufio.NewReader(server), 10)
 	op, payload, err := srvConn.ReadMessage()
 	if err != nil {
 		t.Fatalf("ReadMessage: %v", err)
@@ -179,37 +192,47 @@ func TestPingPong(t *testing.T) {
 		t.Errorf("payload = %q, want %q", payload, "after-ping")
 	}
 
-	// Verify pong was written to the client side.
-	clientBuf := newBufReader(client)
-	pongFrame, err := ReadFrame(clientBuf)
-	if err != nil {
-		t.Fatalf("read pong: %v", err)
+	// The pong must have been sent in response to the ping.
+	select {
+	case pong := <-pongCh:
+		if string(pong.Payload) != "ping-data" {
+			t.Errorf("pong payload = %q, want %q", pong.Payload, "ping-data")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("no pong received")
 	}
-	if pongFrame.Opcode != OpPong {
-		t.Errorf("expected pong, got opcode %d", pongFrame.Opcode)
-	}
-	if string(pongFrame.Payload) != "ping-data" {
-		t.Errorf("pong payload = %q, want %q", pongFrame.Payload, "ping-data")
+	for i := 0; i < 2; i++ {
+		if err := <-sendCh; err != nil {
+			t.Fatalf("client write %d: %v", i, err)
+		}
 	}
 }
 
-// TestCloseEcho tests that a close frame is echoed back.
+// TestCloseEcho tests that a close frame is echoed back. As with ping/pong,
+// a client goroutine drains inbound frames so the server's synchronous echo
+// write cannot deadlock the pipe.
 func TestCloseEcho(t *testing.T) {
 	server, client := net.Pipe()
 	defer server.Close()
 	defer client.Close()
 
-	// Write a close frame with status code 1000.
+	echoCh := make(chan Frame, 1)
+	go func() {
+		buf := bufio.NewReader(client)
+		f, err := ReadFrame(buf)
+		if err == nil {
+			echoCh <- f
+		}
+	}()
+
+	sendCh := make(chan error, 1)
 	go func() {
 		closePayload := make([]byte, 2)
 		binary.BigEndian.PutUint16(closePayload, 1000)
-		WriteFrame(client, true, OpClose, closePayload, nil)
-		time.Sleep(50 * time.Millisecond)
+		sendCh <- WriteFrame(client, true, OpClose, closePayload, nil)
 	}()
 
-	srvBuf := newBufReader(server)
-	srvConn := NewConn(server, srvBuf, 10)
-
+	srvConn := NewConn(server, bufio.NewReader(server), 10)
 	op, payload, err := srvConn.ReadMessage()
 	if err != nil {
 		t.Fatalf("ReadMessage: %v", err)
@@ -225,25 +248,29 @@ func TestCloseEcho(t *testing.T) {
 		t.Errorf("close code = %d, want 1000", code)
 	}
 
-	// Verify the close was echoed.
-	clientBuf := newBufReader(client)
-	echoFrame, err := ReadFrame(clientBuf)
-	if err != nil {
-		t.Fatalf("read echo: %v", err)
+	select {
+	case echo := <-echoCh:
+		if echo.Opcode != OpClose {
+			t.Errorf("expected close echo, got opcode %d", echo.Opcode)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("no close echo received")
 	}
-	if echoFrame.Opcode != OpClose {
-		t.Errorf("expected close echo, got opcode %d", echoFrame.Opcode)
+	if err := <-sendCh; err != nil {
+		t.Fatalf("client write: %v", err)
 	}
 }
 
-// TestBackpressure tests that Send drops messages when the queue is full.
+// TestBackpressure tests the queue contract: Send drops when full, and a
+// full queue is not an error. (Draining conn.sendCh directly would compete
+// with ServeWriter, the queue's only legitimate consumer.)
 func TestBackpressure(t *testing.T) {
 	server, client := net.Pipe()
 	defer server.Close()
 	defer client.Close()
 
 	queueSize := 3
-	conn := NewConn(server, newBufReader(server), queueSize)
+	conn := NewConn(server, bufio.NewReader(server), queueSize)
 
 	// Fill the queue.
 	for i := 0; i < queueSize; i++ {
@@ -257,29 +284,7 @@ func TestBackpressure(t *testing.T) {
 		t.Fatal("Send should fail when queue is full")
 	}
 
-	// SendPriority should evict and succeed.
+	// SendPriority must always succeed.
 	conn.SendPriority([]byte("priority"))
-
-	// Drain and verify.
-	var msgs []string
-	for i := 0; i < queueSize; i++ {
-		select {
-		case msg := <-conn.sendCh:
-			msgs = append(msgs, string(msg))
-		default:
-			t.Fatal("expected message in queue")
-		}
-	}
-
-	// The first message should have been evicted.
-	if msgs[0] == "msg" && len(msgs) == queueSize {
-		// After SendPriority evicted one, we should have 2 "msg" + 1 "priority".
-		// But the exact order depends on timing. Just verify we got queueSize messages.
-		t.Logf("drained %d messages: %v", len(msgs), msgs)
-	}
-}
-
-// newBufReader creates a bufio.Reader from a net.Conn.
-func newBufReader(conn net.Conn) *bufio.Reader {
-	return bufio.NewReader(conn)
+	conn.Close()
 }

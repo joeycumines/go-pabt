@@ -37,7 +37,8 @@ type SnapshotPayload struct {
 
 // RunnerState is the player's state in a snapshot.
 type RunnerState struct {
-	X, Y     float64 `json:"x,y"`
+	X        float64 `json:"x"`
+	Y        float64 `json:"y"`
 	Yaw      float64 `json:"yaw"`
 	Pitch    float64 `json:"pitch"`
 	Grounded bool    `json:"grounded"`
@@ -46,7 +47,8 @@ type RunnerState struct {
 // MinotaurState is one minotaur's state in a snapshot.
 type MinotaurState struct {
 	ID      string  `json:"id"`
-	X, Y    float64 `json:"x,y"`
+	X       float64 `json:"x"`
+	Y       float64 `json:"y"`
 	Stunned bool    `json:"stunned"`
 }
 
@@ -63,19 +65,20 @@ type InputPayload struct {
 // BTPayload is a BT operation request.
 type BTPayload struct {
 	// For belief injection: the fake player position.
-	X, Y float64 `json:"x,y"`
+	X float64 `json:"x"`
+	Y float64 `json:"y"`
 }
 
 // Event types sent from server to client.
 const (
-	EventCaught   = "caught"
-	EventFired    = "fired"
-	EventStunned  = "stunned"
-	EventWin      = "win"
-	EventLose     = "lose"
-	EventReplan   = "replan"
-	EventSpawn    = "spawn"
-	EventBelief   = "belief"
+	EventCaught  = "caught"
+	EventFired   = "fired"
+	EventStunned = "stunned"
+	EventWin     = "win"
+	EventLose    = "lose"
+	EventReplan  = "replan"
+	EventSpawn   = "spawn"
+	EventBelief  = "belief"
 )
 
 // Event is a typed game event.

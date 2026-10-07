@@ -12,7 +12,7 @@ import (
 	"strings"
 )
 
-const magicGUID = "258EAFA5-E914-47DA-95CA-5AB5DC85B11B"
+const magicGUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 
 // AcceptKey computes the Sec-WebSocket-Accept value per RFC 6455 section 4.2.2.
 func AcceptKey(key string) string {

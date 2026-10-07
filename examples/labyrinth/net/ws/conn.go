@@ -17,13 +17,13 @@ type Conn struct {
 	br   *bufio.Reader
 
 	// Send queue. Bounded; drops oldest snapshots under pressure.
-	sendCh   chan []byte
-	closeCh  chan struct{}
-	closed   atomic.Bool
+	sendCh  chan []byte
+	closeCh chan struct{}
+	closed  atomic.Bool
 
 	// Fragmentation reassembly.
-	fragBuf   []byte
-	fragOp    Opcode
+	fragBuf []byte
+	fragOp  Opcode
 
 	writeMu sync.Mutex
 }
