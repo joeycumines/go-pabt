@@ -713,6 +713,10 @@ html, body {
   min-width: 320px;
 }
 
+#replay-panel[hidden] {
+  display: none;
+}
+
 #replay-setup {
   display: flex;
   align-items: center;
@@ -771,6 +775,10 @@ html, body {
   display: flex;
   align-items: center;
   gap: 10px;
+}
+
+#replay-scrub[hidden] {
+  display: none;
 }
 
 #replay-slider {
