@@ -179,7 +179,12 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request, g *game.Game) {
 				if err != nil {
 					continue
 				}
-				conn.SendPriority(data) // events are priority (never drop)
+				// Write events on the socket directly. They must not be
+				// buffered into a side channel that nothing drains, or
+				// every gameplay event (clash, stun, hit, death) is lost.
+				if err := conn.WriteMessage(ws.OpText, data); err != nil {
+					return
+				}
 			}
 		}
 	}()
