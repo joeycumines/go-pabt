@@ -45,6 +45,9 @@ type ActorState struct {
 	StrategyTimer         int
 	TargetPos             maze.Vec2
 	HasTarget             bool
+	// Path is the remaining A* waypoint list toward TargetPos (front =
+	// next waypoint). Empty means replan on the next movement tick.
+	Path []maze.Vec2
 }
 
 // factionCombat processes inter-faction combat. Rival-faction actors within
@@ -86,6 +89,11 @@ func (g *Game) factionCombat(w *world.World) {
 					"b": b.Element,
 				},
 			})
+			// A lethal counter-hit ends the actor's tick immediately: a
+			// dead actor must not hit a second rival in the same pass.
+			if a.HP <= 0 {
+				break
+			}
 		}
 	}
 }
@@ -154,26 +162,34 @@ func (g *Game) tickStrategies(w *world.World) {
 		case hpFrac < 0.35:
 			st.Strategy = StrategyRetreat
 			if p, ok := g.homeTerritoryPos(home); ok {
-				st.TargetPos, st.HasTarget = p, true
+				setStrategyTarget(st, p)
 			}
 		case hpFrac > 0.6:
 			if target, ok := nearestRival(w, i, m.Element); ok {
 				st.Strategy = StrategyRaid
-				st.TargetPos, st.HasTarget = target, true
+				setStrategyTarget(st, target)
 			} else {
 				st.Strategy = StrategyPatrol
 				if p, ok := g.homeTerritoryPos(home); ok {
-					st.TargetPos, st.HasTarget = p, true
+					setStrategyTarget(st, p)
 				}
 			}
 		default:
 			st.Strategy = StrategyPatrol
 			if p, ok := g.homeTerritoryPos(home); ok {
-				st.TargetPos, st.HasTarget = p, true
+				setStrategyTarget(st, p)
 			}
 		}
 		m.Strategy = st.Strategy
 	}
+}
+
+// setStrategyTarget retargets an actor and drops any cached path so the
+// next movement tick replans toward the new objective.
+func setStrategyTarget(st *ActorState, p maze.Vec2) {
+	st.TargetPos = p
+	st.HasTarget = true
+	st.Path = nil
 }
 
 // nearestRival returns the position of the closest rival-faction actor to
@@ -197,9 +213,11 @@ func nearestRival(w *world.World, i, elem int) (maze.Vec2, bool) {
 	return best, bestD >= 0
 }
 
-// applyStrategyMovement steers each actor toward its strategy target while
-// its brain is not pursuing the player, respecting maze collision and the
-// actor's archetype speed.
+// applyStrategyMovement steers each actor along an A* path toward its
+// strategy target while the brain owns neither pursuit nor an active
+// search, at the actor's archetype speed. Direct steering is not enough:
+// strategy targets routinely sit behind walls, and a straight-line step
+// just wedges the actor into the wall it is steering at.
 func (g *Game) applyStrategyMovement(w *world.World) {
 	states := g.actorStates
 	for i, m := range w.Minotaurs {
@@ -210,25 +228,51 @@ func (g *Game) applyStrategyMovement(w *world.World) {
 		if !st.HasTarget {
 			continue
 		}
-		if i < len(g.Brains) && g.Brains[i].BeliefCopy().PlayerDetected {
-			continue
+		if i < len(g.Brains) {
+			b := g.Brains[i].BeliefCopy()
+			// Yield while the brain is pursuing OR searching a
+			// last-known position: its own move actions already steer
+			// the actor, and stepping here too would double the
+			// actor's speed toward a different target.
+			if b.PlayerDetected || (b.HasLastKnown && !b.SearchExhausted) {
+				continue
+			}
 		}
 		dx := st.TargetPos.X - m.Pos.X
 		dy := st.TargetPos.Y - m.Pos.Y
-		d := math.Hypot(dx, dy)
-		if d < 0.4 {
+		if dx*dx+dy*dy < 0.4*0.4 {
 			st.HasTarget = false
+			st.Path = nil
 			continue
 		}
-		step := actorSpeed(ActorType(m.Type))
-		if step > d {
-			step = d
+		if len(st.Path) == 0 {
+			st.Path = g.Maze.Path(m.Pos, st.TargetPos)
+			if len(st.Path) == 0 {
+				// Unreachable objective: drop it rather than wedge.
+				st.HasTarget = false
+				continue
+			}
 		}
-		next := maze.Vec2{
-			X: m.Pos.X + dx/d*step,
-			Y: m.Pos.Y + dy/d*step,
+		// Waypoints are open-cell centers on a 4-connected path, so
+		// segment travel cannot clip a wall.
+		remaining := actorSpeed(ActorType(m.Type))
+		for remaining > 0 && len(st.Path) > 0 {
+			wp := st.Path[0]
+			wx := wp.X - m.Pos.X
+			wy := wp.Y - m.Pos.Y
+			d := math.Hypot(wx, wy)
+			if d <= remaining {
+				m.Pos = wp
+				st.Path = st.Path[1:]
+				remaining -= d
+			} else {
+				m.Pos = maze.Vec2{
+					X: m.Pos.X + wx/d*remaining,
+					Y: m.Pos.Y + wy/d*remaining,
+				}
+				remaining = 0
+			}
 		}
-		m.Pos = g.Maze.Resolve(next, maze.Radius)
 	}
 }
 

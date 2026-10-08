@@ -225,6 +225,22 @@ func DecodeBT(env *Envelope) (*BTPayload, error) {
 	return &bt, nil
 }
 
+// DebugPayload is a debugging command from the integrated debug tooling
+// (wire type "debug"): an authoritative override of the runner's position.
+type DebugPayload struct {
+	X float64 `json:"x"`
+	Y float64 `json:"y"`
+}
+
+// DecodeDebug parses a debug payload from an envelope.
+func DecodeDebug(env *Envelope) (*DebugPayload, error) {
+	var d DebugPayload
+	if err := json.Unmarshal(env.Payload, &d); err != nil {
+		return nil, err
+	}
+	return &d, nil
+}
+
 // DecodeMaze parses a maze payload from an envelope.
 func DecodeMaze(env *Envelope) (*MazePayload, error) {
 	var m MazePayload

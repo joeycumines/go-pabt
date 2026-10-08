@@ -50,14 +50,49 @@ func TestFactionCombatDamagesRivalsOnly(t *testing.T) {
 		t.Fatalf("cooldown not respected: %d->%d, %d->%d", hpA2, a.HP, hpB2, b.HP)
 	}
 
-	// Same faction: no friendly fire once cooldowns clear.
-	g.actorStates[0].FactionAttackCooldown = 0
-	g.actorStates[1].FactionAttackCooldown = 0
+	// Same faction: no friendly fire once cooldowns decay through the real
+	// tick path.
+	for i := 0; i < FactionCombatCooldown; i++ {
+		g.tickTimers(w)
+	}
+	if g.actorStates[0].FactionAttackCooldown != 0 || g.actorStates[1].FactionAttackCooldown != 0 {
+		t.Fatalf("cooldowns did not decay to zero: %d, %d",
+			g.actorStates[0].FactionAttackCooldown, g.actorStates[1].FactionAttackCooldown)
+	}
 	b.Element = int(ElementFire)
 	hpA3, hpB3 := a.HP, b.HP
 	g.factionCombat(w)
 	if a.HP != hpA3 || b.HP != hpB3 {
 		t.Fatalf("friendly fire: %d->%d, %d->%d", hpA3, a.HP, hpB3, b.HP)
+	}
+}
+
+func TestFactionCooldownDecaysThroughTicks(t *testing.T) {
+	g := newTestGame(t)
+	w := g.World
+
+	for k := 2; k < len(w.Minotaurs); k++ {
+		w.Minotaurs[k].Pos = maze.Vec2{X: 1.5 + 2*float64(k), Y: 18.5}
+	}
+	a, b := w.Minotaurs[0], w.Minotaurs[1]
+	a.Element, b.Element = int(ElementFire), int(ElementIce)
+	a.Pos = maze.Vec2{X: 5.5, Y: 5.5}
+	b.Pos = maze.Vec2{X: 6.0, Y: 5.5}
+
+	g.factionCombat(w)
+	if g.actorStates[0].FactionAttackCooldown != FactionCombatCooldown {
+		t.Fatalf("cooldown after clash = %d, want %d",
+			g.actorStates[0].FactionAttackCooldown, FactionCombatCooldown)
+	}
+
+	// The combat cooldown must count down on the same tick path as every
+	// other timer, or each actor fights exactly once per lifetime.
+	for i := FactionCombatCooldown; i > 0; i-- {
+		g.tickTimers(w)
+		if g.actorStates[0].FactionAttackCooldown != i-1 {
+			t.Fatalf("after %d ticks cooldown = %d, want %d",
+				FactionCombatCooldown-i+1, g.actorStates[0].FactionAttackCooldown, i-1)
+		}
 	}
 }
 
@@ -157,5 +192,88 @@ func TestStrategiesRetreatWhenHurt(t *testing.T) {
 	g.tickStrategies(w)
 	if g.actorStates[0].Strategy != StrategyRaid {
 		t.Fatalf("strategy = %d, want raid (%d)", g.actorStates[0].Strategy, StrategyRaid)
+	}
+}
+
+func TestFactionCombatDeadActorStopsFighting(t *testing.T) {
+	g := newTestGame(t)
+	w := g.World
+
+	// Park the roster far apart so only the arranged trio can clash.
+	for k := 0; k < len(w.Minotaurs); k++ {
+		w.Minotaurs[k].Pos = maze.Vec2{X: 1.5 + 2*float64(k), Y: 18.5}
+	}
+
+	// A fire swarm actor between two void rivals: void beats fire (2x),
+	// so each counter-hit deals 16, lethal against 15 HP.
+	a, v1, v2 := w.Minotaurs[0], w.Minotaurs[1], w.Minotaurs[2]
+	a.Element = int(ElementFire)
+	a.HP = 15
+	v1.Element, v2.Element = int(ElementVoid), int(ElementVoid)
+	a.Pos = maze.Vec2{X: 5.5, Y: 5.5}
+	v1.Pos = maze.Vec2{X: 6.0, Y: 5.5}
+	v2.Pos = maze.Vec2{X: 5.0, Y: 5.5}
+	hpV1, hpV2 := v1.HP, v2.HP
+
+	g.factionCombat(w)
+
+	if a.HP > 0 {
+		t.Fatalf("fire actor HP = %d, want lethal", a.HP)
+	}
+	if v1.HP != hpV1-4 { // fire attacking void is a disadvantage: 8*0.5
+		t.Fatalf("v1 HP = %d, want %d", v1.HP, hpV1-4)
+	}
+	if v2.HP != hpV2 {
+		t.Fatalf("dead actor hit a second rival: %d -> %d", hpV2, v2.HP)
+	}
+	if len(w.Hazards) != 1 {
+		t.Fatalf("hazards = %d, want exactly 1", len(w.Hazards))
+	}
+}
+
+func TestStrategyMovementPathfollowsToTarget(t *testing.T) {
+	g := newTestGame(t)
+	w := g.World
+
+	m := w.Minotaurs[0]
+	st := g.actorStates[0]
+	m.Pos = g.Maze.Start
+	setStrategyTarget(st, g.Maze.Gate)
+
+	for i := 0; i < 6000 && st.HasTarget; i++ {
+		g.applyStrategyMovement(w)
+	}
+	if st.HasTarget {
+		t.Fatalf("actor never reached the gate target")
+	}
+	dx := m.Pos.X - g.Maze.Gate.X
+	dy := m.Pos.Y - g.Maze.Gate.Y
+	if dx*dx+dy*dy > 0.5*0.5 {
+		t.Fatalf("actor stopped at %v, gate at %v", m.Pos, g.Maze.Gate)
+	}
+}
+
+func TestStrategyMovementYieldsToBrainSearch(t *testing.T) {
+	g := newTestGame(t)
+	w := g.World
+
+	m := w.Minotaurs[0]
+	st := g.actorStates[0]
+
+	// The brain saw the player once, then lost sight: it is searching a
+	// last-known position and owns movement this tick.
+	g.Brains[0].InjectBelief(maze.Vec2{X: 1.5, Y: 1.5})
+	snap := w.Copy()
+	snap.Runner.Pos = maze.Vec2{X: 999, Y: 999}
+	g.Brains[0].UpdateBelief(snap, m)
+	if b := g.Brains[0].BeliefCopy(); b.PlayerDetected || !b.HasLastKnown || b.SearchExhausted {
+		t.Fatalf("unexpected belief state: %+v", b)
+	}
+
+	setStrategyTarget(st, g.Maze.Gate)
+	pos := m.Pos
+	g.applyStrategyMovement(w)
+	if m.Pos != pos {
+		t.Fatalf("strategy moved an actor while the brain searches: %v -> %v", pos, m.Pos)
 	}
 }

@@ -69,6 +69,14 @@ export class NetClient {
         this.ws.send(JSON.stringify(env));
     }
 
+    // Authoritative debug teleport for the integrated debugging tooling:
+    // the server resolves the position against the maze and applies it on
+    // the writer goroutine.
+    sendDebugTeleport(x, y) {
+        if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+        this.ws.send(JSON.stringify({ t: 'debug', p: { x, y } }));
+    }
+
     getSnapshot() {
         return this.latestSnap;
     }

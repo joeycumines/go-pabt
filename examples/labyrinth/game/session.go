@@ -261,19 +261,8 @@ func (g *Game) tickLogic(w *world.World) {
 	g.tickStrategies(w)
 	g.tickHazards(w)
 
-	// Decrement stun timers.
-	for _, m := range w.Minotaurs {
-		if m.Stunned {
-			m.StunTicks--
-			if m.StunTicks <= 0 {
-				m.Stunned = false
-				m.StunTicks = 0
-			}
-		}
-		if m.AttackCooldown > 0 {
-			m.AttackCooldown--
-		}
-	}
+	// Decrement stun and per-actor cooldown timers.
+	g.tickTimers(w)
 
 	// Update brains and move actors.
 	for i, b := range g.Brains {
@@ -358,6 +347,27 @@ func (g *Game) tickLogic(w *world.World) {
 	// carries the current front line.
 	g.respawnDeadActors(w)
 	w.TerritoryControl = territoryControl(w)
+}
+
+// tickTimers decrements stun and per-actor cooldown timers for the roster.
+// Every timer that gates repeated behavior decays here, on the writer
+// goroutine, so none can latch closed forever.
+func (g *Game) tickTimers(w *world.World) {
+	for i, m := range w.Minotaurs {
+		if m.Stunned {
+			m.StunTicks--
+			if m.StunTicks <= 0 {
+				m.Stunned = false
+				m.StunTicks = 0
+			}
+		}
+		if m.AttackCooldown > 0 {
+			m.AttackCooldown--
+		}
+		if i < len(g.actorStates) && g.actorStates[i].FactionAttackCooldown > 0 {
+			g.actorStates[i].FactionAttackCooldown--
+		}
+	}
 }
 
 // AddSession registers a new player session.
@@ -454,6 +464,24 @@ func (g *Game) FirePulse(id SessionID, fireRound int, aimPos maze.Vec2) {
 				return
 			}
 		}
+	})
+}
+
+// DebugTeleport relocates the runner authoritatively, for the integrated
+// debugging tooling and end-to-end verification. It runs on the writer
+// goroutine and resolves the destination against the maze so a bad
+// coordinate can never push the runner into a wall.
+func (g *Game) DebugTeleport(id SessionID, pos maze.Vec2) {
+	g.sessMu.RLock()
+	sess, ok := g.sessions[id]
+	g.sessMu.RUnlock()
+	if !ok {
+		return
+	}
+	g.Loop.Submit(func(w *world.World) {
+		p := g.Maze.Resolve(pos, maze.Radius)
+		sess.Net.Pos = p
+		w.Runner.Pos = p
 	})
 }
 

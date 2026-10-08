@@ -224,6 +224,12 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request, g *game.Game) {
 					g.FirePulse(sess.ID, snap.Round, aimPos)
 				}
 			}
+		case "debug":
+			dbg, err := proto.DecodeDebug(env)
+			if err != nil {
+				continue
+			}
+			g.DebugTeleport(sess.ID, maze.Vec2{X: dbg.X, Y: dbg.Y})
 		}
 	}
 

@@ -312,7 +312,7 @@ function update(dt) {
         },
         fire() { input.fire = true; },
         setYaw(y) { camera.yaw = y; },
-        teleport(x, z) { camera.pos[0] = x; camera.pos[2] = z; },
+        teleport(x, z) { camera.pos[0] = x; camera.pos[2] = z; net.sendDebugTeleport(x, z); },
     };
 }
 
