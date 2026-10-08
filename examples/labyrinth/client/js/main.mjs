@@ -44,6 +44,24 @@ let damageFlashTimer = 0; // red flash when player takes damage
 let serverPos = null; // last server position for reconciliation
 let lastHP = 100; // last known player HP from server
 
+// S2 elemental system: 0=fire 1=ice 2=lightning 3=void, cycle
+// fire > ice > lightning > void > fire. Mirrors game/element.go.
+const ELEMENT_NAMES = ['Fire', 'Ice', 'Lightning', 'Void'];
+const ELEMENT_COLORS = [
+    [1.0, 0.35, 0.10], // fire
+    [0.35, 0.75, 1.0], // ice
+    [1.0, 0.95, 0.25], // lightning
+    [0.55, 0.20, 0.85] // void
+];
+const TERRITORY_TINTS = [
+    [0.40, 0.13, 0.06], // fire (NE)
+    [0.08, 0.20, 0.35], // ice (NW)
+    [0.30, 0.28, 0.05], // lightning (SE)
+    [0.17, 0.07, 0.27]  // void (SW)
+];
+let playerElement = 0; // active element; power-ups change it
+let hitMarkerTimer = 0; // frames the hit marker text stays visible
+
 function init() {
     renderer = new Renderer(canvas);
     camera = new Camera(canvas);
@@ -146,11 +164,15 @@ function update(dt) {
         camera.pos[0] += (serverPos[0] - camera.pos[0]) * lerpRate;
         camera.pos[2] += (serverPos[2] - camera.pos[2]) * lerpRate;
 
-        // Update HUD HP.
+        // Update HUD HP and the active element.
         lastHP = sp.hp;
         hud.setHP(sp.hp, MAX_HP);
         hud.setRound(snap.data.round);
         hud.setIntensity(snap.data.intensity);
+        if (sp.element !== undefined) {
+            playerElement = sp.element | 0;
+            hud.setElement(playerElement);
+        }
 
         // Terminal phase fallback: the authoritative phase rides every
         // snapshot, so a dropped event message can never wedge the win/lose
@@ -168,11 +190,12 @@ function update(dt) {
         lastFireTime = now;
         audio.playShot();
         net.sendInput(input.forward, input.strafe, camera.yaw, camera.pitch, input.sprint, false, true);
+        const ec = ELEMENT_COLORS[playerElement];
         projectiles.push({
             pos: [camera.pos[0] + Math.sin(camera.yaw) * 0.5, camera.pos[1] - 0.05, camera.pos[2] + Math.cos(camera.yaw) * 0.5],
             dir: [Math.sin(camera.yaw), 0, Math.cos(camera.yaw)],
             born: now,
-            color: [0.2, 1.0, 0.9, 1.0],
+            color: [Math.min(1, ec[0] + 0.35), Math.min(1, ec[1] + 0.35), Math.min(1, ec[2] + 0.35), 1.0],
         });
         muzzleFlashTimer = 3;
     }
@@ -186,12 +209,13 @@ function update(dt) {
         for (const m of snap.data.minotaurs) {
             let buf = minotaurBuffers.get(m.id);
             if (!buf) {
-                buf = { pos: [m.x, 0.5, m.y], targetPos: [m.x, 0.5, m.y], stunned: m.stunned, type: m.type|0 };
+                buf = { pos: [m.x, 0.5, m.y], targetPos: [m.x, 0.5, m.y], stunned: m.stunned, type: m.type|0, element: m.element|0 };
                 minotaurBuffers.set(m.id, buf);
             }
             buf.targetPos = [m.x, 0.5, m.y];
             buf.stunned = m.stunned;
             buf.type = m.type|0;
+            buf.element = m.element|0;
             buf.lastUpdate = now;
         }
     }
@@ -214,6 +238,13 @@ function update(dt) {
     if (muzzleFlashTimer > 0) muzzleFlashTimer--;
     if (hitFlashTimer > 0) hitFlashTimer--;
     if (damageFlashTimer > 0) damageFlashTimer--;
+    if (hitMarkerTimer > 0) {
+        hitMarkerTimer--;
+        if (hitMarkerTimer === 0) {
+            const marker = document.getElementById('hit-marker');
+            if (marker) marker.hidden = true;
+        }
+    }
 
     // Audio: proximity heartbeat.
     let nearestDist = Infinity;
@@ -246,6 +277,11 @@ function update(dt) {
         get mazeSize() { return maze ? [maze.w, maze.h] : null; },
         get gate() { return maze ? [maze.gateX, maze.gateY] : null; },
         get projectileCount() { return projectiles.length; },
+        get playerElement() { return playerElement; },
+        get powerUps() {
+            const s = net.getSnapshot();
+            return s && s.data.powerUps ? s.data.powerUps.filter(p => p.active).map(p => ({x: p.x, y: p.y, element: p.element})) : [];
+        },
         fire() { input.fire = true; },
         setYaw(y) { camera.yaw = y; },
         teleport(x, z) { camera.pos[0] = x; camera.pos[2] = z; },
@@ -266,9 +302,31 @@ function handleEvent(evt) {
             overlay.textContent = 'ESCAPED\nClick to play again';
             overlay.onclick = () => location.reload();
             break;
-        case 'stunned':
+        case 'stunned': {
             audio.playStun();
             hitFlashTimer = 8;
+            // Show the elemental outcome of the pulse.
+            const adv = evt.data && evt.data.advantage;
+            const marker = document.getElementById('hit-marker');
+            if (marker) {
+                if (adv >= 2) {
+                    marker.textContent = 'ADVANTAGE ×2';
+                    marker.className = 'advantage';
+                } else if (adv > 0 && adv < 1) {
+                    marker.textContent = 'resisted';
+                    marker.className = 'disadvantage';
+                } else {
+                    marker.textContent = 'hit';
+                    marker.className = 'neutral';
+                }
+                marker.hidden = false;
+                hitMarkerTimer = 30;
+            }
+            break;
+        }
+        case 'powerup':
+            audio.playStun();
+            hitFlashTimer = 6;
             break;
         case 'hit':
             damageFlashTimer = 10;
@@ -296,7 +354,8 @@ function render() {
     const gateColor = [0.0, 1.0, 0.5, 1.0];
     const stunnedColor = [0.3, 0.3, 0.8, 1.0];
 
-    // Maze geometry from server-provided grid.
+    // Maze geometry from server-provided grid. Floor tiles are tinted by
+    // the controlling faction's territory quadrant.
     for (let z = 0; z < maze.h; z++) {
         for (let x = 0; x < maze.w; x++) {
             const cell = maze.grid[z * maze.w + x];
@@ -307,10 +366,16 @@ function render() {
                     color: wallColor,
                 });
             } else {
+                const t = TERRITORY_TINTS[territoryAt(x, z, maze)];
                 instances.push({
                     pos: [x + 0.5, -0.05, z + 0.5],
                     scale: [1, 0.1, 1],
-                    color: floorColor,
+                    color: [
+                        floorColor[0] + t[0],
+                        floorColor[1] + t[1],
+                        floorColor[2] + t[2],
+                        1.0,
+                    ],
                 });
             }
         }
@@ -323,30 +388,41 @@ function render() {
         color: gateColor,
     });
 
-    // Actors (interpolated), visually distinct by archetype.
+    // Elemental power-up orbs (only active ones).
+    if (snap && snap.data.powerUps) {
+        const bob = Math.sin(performance.now() / 300) * 0.08;
+        for (const pu of snap.data.powerUps) {
+            if (!pu.active) continue;
+            const ec = ELEMENT_COLORS[pu.element|0] || ELEMENT_COLORS[0];
+            instances.push({
+                pos: [pu.x, 0.55 + bob, pu.y],
+                scale: [0.3, 0.3, 0.3],
+                color: [ec[0], ec[1], ec[2], 1.0],
+            });
+        }
+    }
+
+    // Actors (interpolated). Silhouette is per archetype; body color is the
+    // actor's faction element, so each of the four factions reads at a glance.
     for (const [id, buf] of minotaurBuffers) {
-        let body, head, eye, bodyScale, headY, eyeY;
+        let head, eye, bodyScale, headY, eyeY;
         switch (buf.type|0) {
             case 1: // swarm imp
-                body = buf.stunned ? stunnedColor : [1.0, 0.5, 0.1, 1.0];
-                head = body; eye = [1.0, 1.0, 0.0, 1.0];
                 bodyScale = [0.3, 0.4, 0.3]; headY = 0.5; eyeY = 0.55;
                 break;
             case 2: // caster pillar
-                body = buf.stunned ? stunnedColor : [0.7, 0.2, 1.0, 1.0];
-                head = [0.9, 0.5, 1.0, 1.0]; eye = [1.0, 0.4, 1.0, 1.0];
                 bodyScale = [0.35, 1.0, 0.35]; headY = 1.05; eyeY = 1.1;
                 break;
             case 3: // stalker hunter
-                body = buf.stunned ? stunnedColor : [0.1, 0.8, 0.7, 1.0];
-                head = body; eye = [0.0, 1.0, 1.0, 1.0];
                 bodyScale = [0.6, 0.5, 0.6]; headY = 0.6; eyeY = 0.65;
                 break;
             default: // brute titan
-                body = buf.stunned ? stunnedColor : [0.8, 0.1, 0.1, 1.0];
-                head = body; eye = [1.0, 0.0, 0.0, 1.0];
                 bodyScale = [0.5, 0.8, 0.5]; headY = 0.8; eyeY = 0.85;
         }
+        const ec = ELEMENT_COLORS[buf.element|0] || ELEMENT_COLORS[0];
+        const body = buf.stunned ? stunnedColor : [ec[0], ec[1], ec[2], 1.0];
+        head = buf.stunned ? stunnedColor : [Math.min(1, ec[0] + 0.2), Math.min(1, ec[1] + 0.2), Math.min(1, ec[2] + 0.2), 1.0];
+        eye = [1.0, 1.0, 1.0, 1.0];
         instances.push({
             pos: [buf.pos[0], buf.pos[1] + bodyScale[1] / 2, buf.pos[2]],
             scale: bodyScale,
@@ -378,21 +454,32 @@ function render() {
         });
     }
 
-    // Muzzle flash.
+    // Muzzle flash in the active element color.
     if (muzzleFlashTimer > 0) {
+        const ec = ELEMENT_COLORS[playerElement];
         instances.push({
             pos: [camera.pos[0] + Math.sin(camera.yaw) * 0.6, camera.pos[1] - 0.2, camera.pos[2] + Math.cos(camera.yaw) * 0.6],
             scale: [0.25, 0.25, 0.25],
-            color: [1.0, 0.9, 0.4, 1.0],
+            color: [Math.min(1, ec[0] + 0.4), Math.min(1, ec[1] + 0.4), Math.min(1, ec[2] + 0.4), 1.0],
         });
     }
 
     renderer.drawInstances(instances);
 
-    // Update minimap with actors.
+    // Update minimap with actors and power-ups.
     if (maze) {
-        hud.drawMinimap(maze, camera.pos, camera.yaw, minotaurBuffers);
+        hud.drawMinimap(maze, camera.pos, camera.yaw, minotaurBuffers, snap && snap.data ? snap.data.powerUps : null);
     }
+}
+
+// Territory quadrant for floor tinting; mirrors game.TerritoryOf.
+function territoryAt(x, y, mazeData) {
+    const east = x >= mazeData.w / 2;
+    const north = y < mazeData.h / 2;
+    if (north && east) return 0;
+    if (north) return 1;
+    if (east) return 2;
+    return 3;
 }
 
 function resolveCollision(mazeData, px, pz, radius) {

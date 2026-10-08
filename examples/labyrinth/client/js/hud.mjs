@@ -8,6 +8,7 @@ export class HUD {
         this.hpFill = document.getElementById('hp-fill');
         this.chipRound = document.getElementById('chip-round');
         this.chipFps = document.getElementById('chip-fps');
+        this.chipElement = document.getElementById('chip-element');
         this._fpsBuffer = [];
     }
 
@@ -39,7 +40,16 @@ export class HUD {
         }
     }
 
-    drawMinimap(mazeData, playerPos, playerYaw, minotaurBuffers) {
+    setElement(elem) {
+        if (!this.chipElement) return;
+        const names = ['Fire', 'Ice', 'Lightning', 'Void'];
+        const colors = ['#ff5920', '#59bfff', '#fff240', '#8c33d9'];
+        this.chipElement.textContent = 'Element: ' + (names[elem] || 'Unknown');
+        this.chipElement.style.borderColor = colors[elem] || '#ffffff';
+        this.chipElement.style.color = colors[elem] || '#ffffff';
+    }
+
+    drawMinimap(mazeData, playerPos, playerYaw, minotaurBuffers, powerUps) {
         const ctx = this.minimapCtx;
         const w = this.minimap.width;
         const h = this.minimap.height;
@@ -59,12 +69,40 @@ export class HUD {
             }
         }
 
+        // Territory tint on floor cells (matches the 3D floor tinting).
+        const terrTints = [
+            'rgba(255, 90, 30, 0.10)',  // fire NE
+            'rgba(60, 140, 255, 0.10)', // ice NW
+            'rgba(255, 240, 60, 0.08)', // lightning SE
+            'rgba(140, 50, 220, 0.10)'  // void SW
+        ];
+        for (let y = 0; y < mazeData.h; y++) {
+            for (let x = 0; x < mazeData.w; x++) {
+                if (mazeData.grid[y * mazeData.w + x] === 0) continue;
+                const east = x >= mazeData.w / 2;
+                const north = y < mazeData.h / 2;
+                const ti = north ? (east ? 0 : 1) : (east ? 2 : 3);
+                ctx.fillStyle = terrTints[ti];
+                ctx.fillRect(x * cellW, y * cellH, cellW, cellH);
+            }
+        }
+
         // Draw gate
         ctx.fillStyle = '#00ff80';
         ctx.fillRect(
             mazeData.gateX * cellW - 2, mazeData.gateY * cellH - 2,
             cellW + 4, cellH + 4
         );
+
+        // Draw active power-ups
+        if (powerUps) {
+            const puColors = ['#ff5920', '#59bfff', '#fff240', '#8c33d9'];
+            for (const pu of powerUps) {
+                if (!pu.active) continue;
+                ctx.fillStyle = puColors[pu.element|0] || '#ffffff';
+                ctx.fillRect(pu.x * cellW - 2, pu.y * cellH - 2, 4, 4);
+            }
+        }
 
         // Draw actors
         if (minotaurBuffers) {

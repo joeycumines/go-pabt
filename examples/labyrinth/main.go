@@ -242,6 +242,7 @@ func snapshotToProto(snap *world.Snapshot) proto.SnapshotPayload {
 			Pitch:    snap.Runner.Pitch,
 			Grounded: snap.Runner.Grounded,
 			HP:       snap.Runner.HP,
+			Element:  snap.Runner.Element,
 		},
 	}
 	for _, m := range snap.Minotaurs {
@@ -251,6 +252,15 @@ func snapshotToProto(snap *world.Snapshot) proto.SnapshotPayload {
 			Y:       m.Pos.Y,
 			Stunned: m.Stunned,
 			Type:    m.Type,
+			Element: m.Element,
+		})
+	}
+	for _, pu := range snap.PowerUps {
+		p.PowerUps = append(p.PowerUps, proto.PowerUpState{
+			X:       pu.Pos.X,
+			Y:       pu.Pos.Y,
+			Element: pu.Element,
+			Active:  pu.Active,
 		})
 	}
 	return p

@@ -187,3 +187,21 @@ body {
     white-space: pre-line;
     text-align: center;
 }
+
+/* S2: elemental hit marker shown near the crosshair after a pulse lands. */
+#hit-marker {
+    position: fixed;
+    top: 42%;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 300;
+    pointer-events: none;
+    font-size: 1.2rem;
+    font-weight: bold;
+    letter-spacing: 0.1em;
+    text-shadow: 0 0 8px currentColor;
+}
+
+#hit-marker.advantage { color: #ffd700; }
+#hit-marker.disadvantage { color: #8080a0; }
+#hit-marker.neutral { color: #ffffff; }

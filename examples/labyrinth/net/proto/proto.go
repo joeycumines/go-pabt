@@ -32,6 +32,7 @@ type SnapshotPayload struct {
 	Phase     int             `json:"phase"`
 	Runner    RunnerState     `json:"runner"`
 	Minotaurs []MinotaurState `json:"minotaurs"`
+	PowerUps  []PowerUpState  `json:"powerUps"`
 	Intensity int             `json:"intensity"`
 }
 
@@ -43,6 +44,8 @@ type RunnerState struct {
 	Pitch    float64 `json:"pitch"`
 	Grounded bool    `json:"grounded"`
 	HP       int     `json:"hp"`
+	// Element is the runner's active element: 0=fire 1=ice 2=lightning 3=void.
+	Element int `json:"element"`
 }
 
 // MinotaurState is one minotaur's state in a snapshot.
@@ -52,6 +55,16 @@ type MinotaurState struct {
 	Y       float64 `json:"y"`
 	Stunned bool    `json:"stunned"`
 	Type    int     `json:"type"`
+	// Element is the actor's innate element: 0=fire 1=ice 2=lightning 3=void.
+	Element int `json:"element"`
+}
+
+// PowerUpState is one elemental pickup in a snapshot.
+type PowerUpState struct {
+	X       float64 `json:"x"`
+	Y       float64 `json:"y"`
+	Element int     `json:"element"`
+	Active  bool    `json:"active"`
 }
 
 // InputPayload is the client's input command.

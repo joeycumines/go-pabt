@@ -26,6 +26,10 @@ type Runner struct {
 	Pitch    float64
 	Grounded bool
 	HP       int
+	// Element is the runner's active element: 0=fire 1=ice 2=lightning
+	// 3=void. Power-ups change it; the pulse uses it for elemental
+	// advantage against actors.
+	Element int
 }
 
 // StunDuration is the number of ticks a minotaur stays stunned.
@@ -39,6 +43,7 @@ type Minotaur struct {
 	Stunned        bool
 	StunTicks      int // remaining stun ticks; decremented each tick, clears Stunned at 0
 	Type           int // actor archetype: 0=brute, 1=swarm, 2=caster, 3=stalker
+	Element        int // 0=fire 1=ice 2=lightning 3=void; innate faction element
 	HP             int
 	AttackCooldown int // ticks until this minotaur may damage the runner again
 	Belief         Belief
@@ -52,12 +57,21 @@ type Belief struct {
 	SearchExhausted bool      // true when search at last-known yielded nothing
 }
 
+// PowerUp is an elemental pickup in the maze. Stepping on one changes the
+// runner's active element.
+type PowerUp struct {
+	Pos     maze.Vec2
+	Element int
+	Active  bool // false once picked up
+}
+
 // World is the authoritative, mutable simulation state. It is owned by the
 // single-writer loop goroutine; all other access goes through Snapshot.
 type World struct {
 	Maze      *maze.Maze
 	Runner    Runner
 	Minotaurs []*Minotaur
+	PowerUps  []*PowerUp
 	Round     int
 	Phase     Phase
 	// Intensity escalates on a schedule: hunter speed multiplier, extra
@@ -98,8 +112,12 @@ type Snapshot struct {
 	Phase     Phase
 	Runner    Runner
 	Minotaurs []Minotaur
+	PowerUps  []PowerUp
 	Intensity int
 	Gate      maze.Vec2
+	// TerritoryControl maps each quadrant (0=NE, 1=NW, 2=SE, 3=SW) to the
+	// element controlling it. Updated each tick based on faction presence.
+	TerritoryControl [4]int
 }
 
 // Copy returns a defensive-copy snapshot of the current world state. The
@@ -116,6 +134,10 @@ func (w *World) Copy() *Snapshot {
 	s.Minotaurs = make([]Minotaur, len(w.Minotaurs))
 	for i, m := range w.Minotaurs {
 		s.Minotaurs[i] = *m
+	}
+	s.PowerUps = make([]PowerUp, len(w.PowerUps))
+	for i, p := range w.PowerUps {
+		s.PowerUps[i] = *p
 	}
 	return s
 }

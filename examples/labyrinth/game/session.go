@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	mrand "math/rand"
+	"strconv"
 	"sync"
 	"time"
 
@@ -147,6 +148,10 @@ func NewGame(m *maze.Maze, initialActors int, seed uint64) *Game {
 		g.spawnActor(ActorType(i % 4))
 	}
 
+	// Spawn elemental power-ups into the authoritative world. The runner
+	// starts as Fire (the zero value of Runner.Element).
+	spawnPowerUps(w, g.rng)
+
 	// Register the tick hook so all game logic runs on the writer goroutine.
 	l.SetTickHook(func(w *world.World) {
 		g.tickLogic(w)
@@ -173,41 +178,57 @@ func (g *Game) MazePayload() proto.MazePayload {
 }
 
 func (g *Game) spawnActor(typ ActorType) {
-	for attempts := 0; attempts < 200; attempts++ {
-		cx := 1 + g.rng.Intn(g.Maze.W-2)
-		cy := 1 + g.rng.Intn(g.Maze.H-2)
-		cell := g.Maze.At(cx, cy)
-		if !cell.Walkable() {
-			continue
+	elem := actorElement(typ)
+	var pos maze.Vec2
+	var found bool
+	// Prefer the faction's home territory so the four factions visibly hold
+	// ground; fall back to an unbiased spawn if the quadrant has no room.
+	if p, ok := g.homeTerritoryPos(elem); ok {
+		pos, found = p, true
+	}
+	if !found {
+		for attempts := 0; attempts < 200; attempts++ {
+			cx := 1 + g.rng.Intn(g.Maze.W-2)
+			cy := 1 + g.rng.Intn(g.Maze.H-2)
+			if !g.Maze.At(cx, cy).Walkable() {
+				continue
+			}
+			p := maze.Vec2{X: float64(cx) + 0.5, Y: float64(cy) + 0.5}
+			if distSq(p, g.Maze.Start) < 81 || distSq(p, g.Maze.Gate) < 81 {
+				continue
+			}
+			pos, found = p, true
+			break
 		}
-		pos := maze.Vec2{X: float64(cx) + 0.5, Y: float64(cy) + 0.5}
-		if distSq(pos, g.Maze.Start) < 81 || distSq(pos, g.Maze.Gate) < 81 {
-			continue
-		}
-
-		id := actorID(typ, len(g.World.Minotaurs))
-		minotaur := &world.Minotaur{
-			ID:   id,
-			Pos:  pos,
-			Type: int(typ),
-			HP:   actorHP(typ),
-		}
-		g.World.Minotaurs = append(g.World.Minotaurs, minotaur)
-
-		b, err := brain.NewBrain(id, g.Maze, &minotaur.Pos)
-		if err != nil {
-			continue
-		}
-		b.SetMoveSpeed(actorSpeed(typ))
-		g.Brains = append(g.Brains, b)
-		g.Histories = append(g.Histories, netcode.NewMinotaurHistory())
+	}
+	if !found {
 		return
 	}
+
+	id := actorID(typ, len(g.World.Minotaurs))
+	minotaur := &world.Minotaur{
+		ID:      id,
+		Pos:     pos,
+		Type:    int(typ),
+		Element: int(elem),
+		HP:      actorHP(typ),
+	}
+
+	b, err := brain.NewBrain(id, g.Maze, &minotaur.Pos)
+	if err != nil {
+		// Do not add the minotaur without its brain: Brains and Histories
+		// are indexed against Minotaurs and must stay aligned.
+		return
+	}
+	g.World.Minotaurs = append(g.World.Minotaurs, minotaur)
+	b.SetMoveSpeed(actorSpeed(typ))
+	g.Brains = append(g.Brains, b)
+	g.Histories = append(g.Histories, netcode.NewMinotaurHistory())
 }
 
 func actorID(typ ActorType, idx int) string {
 	prefixes := [4]string{"B", "S", "C", "K"}
-	return prefixes[typ%4] + "-" + string(rune('1'+idx%9))
+	return prefixes[typ%4] + "-" + strconv.Itoa(idx+1)
 }
 
 func distSq(a, b maze.Vec2) float64 {
@@ -287,6 +308,17 @@ func (g *Game) tickLogic(w *world.World) {
 		return
 	}
 
+	// Check power-up pickup.
+	if pu := checkPowerUpPickup(w); pu != nil {
+		g.broadcastEvent(Event{
+			Type: "powerup",
+			Data: map[string]interface{}{
+				"element": pu.Element,
+				"name":    elementName(Element(pu.Element)),
+			},
+		})
+	}
+
 	// Escalation schedule.
 	for _, round := range g.escalationRounds {
 		if w.Round == round {
@@ -358,7 +390,13 @@ func (g *Game) ApplyInput(id SessionID, cmd netcode.InputCmd) {
 	})
 }
 
+// PulseBaseDamage is the damage a neutral pulse deals. Elemental advantage
+// (attacker beats defender in the cycle) doubles it; disadvantage halves it.
+const PulseBaseDamage = 15
+
 // FirePulse processes a pulse fire with lag-compensated hit validation.
+// Damage scales by elemental advantage between the runner's active element
+// and the struck actor's innate element.
 func (g *Game) FirePulse(id SessionID, fireRound int, aimPos maze.Vec2) {
 	g.Loop.Submit(func(w *world.World) {
 		for i, hist := range g.Histories {
@@ -367,14 +405,18 @@ func (g *Game) FirePulse(id SessionID, fireRound int, aimPos maze.Vec2) {
 			}
 			if netcode.ValidateHit(hist, fireRound, aimPos) {
 				m := w.Minotaurs[i]
-				m.HP -= 15 // base pulse damage
+				mult := advantage(Element(w.Runner.Element), Element(m.Element))
+				dmg := int(float64(PulseBaseDamage) * mult)
+				m.HP -= dmg
 				m.Stunned = true
 				m.StunTicks = world.StunDuration
 				g.broadcastEvent(Event{
 					Type: "stunned",
 					Data: map[string]interface{}{
-						"minotaur": m.ID,
-						"hp":       m.HP,
+						"minotaur":  m.ID,
+						"hp":        m.HP,
+						"damage":    dmg,
+						"advantage": mult,
 					},
 				})
 				return
