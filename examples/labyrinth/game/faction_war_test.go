@@ -305,6 +305,58 @@ func TestStrategyMovementYieldsToBrainSearch(t *testing.T) {
 	}
 }
 
+func TestActorsSeparateWhenOverlapping(t *testing.T) {
+	g := newTestGame(t)
+	w := g.World
+
+	// The push needs room to land: inside a single corridor cell the maze
+	// walls clamp both actors back together, so place the pair in an open
+	// 3x3 area where separation 0.7 is physically achievable.
+	cx, cy, ok := findOpenArea(g.Maze)
+	if !ok {
+		t.Fatalf("maze has no open 3x3 area")
+	}
+	a, b := w.Minotaurs[0], w.Minotaurs[1]
+	a.Pos = maze.Vec2{X: float64(cx) + 0.5, Y: float64(cy) + 0.5}
+	b.Pos = maze.Vec2{X: float64(cx) + 0.6, Y: float64(cy) + 0.5}
+	g.separateActors(w)
+	d := math.Hypot(b.Pos.X-a.Pos.X, b.Pos.Y-a.Pos.Y)
+	if d < ActorSeparation-1e-6 {
+		t.Fatalf("separation = %f, want >= %f", d, ActorSeparation)
+	}
+
+	// Far-apart actors are untouched.
+	c := w.Minotaurs[2]
+	c.Pos = maze.Vec2{X: float64(cx) + 0.5, Y: float64(cy) + 2.5}
+	before := c.Pos
+	g.separateActors(w)
+	if c.Pos != before {
+		t.Fatalf("distant actor moved: %v -> %v", before, c.Pos)
+	}
+}
+
+// findOpenArea returns the center cell of the first 3x3 fully-walkable
+// block in the maze, or false if none exists.
+func findOpenArea(m *maze.Maze) (int, int, bool) {
+	for y := 1; y < m.H-1; y++ {
+		for x := 1; x < m.W-1; x++ {
+			open := true
+			for dy := -1; dy <= 1 && open; dy++ {
+				for dx := -1; dx <= 1; dx++ {
+					if !m.At(x+dx, y+dy).Walkable() {
+						open = false
+						break
+					}
+				}
+			}
+			if open {
+				return x, y, true
+			}
+		}
+	}
+	return 0, 0, false
+}
+
 func TestCaughtClearsWhenSightLost(t *testing.T) {
 	g := newTestGame(t)
 	w := g.World

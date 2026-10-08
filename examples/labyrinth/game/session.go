@@ -304,6 +304,9 @@ func (g *Game) tickLogic(w *world.World) {
 	// Strategy-driven movement for actors whose brain is not pursuing.
 	g.applyStrategyMovement(w)
 
+	// Physical separation: actors are bodies, not ghosts.
+	g.separateActors(w)
+
 	// Check lose condition.
 	if w.Runner.HP <= 0 {
 		w.Phase = world.PhaseLost
