@@ -35,6 +35,12 @@ type Brain struct {
 	// the game does not pause.
 	paused bool
 
+	// movedLastTick reports whether the planner's move actions stepped the
+	// actor during the most recent Tick. Strategy movement yields on it so
+	// an actor is never moved twice per tick, and never frozen by a stale
+	// belief flag when the planner is idle.
+	movedLastTick bool
+
 	// lastFrame is the most recent encoded BT frame, for the explorer.
 	lastFrame *BTFrame
 
@@ -119,6 +125,10 @@ func (b *Brain) UpdateBelief(snap *world.Snapshot, self *world.Minotaur) {
 		}
 	} else {
 		b.belief.DistanceBand = 3
+		// Caught is an edge, not a level: once line of sight is lost the
+		// catch is over. Leaving it latched true satisfies the planner's
+		// goal forever, idling the brain while strategy movement yields.
+		b.belief.Caught = false
 	}
 	b.beliefRevision.Add(1)
 }
@@ -128,9 +138,12 @@ func (b *Brain) UpdateBelief(snap *world.Snapshot, self *world.Minotaur) {
 // boundary because the snapshot's values alias live planner state.
 func (b *Brain) Tick(attemptID string) *BTFrame {
 	if b.paused {
+		b.movedLastTick = false
 		return nil
 	}
 	result := b.plan.TickCaptured(pabt.TickEnvironment{AttemptID: attemptID})
+	b.movedLastTick = b.state.movedThisTick
+	b.state.movedThisTick = false
 	path := pabt.GetPath(b.plan)
 	frame := EncodeFrame(result.Snapshot, path)
 	b.lastFrame = frame
@@ -141,9 +154,12 @@ func (b *Brain) Tick(attemptID string) *BTFrame {
 // diagnostic of the tick outcome. For debugging only.
 func (b *Brain) TickDebug(attemptID string) (*BTFrame, string) {
 	if b.paused {
+		b.movedLastTick = false
 		return nil, "paused"
 	}
 	result := b.plan.TickCaptured(pabt.TickEnvironment{AttemptID: attemptID})
+	b.movedLastTick = b.state.movedThisTick
+	b.state.movedThisTick = false
 	path := pabt.GetPath(b.plan)
 	frame := EncodeFrame(result.Snapshot, path)
 	b.lastFrame = frame
@@ -195,3 +211,7 @@ func (b *Brain) InjectBelief(playerPos maze.Vec2) {
 
 // Belief returns a copy of the current belief, for inspection.
 func (b *Brain) BeliefCopy() Belief { return b.belief }
+
+// MovedLastTick reports whether the planner's move actions stepped the
+// actor during the most recent Tick.
+func (b *Brain) MovedLastTick() bool { return b.movedLastTick }

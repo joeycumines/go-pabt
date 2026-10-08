@@ -53,11 +53,13 @@ func (a *moveAction) advance() (bt.Status, error) {
 		if dist <= remaining {
 			a.state.selfPos.X = target.X
 			a.state.selfPos.Y = target.Y
+			a.state.movedThisTick = true
 			a.path = a.path[1:]
 			remaining -= dist
 		} else {
 			a.state.selfPos.X += dx / dist * remaining
 			a.state.selfPos.Y += dy / dist * remaining
+			a.state.movedThisTick = true
 			remaining = 0
 		}
 	}

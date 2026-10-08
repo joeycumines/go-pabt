@@ -3,6 +3,7 @@
 package game
 
 import (
+	"math"
 	"testing"
 
 	"github.com/joeycumines/go-pabt/examples/labyrinth/maze"
@@ -260,14 +261,22 @@ func TestStrategyMovementYieldsToBrainSearch(t *testing.T) {
 	m := w.Minotaurs[0]
 	st := g.actorStates[0]
 
-	// The brain saw the player once, then lost sight: it is searching a
-	// last-known position and owns movement this tick.
+	// The brain saw the player once, then lost sight: its search action
+	// owns movement this tick.
 	g.Brains[0].InjectBelief(maze.Vec2{X: 1.5, Y: 1.5})
 	snap := w.Copy()
 	snap.Runner.Pos = maze.Vec2{X: 999, Y: 999}
 	g.Brains[0].UpdateBelief(snap, m)
-	if b := g.Brains[0].BeliefCopy(); b.PlayerDetected || !b.HasLastKnown || b.SearchExhausted {
-		t.Fatalf("unexpected belief state: %+v", b)
+	// The planner expands the tree on the tick it observes the failed
+	// condition and executes the new action on the next tick, so allow a
+	// couple of ticks for the search to own movement.
+	moved := false
+	for i := 0; i < 3 && !moved; i++ {
+		g.Brains[0].Tick("test")
+		moved = g.Brains[0].MovedLastTick()
+	}
+	if !moved {
+		t.Fatalf("brain search did not move the actor")
 	}
 
 	setStrategyTarget(st, g.Maze.Gate)
@@ -275,5 +284,49 @@ func TestStrategyMovementYieldsToBrainSearch(t *testing.T) {
 	g.applyStrategyMovement(w)
 	if m.Pos != pos {
 		t.Fatalf("strategy moved an actor while the brain searches: %v -> %v", pos, m.Pos)
+	}
+
+	// Positive control: an actor whose brain did not move it this tick is
+	// free to follow its strategy path.
+	m2 := w.Minotaurs[1]
+	st2 := g.actorStates[1]
+	g.Brains[1].UpdateBelief(w.Copy(), m2)
+	for i := 0; i < 3; i++ {
+		g.Brains[1].Tick("test")
+		if g.Brains[1].MovedLastTick() {
+			t.Fatalf("idle brain reported movement")
+		}
+	}
+	setStrategyTarget(st2, g.Maze.Gate)
+	pos2 := m2.Pos
+	g.applyStrategyMovement(w)
+	if m2.Pos == pos2 {
+		t.Fatalf("strategy movement blocked for an actor the brain did not move")
+	}
+}
+
+func TestCaughtClearsWhenSightLost(t *testing.T) {
+	g := newTestGame(t)
+	w := g.World
+
+	m := w.Minotaurs[0]
+	// Runner standing on the actor: detected, pursued, caught.
+	snap := w.Copy()
+	snap.Runner.Pos = m.Pos
+	g.Brains[0].UpdateBelief(snap, m)
+	caught := false
+	for i := 0; i < 3 && !caught; i++ {
+		g.Brains[0].Tick("test")
+		caught = g.Brains[0].BeliefCopy().Caught
+	}
+	if !caught {
+		t.Fatalf("caught not set while standing on the player")
+	}
+
+	// Runner leaves: the catch is over and the planner must work again.
+	snap.Runner.Pos = maze.Vec2{X: 999, Y: 999}
+	g.Brains[0].UpdateBelief(snap, m)
+	if g.Brains[0].BeliefCopy().Caught {
+		t.Fatalf("caught latched after line of sight lost")
 	}
 }

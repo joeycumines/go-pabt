@@ -228,15 +228,13 @@ func (g *Game) applyStrategyMovement(w *world.World) {
 		if !st.HasTarget {
 			continue
 		}
-		if i < len(g.Brains) {
-			b := g.Brains[i].BeliefCopy()
-			// Yield while the brain is pursuing OR searching a
-			// last-known position: its own move actions already steer
-			// the actor, and stepping here too would double the
-			// actor's speed toward a different target.
-			if b.PlayerDetected || (b.HasLastKnown && !b.SearchExhausted) {
-				continue
-			}
+		// Yield exactly when the brain's own move actions (pursuit or
+		// search) stepped this actor this tick: stepping here too would
+		// double its speed toward a different target. Keying off actual
+		// movement (not belief flags) also means an idle planner can
+		// never latch strategy movement closed.
+		if i < len(g.Brains) && g.Brains[i].MovedLastTick() {
+			continue
 		}
 		dx := st.TargetPos.X - m.Pos.X
 		dy := st.TargetPos.Y - m.Pos.Y
@@ -272,6 +270,45 @@ func (g *Game) applyStrategyMovement(w *world.World) {
 				}
 				remaining = 0
 			}
+		}
+	}
+}
+
+// ActorSeparation is the minimum distance between actor centers. Overlapping
+// cylinders are pushed apart each tick so creatures read as physical bodies
+// in a brawl instead of interpenetrating ghosts.
+const ActorSeparation = 0.7
+
+// separateActors pushes apart overlapping actor cylinders after all movement
+// for the tick (brain pursuit, strategy paths) has been applied, then
+// re-resolves both against the maze so a push can never shove an actor into
+// a wall.
+func (g *Game) separateActors(w *world.World) {
+	for i := 0; i < len(w.Minotaurs); i++ {
+		a := w.Minotaurs[i]
+		if a.HP <= 0 {
+			continue
+		}
+		for j := i + 1; j < len(w.Minotaurs); j++ {
+			b := w.Minotaurs[j]
+			if b.HP <= 0 {
+				continue
+			}
+			dx := b.Pos.X - a.Pos.X
+			dy := b.Pos.Y - a.Pos.Y
+			d2 := dx*dx + dy*dy
+			if d2 >= ActorSeparation*ActorSeparation || d2 < 1e-9 {
+				continue
+			}
+			d := math.Sqrt(d2)
+			push := (ActorSeparation - d) / 2
+			ux, uy := dx/d, dy/d
+			a.Pos.X -= ux * push
+			a.Pos.Y -= uy * push
+			b.Pos.X += ux * push
+			b.Pos.Y += uy * push
+			a.Pos = g.Maze.Resolve(a.Pos, maze.Radius)
+			b.Pos = g.Maze.Resolve(b.Pos, maze.Radius)
 		}
 	}
 }

@@ -51,6 +51,11 @@ type State struct {
 	// actions. Zero falls back to the default moveSpeed, which keeps the
 	// brain's standalone tests unchanged.
 	MoveSpeed float64
+
+	// movedThisTick is set by move actions that actually step selfPos
+	// during a planner tick. The brain snapshots and clears it each Tick
+	// so strategy movement can yield exactly when the brain owns movement.
+	movedThisTick bool
 }
 
 // NewState builds a State over the given belief, maze, and a pointer to the
