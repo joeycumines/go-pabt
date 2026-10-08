@@ -37,11 +37,13 @@ func Move(m *maze.Maze, pos maze.Vec2, yaw, forward, strafe float64, sprint bool
 		speed = SprintSpeed
 	}
 
-	// Yaw-relative basis: forward points along yaw, strafe is 90 degrees to
-	// the right. The convention only needs to be consistent between the
-	// server and the client predictor.
-	fx, fy := math.Cos(yaw), math.Sin(yaw)
-	sx, sy := -fy, fx
+	// Yaw-relative basis matching the client camera convention: yaw 0 faces
+	// +Y (maze north, rendered as +Z), yaw increases toward +X. Forward is
+	// (sin yaw, cos yaw); strafe-right is (cos yaw, -sin yaw). The server
+	// and client predictor must share this exact convention or prediction
+	// reconciliation fights the player's view.
+	fx, fy := math.Sin(yaw), math.Cos(yaw)
+	sx, sy := fy, -fx
 
 	dx := fx*forward + sx*strafe
 	dy := fy*forward + sy*strafe

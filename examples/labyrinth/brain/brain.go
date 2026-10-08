@@ -82,6 +82,13 @@ func (b *Brain) BeliefRevision() uint64 {
 	return b.beliefRevision.Load()
 }
 
+// SetMoveSpeed sets the per-tick movement distance this actor's move actions
+// use. Distinct actor archetypes move at distinct speeds; the default (zero)
+// keeps the library's historical speed.
+func (b *Brain) SetMoveSpeed(cellsPerTick float64) {
+	b.state.MoveSpeed = cellsPerTick
+}
+
 // UpdateBelief refreshes the brain's belief from the world snapshot and the
 // minotaur's own position. It is called by the loop before Tick.
 func (b *Brain) UpdateBelief(snap *world.Snapshot, self *world.Minotaur) {

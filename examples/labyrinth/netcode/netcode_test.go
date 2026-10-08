@@ -43,12 +43,14 @@ func TestWallClippingRejectedAndCorrected(t *testing.T) {
 	const dt = 1.0 / 30.0
 	start := maze.Vec2{X: 3.5, Y: 4.5}
 
-	// Client predicts: sprint straight east (yaw=0) toward the wall.
-	client := NewClientPredictor(m, start, 0)
-	sess := NewSession("tok", start, 0)
+	// Client predicts: sprint straight east toward the wall. Under the
+	// camera yaw convention, yaw=pi/2 faces +X (east).
+	east := math.Pi / 2
+	client := NewClientPredictor(m, start, east)
+	sess := NewSession("tok", start, east)
 
 	for i := 0; i < 60; i++ {
-		cmd := client.ApplyInput(1, 0, 0, true, dt)
+		cmd := client.ApplyInput(1, 0, east, true, dt)
 		sess.ApplyInput(m, InputCmd{
 			Seq: cmd.Seq, Forward: cmd.Forward, Strafe: cmd.Strafe,
 			Yaw: cmd.Yaw, Sprint: cmd.Sprint,

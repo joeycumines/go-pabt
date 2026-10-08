@@ -30,9 +30,9 @@ type moveAction struct {
 	done  bool
 }
 
-// advance moves the minotaur along the path by moveSpeed cells. It returns
-// bt.Running while the path has more waypoints and bt.Success when the
-// endpoint is reached.
+// advance moves the minotaur along the path by the state's per-tick speed.
+// It returns bt.Running while the path has more waypoints and bt.Success when
+// the endpoint is reached.
 func (a *moveAction) advance() (bt.Status, error) {
 	if a.done {
 		return bt.Success, nil
@@ -42,6 +42,9 @@ func (a *moveAction) advance() (bt.Status, error) {
 		return bt.Success, nil
 	}
 	remaining := moveSpeed
+	if a.state.MoveSpeed > 0 {
+		remaining = a.state.MoveSpeed
+	}
 	for remaining > 0 && len(a.path) > 0 {
 		target := a.path[0]
 		dx := target.X - a.state.selfPos.X

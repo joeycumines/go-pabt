@@ -1,29 +1,41 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="utf-8">
-<title>ARIADNE — Labyrinth</title>
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<style>
-  :root { color-scheme: dark; }
-  body {
-    margin: 0;
-    background: #07090d;
-    color: #d6e2f0;
-    font: 14px/1.5 system-ui, sans-serif;
-    display: grid;
-    place-items: center;
-    min-height: 100vh;
-  }
-  main { text-align: center; }
-  h1 { font-size: 20px; letter-spacing: .35em; margin: 0 0 .5em; }
-  p { margin: 0; color: #7d8b9d; }
-</style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ARIADNE</title>
+    <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
-<main>
-  <h1>ARIADNE</h1>
-  <p>Labyrinth shell — task T1. Renderer, loop, and netcode land in later tasks.</p>
-</main>
+    <div id="loading">
+        <h1>ARIADNE</h1>
+        <p>Initializing the labyrinth...</p>
+    </div>
+
+    <canvas id="glcanvas"></canvas>
+
+    <div id="hud" hidden>
+        <div id="crosshair">+</div>
+        <div id="intensity-bar">
+            <div id="intensity-fill"></div>
+        </div>
+        <div id="hp-bar">
+            <div id="hp-fill"></div>
+        </div>
+        <canvas id="minimap" width="160" height="160"></canvas>
+        <div id="status-chips">
+            <span id="chip-round">Round: 0</span>
+            <span id="chip-fps">FPS: 0</span>
+        </div>
+    </div>
+
+    <div id="pointer-lock-prompt" hidden>
+        <p>Click to enter the labyrinth</p>
+    </div>
+
+    <div id="hit-flash" hidden></div>
+    <div id="overlay" hidden></div>
+
+    <script type="module" src="js/main.mjs"></script>
 </body>
 </html>

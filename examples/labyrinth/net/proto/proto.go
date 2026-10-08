@@ -42,6 +42,7 @@ type RunnerState struct {
 	Yaw      float64 `json:"yaw"`
 	Pitch    float64 `json:"pitch"`
 	Grounded bool    `json:"grounded"`
+	HP       int     `json:"hp"`
 }
 
 // MinotaurState is one minotaur's state in a snapshot.
@@ -50,6 +51,7 @@ type MinotaurState struct {
 	X       float64 `json:"x"`
 	Y       float64 `json:"y"`
 	Stunned bool    `json:"stunned"`
+	Type    int     `json:"type"`
 }
 
 // InputPayload is the client's input command.
@@ -59,7 +61,21 @@ type InputPayload struct {
 	Jump    bool    `json:"j"`
 	Yaw     float64 `json:"yaw"`
 	Pitch   float64 `json:"pitch"`
+	Sprint  bool    `json:"sprint"`
 	Fire    bool    `json:"fire"`
+}
+
+// MazePayload is the authoritative maze sent once on connect. The client
+// uses this grid verbatim for rendering and collision, so there is never a
+// client/server maze desync.
+type MazePayload struct {
+	W      int     `json:"w"`
+	H      int     `json:"h"`
+	Grid   []int   `json:"grid"` // cell kind per cell, row-major
+	StartX float64 `json:"startX"`
+	StartY float64 `json:"startY"`
+	GateX  float64 `json:"gateX"`
+	GateY  float64 `json:"gateY"`
 }
 
 // BTPayload is a BT operation request.
@@ -141,6 +157,19 @@ func EncodeSession(token string) ([]byte, error) {
 	return json.Marshal(env)
 }
 
+// EncodeMaze encodes the authoritative maze envelope, sent once on connect.
+func EncodeMaze(m MazePayload) ([]byte, error) {
+	payload, err := json.Marshal(m)
+	if err != nil {
+		return nil, err
+	}
+	env := Envelope{
+		Type:    "maze",
+		Payload: payload,
+	}
+	return json.Marshal(env)
+}
+
 // Decode parses a raw message into an Envelope.
 func Decode(data []byte) (*Envelope, error) {
 	var env Envelope
@@ -166,4 +195,13 @@ func DecodeBT(env *Envelope) (*BTPayload, error) {
 		return nil, err
 	}
 	return &bt, nil
+}
+
+// DecodeMaze parses a maze payload from an envelope.
+func DecodeMaze(env *Envelope) (*MazePayload, error) {
+	var m MazePayload
+	if err := json.Unmarshal(env.Payload, &m); err != nil {
+		return nil, err
+	}
+	return &m, nil
 }

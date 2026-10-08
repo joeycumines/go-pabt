@@ -1,0 +1,97 @@
+// HUD: minimap (canvas 2D), intensity bar, status chips, health bar.
+
+export class HUD {
+    constructor() {
+        this.minimap = document.getElementById('minimap');
+        this.minimapCtx = this.minimap.getContext('2d');
+        this.intensityFill = document.getElementById('intensity-fill');
+        this.hpFill = document.getElementById('hp-fill');
+        this.chipRound = document.getElementById('chip-round');
+        this.chipFps = document.getElementById('chip-fps');
+        this._fpsBuffer = [];
+    }
+
+    updateFps(dt) {
+        this._fpsBuffer.push(dt);
+        if (this._fpsBuffer.length > 30) this._fpsBuffer.shift();
+        const avg = this._fpsBuffer.reduce((a,b) => a+b, 0) / this._fpsBuffer.length;
+        this.chipFps.textContent = 'FPS: ' + Math.round(1 / avg);
+    }
+
+    setRound(r) {
+        this.chipRound.textContent = 'Round: ' + r;
+    }
+
+    setIntensity(level) {
+        this.intensityFill.style.width = (level / 5 * 100) + '%';
+    }
+
+    setHP(hp, maxHP) {
+        const pct = Math.max(0, Math.min(100, (hp / maxHP) * 100));
+        this.hpFill.style.width = pct + '%';
+        // Color shift: green > yellow > red
+        if (pct > 60) {
+            this.hpFill.style.background = 'linear-gradient(90deg, #00ff80, #00cc60)';
+        } else if (pct > 30) {
+            this.hpFill.style.background = 'linear-gradient(90deg, #ffcc00, #ff9900)';
+        } else {
+            this.hpFill.style.background = 'linear-gradient(90deg, #ff4040, #cc0000)';
+        }
+    }
+
+    drawMinimap(mazeData, playerPos, playerYaw, minotaurBuffers) {
+        const ctx = this.minimapCtx;
+        const w = this.minimap.width;
+        const h = this.minimap.height;
+        ctx.fillStyle = '#0a0a0f';
+        ctx.fillRect(0, 0, w, h);
+
+        const cellW = w / mazeData.w;
+        const cellH = h / mazeData.h;
+
+        // Draw walls
+        ctx.fillStyle = '#404060';
+        for (let y = 0; y < mazeData.h; y++) {
+            for (let x = 0; x < mazeData.w; x++) {
+                if (mazeData.grid[y * mazeData.w + x] === 0) {
+                    ctx.fillRect(x * cellW, y * cellH, cellW, cellH);
+                }
+            }
+        }
+
+        // Draw gate
+        ctx.fillStyle = '#00ff80';
+        ctx.fillRect(
+            mazeData.gateX * cellW - 2, mazeData.gateY * cellH - 2,
+            cellW + 4, cellH + 4
+        );
+
+        // Draw actors
+        if (minotaurBuffers) {
+            for (const [id, buf] of minotaurBuffers) {
+                const mx = buf.pos[0] * cellW;
+                const my = buf.pos[2] * cellH;
+                ctx.fillStyle = buf.stunned ? '#4040ff' : '#ff4040';
+                ctx.beginPath();
+                ctx.arc(mx, my, 2, 0, Math.PI * 2);
+                ctx.fill();
+            }
+        }
+
+        // Draw player
+        const px = playerPos[0] * cellW;
+        const py = playerPos[2] * cellH;
+        ctx.fillStyle = '#ff00ff';
+        ctx.beginPath();
+        ctx.arc(px, py, 3, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Direction indicator
+        ctx.strokeStyle = '#ff00ff';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(px, py);
+        ctx.lineTo(px + Math.sin(playerYaw) * 8, py + Math.cos(playerYaw) * 8);
+        ctx.stroke();
+    }
+}

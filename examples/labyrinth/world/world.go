@@ -15,6 +15,9 @@ const (
 	PhaseLost
 )
 
+// MaxHP is the player's starting health.
+const MaxHP = 100
+
 // Runner is the player entity.
 type Runner struct {
 	Pos      maze.Vec2
@@ -22,17 +25,23 @@ type Runner struct {
 	Yaw      float64
 	Pitch    float64
 	Grounded bool
+	HP       int
 }
+
+// StunDuration is the number of ticks a minotaur stays stunned.
+// At 30 Hz, 45 ticks = 1.5 seconds.
+const StunDuration = 45
 
 // Minotaur is a PA-BT-driven hunter.
 type Minotaur struct {
-	ID      string
-	Pos     maze.Vec2
-	Stunned bool
-	// Belief is the minotaur's current belief about the player. The BT state
-	// view reads this to drive pursuit/search decisions. Belief injection
-	// (T8) mutates this field to redirect the hunter.
-	Belief Belief
+	ID        string
+	Pos       maze.Vec2
+	Stunned   bool
+	StunTicks      int // remaining stun ticks; decremented each tick, clears Stunned at 0
+	Type           int // actor archetype: 0=brute, 1=swarm, 2=caster, 3=stalker
+	HP             int
+	AttackCooldown int // ticks until this minotaur may damage the runner again
+	Belief         Belief
 }
 
 // Belief is a minotaur's model of the player's state.
@@ -60,7 +69,7 @@ type World struct {
 func New(m *maze.Maze) *World {
 	return &World{
 		Maze:   m,
-		Runner: Runner{Pos: m.Start, Grounded: true},
+		Runner: Runner{Pos: m.Start, Grounded: true, HP: MaxHP},
 		Phase:  PhaseRunning,
 	}
 }
@@ -90,6 +99,7 @@ type Snapshot struct {
 	Runner    Runner
 	Minotaurs []Minotaur
 	Intensity int
+	Gate      maze.Vec2
 }
 
 // Copy returns a defensive-copy snapshot of the current world state. The
@@ -101,6 +111,7 @@ func (w *World) Copy() *Snapshot {
 		Phase:     w.Phase,
 		Runner:    w.Runner,
 		Intensity: w.Intensity,
+		Gate:      w.Maze.Gate,
 	}
 	s.Minotaurs = make([]Minotaur, len(w.Minotaurs))
 	for i, m := range w.Minotaurs {

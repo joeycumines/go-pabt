@@ -1,0 +1,189 @@
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    background: #0a0a0f;
+    color: #e0e0ff;
+    font-family: 'Courier New', monospace;
+    overflow: hidden;
+    width: 100vw;
+    height: 100vh;
+}
+
+#glcanvas {
+    display: block;
+    width: 100vw;
+    height: 100vh;
+    cursor: none;
+}
+
+#loading {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    background: #0a0a0f;
+    z-index: 1000;
+}
+
+#loading h1 {
+    font-size: 3rem;
+    color: #ff00ff;
+    text-shadow: 0 0 20px #ff00ff;
+    margin-bottom: 1rem;
+}
+
+#loading p {
+    font-size: 1.2rem;
+    color: #8080ff;
+}
+
+[hidden] {
+    display: none !important;
+}
+
+#hud {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    pointer-events: none;
+    z-index: 100;
+}
+
+#crosshair {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    font-size: 2rem;
+    color: #ffffff;
+    text-shadow: 0 0 4px #000000;
+    opacity: 0.7;
+}
+
+#intensity-bar {
+    position: absolute;
+    top: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 200px;
+    height: 8px;
+    background: rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(255, 0, 255, 0.5);
+    border-radius: 4px;
+}
+
+#intensity-fill {
+    height: 100%;
+    width: 0%;
+    background: linear-gradient(90deg, #ff00ff, #ff0080);
+    border-radius: 3px;
+    transition: width 0.3s ease;
+}
+
+#hp-bar {
+    position: absolute;
+    bottom: 60px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 240px;
+    height: 12px;
+    background: rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(0, 255, 128, 0.5);
+    border-radius: 6px;
+}
+
+#hp-fill {
+    height: 100%;
+    width: 100%;
+    background: linear-gradient(90deg, #00ff80, #00cc60);
+    border-radius: 5px;
+    transition: width 0.2s ease, background 0.3s ease;
+}
+
+#minimap {
+    position: absolute;
+    top: 20px;
+    right: 20px;
+    background: rgba(0, 0, 0, 0.7);
+    border: 2px solid #ff00ff;
+    border-radius: 4px;
+}
+
+#status-chips {
+    position: absolute;
+    bottom: 20px;
+    left: 20px;
+    display: flex;
+    gap: 12px;
+}
+
+#status-chips span {
+    padding: 6px 12px;
+    background: rgba(0, 0, 0, 0.7);
+    border: 1px solid rgba(255, 0, 255, 0.5);
+    border-radius: 4px;
+    font-size: 0.9rem;
+    color: #e0e0ff;
+}
+
+#pointer-lock-prompt {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    padding: 24px 48px;
+    background: rgba(10, 10, 15, 0.9);
+    border: 2px solid #ff00ff;
+    border-radius: 8px;
+    z-index: 200;
+    cursor: pointer;
+    pointer-events: auto;
+}
+
+#pointer-lock-prompt p {
+    font-size: 1.5rem;
+    color: #ff00ff;
+    text-shadow: 0 0 10px #ff00ff;
+}
+
+#hit-flash {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    background: rgba(255, 80, 80, 0.3);
+    z-index: 400;
+    pointer-events: none;
+}
+
+#overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.85);
+    z-index: 500;
+    cursor: pointer;
+    pointer-events: auto;
+    font-size: 3rem;
+    color: #ff0080;
+    text-shadow: 0 0 30px #ff0080;
+    white-space: pre-line;
+    text-align: center;
+}

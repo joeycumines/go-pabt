@@ -47,6 +47,10 @@ type State struct {
 	// selfPos is a pointer to the minotaur's live position so actions can
 	// move it.
 	selfPos *maze.Vec2
+	// MoveSpeed is the per-tick movement distance for this actor's move
+	// actions. Zero falls back to the default moveSpeed, which keeps the
+	// brain's standalone tests unchanged.
+	MoveSpeed float64
 }
 
 // NewState builds a State over the given belief, maze, and a pointer to the

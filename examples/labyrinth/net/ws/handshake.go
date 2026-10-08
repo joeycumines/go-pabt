@@ -24,6 +24,9 @@ func AcceptKey(key string) string {
 // Upgrade performs the server-side WebSocket upgrade handshake on conn.
 // It reads the HTTP request, validates the WebSocket headers, and writes the
 // 101 response. Returns the buffered reader for subsequent frame reads.
+// Use this when you own the raw connection before any HTTP parsing (e.g.
+// a raw TCP listener). For connections already parsed by net/http, use
+// UpgradeFromRequest instead.
 func Upgrade(conn net.Conn) (*bufio.Reader, error) {
 	br := bufio.NewReader(conn)
 	req, err := http.ReadRequest(br)
@@ -32,6 +35,24 @@ func Upgrade(conn net.Conn) (*bufio.Reader, error) {
 	}
 	defer req.Body.Close()
 
+	br, err = upgradeFromParsed(conn, req)
+	if err != nil {
+		return nil, err
+	}
+	return br, nil
+}
+
+// UpgradeFromRequest performs the WebSocket upgrade on a connection whose
+// HTTP request has already been parsed by net/http (e.g. after
+// http.Hijacker.Hijack). It validates the request headers and writes the
+// 101 response. The caller supplies the buffered reader to use for
+// subsequent frame reads (typically the reader from Hijack).
+func UpgradeFromRequest(conn net.Conn, br *bufio.Reader, req *http.Request) (*bufio.Reader, error) {
+	return upgradeFromParsed(conn, req)
+}
+
+// upgradeFromParsed validates an already-parsed request and writes the 101.
+func upgradeFromParsed(conn net.Conn, req *http.Request) (*bufio.Reader, error) {
 	if !strings.EqualFold(req.Header.Get("Upgrade"), "websocket") {
 		return nil, fmt.Errorf("ws: missing Upgrade: websocket")
 	}
@@ -56,5 +77,5 @@ func Upgrade(conn net.Conn) (*bufio.Reader, error) {
 		return nil, fmt.Errorf("ws: write response: %w", err)
 	}
 
-	return br, nil
+	return bufio.NewReader(conn), nil
 }
