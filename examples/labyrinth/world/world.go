@@ -34,9 +34,9 @@ const StunDuration = 45
 
 // Minotaur is a PA-BT-driven hunter.
 type Minotaur struct {
-	ID        string
-	Pos       maze.Vec2
-	Stunned   bool
+	ID             string
+	Pos            maze.Vec2
+	Stunned        bool
 	StunTicks      int // remaining stun ticks; decremented each tick, clears Stunned at 0
 	Type           int // actor archetype: 0=brute, 1=swarm, 2=caster, 3=stalker
 	HP             int

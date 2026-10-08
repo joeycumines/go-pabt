@@ -3,6 +3,8 @@
 package netcode
 
 import (
+	"sync/atomic"
+
 	"github.com/joeycumines/go-pabt/examples/labyrinth/maze"
 )
 
@@ -27,9 +29,11 @@ type Session struct {
 	Pos maze.Vec2
 	Yaw float64
 
-	// LastAckSeq is the sequence number of the most recently processed
-	// input. It is included in every snapshot sent to this session.
-	LastAckSeq uint64
+	// lastAckSeq is the sequence number of the most recently processed
+	// input. It is included in every snapshot sent to this session. It is
+	// atomic because ApplyInput runs on the loop writer goroutine while the
+	// snapshot fan-out reads AckSeq from its own goroutine.
+	lastAckSeq atomic.Uint64
 
 	// history retains recent inputs for audit and replay diagnostics.
 	history []InputCmd
@@ -55,12 +59,12 @@ func NewSession(token string, start maze.Vec2, startYaw float64) *Session {
 // number only ever advances monotonically per session and retransmitted
 // inputs are not applied twice.
 func (s *Session) ApplyInput(m *maze.Maze, cmd InputCmd, dt float64) {
-	if cmd.Seq <= s.LastAckSeq {
+	if cmd.Seq <= s.lastAckSeq.Load() {
 		return
 	}
 	s.Pos = Move(m, s.Pos, cmd.Yaw, cmd.Forward, cmd.Strafe, cmd.Sprint, dt)
 	s.Yaw = cmd.Yaw
-	s.LastAckSeq = cmd.Seq
+	s.lastAckSeq.Store(cmd.Seq)
 
 	s.history = append(s.history, cmd)
 	if len(s.history) > historyCap {
@@ -71,7 +75,7 @@ func (s *Session) ApplyInput(m *maze.Maze, cmd InputCmd, dt float64) {
 // AckSeq returns the last processed input sequence number, for inclusion in
 // outgoing snapshots.
 func (s *Session) AckSeq() uint64 {
-	return s.LastAckSeq
+	return s.lastAckSeq.Load()
 }
 
 // History returns a copy of the retained input history, oldest first.

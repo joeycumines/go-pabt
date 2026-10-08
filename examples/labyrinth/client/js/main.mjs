@@ -151,6 +151,15 @@ function update(dt) {
         hud.setHP(sp.hp, MAX_HP);
         hud.setRound(snap.data.round);
         hud.setIntensity(snap.data.intensity);
+
+        // Terminal phase fallback: the authoritative phase rides every
+        // snapshot, so a dropped event message can never wedge the win/lose
+        // overlays (proto phase: 0 running, 1 won, 2 lost).
+        if (gameState === 'playing' && snap.data.phase === 1) {
+            handleEvent({type: 'win'});
+        } else if (gameState === 'playing' && snap.data.phase === 2) {
+            handleEvent({type: 'caught'});
+        }
     }
 
     // Pulse fire: click to fire (with cooldown).

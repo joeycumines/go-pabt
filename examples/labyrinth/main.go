@@ -56,7 +56,7 @@ func main() {
 	// (actor AI, stun timers, damage, win/lose, escalation) on the loop, so
 	// all game logic runs on the single-writer goroutine.
 	m := maze.Generate(*seed, 21, 21)
-	g := game.NewGame(m, 8) // 8 initial actors: 2 per type
+	g := game.NewGame(m, 8, *seed) // 8 initial actors: 2 per type
 
 	// Start the authoritative loop.
 	go g.Loop.Run(ctx)
@@ -151,7 +151,7 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request, g *game.Game) {
 
 	// Subscribe to snapshots and events.
 	snapCh := make(chan []byte, 32)
-	eventCh := make(chan game.Event, 16)
+	eventCh := make(chan game.Event, 64)
 	g.Subscribe(sess.ID, snapCh)
 	g.SubscribeEvents(sess.ID, eventCh)
 

@@ -5,7 +5,7 @@ package game
 import (
 	"crypto/rand"
 	"encoding/hex"
-	"math"
+	mrand "math/rand"
 	"sync"
 	"time"
 
@@ -81,19 +81,22 @@ func actorDamage(t ActorType) int {
 	}
 }
 
-// actorSpeed returns cells-per-tick movement speed for each archetype.
+// actorSpeed returns cells-per-tick movement speed for each archetype. At
+// 30 Hz these are 3.0/4.8/2.7/4.2 cells per second: every archetype is
+// slower than the player's sprint (6.5) but several beat the walk speed
+// (4.0), so escape depends on sprinting, stunning, and maze knowledge.
 func actorSpeed(t ActorType) float64 {
 	switch t {
 	case ActorBrute:
-		return 0.20
+		return 0.10
 	case ActorSwarm:
-		return 0.45
+		return 0.16
 	case ActorCaster:
-		return 0.25
+		return 0.09
 	case ActorStalker:
-		return 0.35
+		return 0.14
 	default:
-		return 0.30
+		return 0.12
 	}
 }
 
@@ -114,10 +117,18 @@ type Game struct {
 	eventMu     sync.RWMutex
 
 	escalationRounds []int
+
+	// rng places actor spawns. It is only touched on the loop writer
+	// goroutine (NewGame completes before the loop starts), so it needs no
+	// lock. Seeding it from the maze seed makes the whole world
+	// reproducible.
+	rng *mrand.Rand
 }
 
-// NewGame creates a game with the given maze and initial actor count.
-func NewGame(m *maze.Maze, initialActors int) *Game {
+// NewGame creates a game with the given maze and initial actor count. The
+// seed drives actor spawn placement, so a given (maze seed, actor count)
+// pair always produces the same starting world.
+func NewGame(m *maze.Maze, initialActors int, seed uint64) *Game {
 	w := world.New(m)
 	l := loop.New(w)
 
@@ -129,6 +140,7 @@ func NewGame(m *maze.Maze, initialActors int) *Game {
 		subscribers:      make(map[SessionID]chan []byte),
 		eventSubs:        make(map[SessionID]chan Event),
 		escalationRounds: []int{300, 600, 900},
+		rng:              mrand.New(mrand.NewSource(int64(seed))),
 	}
 
 	for i := 0; i < initialActors; i++ {
@@ -162,8 +174,8 @@ func (g *Game) MazePayload() proto.MazePayload {
 
 func (g *Game) spawnActor(typ ActorType) {
 	for attempts := 0; attempts < 200; attempts++ {
-		cx := 1 + int(time.Now().UnixNano()%int64(g.Maze.W-2))
-		cy := 1 + int(time.Now().UnixNano()%int64(g.Maze.H-2))
+		cx := 1 + g.rng.Intn(g.Maze.W-2)
+		cy := 1 + g.rng.Intn(g.Maze.H-2)
 		cell := g.Maze.At(cx, cy)
 		if !cell.Walkable() {
 			continue
@@ -414,6 +426,3 @@ func (g *Game) SnapshotFanOut(encode func(snap *world.Snapshot, ackSeq uint64) (
 		g.subMu.RUnlock()
 	}
 }
-
-// Ensure math import is used.
-var _ = math.Sqrt
