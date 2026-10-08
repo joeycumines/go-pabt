@@ -87,3 +87,36 @@ func TestTerritoryQuadrants(t *testing.T) {
 		}
 	}
 }
+
+// TestTerritorySeamMatchesClient pins the center-seam classification. The
+// client's territoryAt compares integer cell coords against w/2 and h/2 in JS
+// (float half-width), so the server must apply the same float comparison to
+// the cell index or the floor tint contradicts the authoritative territory on
+// the center row/column of odd-sized mazes.
+func TestTerritorySeamMatchesClient(t *testing.T) {
+	m := maze.Generate(3, 21, 21)
+	for cy := 0; cy < m.H; cy++ {
+		for cx := 0; cx < m.W; cx++ {
+			pos := maze.Vec2{X: float64(cx) + 0.5, Y: float64(cy) + 0.5}
+			east := float64(cx) >= float64(m.W)/2
+			north := float64(cy) < float64(m.H)/2
+			var want Element
+			switch {
+			case north && east:
+				want = ElementFire
+			case north:
+				want = ElementIce
+			case east:
+				want = ElementLightning
+			default:
+				want = ElementVoid
+			}
+			if got := TerritoryOf(m, pos); got != want {
+				t.Fatalf("TerritoryOf(cell %d,%d) = %v, want %v", cx, cy, got, want)
+			}
+			if got := territoryIndex(m, pos); got != int(want) {
+				t.Fatalf("territoryIndex(cell %d,%d) = %d, want %d", cx, cy, got, int(want))
+			}
+		}
+	}
+}

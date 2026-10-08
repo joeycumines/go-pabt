@@ -232,9 +232,10 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request, g *game.Game) {
 
 func snapshotToProto(snap *world.Snapshot) proto.SnapshotPayload {
 	p := proto.SnapshotPayload{
-		Round:     snap.Round,
-		Phase:     int(snap.Phase),
-		Intensity: snap.Intensity,
+		Round:            snap.Round,
+		Phase:            int(snap.Phase),
+		Intensity:        snap.Intensity,
+		TerritoryControl: snap.TerritoryControl,
 		Runner: proto.RunnerState{
 			X:        snap.Runner.Pos.X,
 			Y:        snap.Runner.Pos.Y,
@@ -247,12 +248,22 @@ func snapshotToProto(snap *world.Snapshot) proto.SnapshotPayload {
 	}
 	for _, m := range snap.Minotaurs {
 		p.Minotaurs = append(p.Minotaurs, proto.MinotaurState{
-			ID:      m.ID,
-			X:       m.Pos.X,
-			Y:       m.Pos.Y,
-			Stunned: m.Stunned,
-			Type:    m.Type,
-			Element: m.Element,
+			ID:       m.ID,
+			X:        m.Pos.X,
+			Y:        m.Pos.Y,
+			Stunned:  m.Stunned,
+			Type:     m.Type,
+			Element:  m.Element,
+			HP:       m.HP,
+			Strategy: m.Strategy,
+		})
+	}
+	for _, h := range snap.Hazards {
+		p.Hazards = append(p.Hazards, proto.HazardState{
+			X:       h.Pos.X,
+			Y:       h.Pos.Y,
+			Element: h.Element,
+			TTL:     h.TTL,
 		})
 	}
 	for _, pu := range snap.PowerUps {

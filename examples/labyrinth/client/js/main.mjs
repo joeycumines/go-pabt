@@ -62,6 +62,17 @@ const TERRITORY_TINTS = [
 let playerElement = 0; // active element; power-ups change it
 let hitMarkerTimer = 0; // frames the hit marker text stays visible
 
+// S3 gang war: live territory control from the server, indexed by quadrant
+// (0=NE, 1=NW, 2=SE, 3=SW) with the controlling element as value. Defaults
+// to innate control until the first snapshot arrives.
+let territoryControl = [0, 1, 2, 3];
+let hazards = []; // live crossfire rifts from the snapshot
+let clashSparks = []; // transient twin-color flashes at crossfire points
+let clashCount = 0;
+const ACTOR_MAX_HP = [40, 15, 25, 20]; // mirrors game.actorHP per archetype
+const StrategyRaid = 1;
+const StrategyRetreat = 2;
+
 function init() {
     renderer = new Renderer(canvas);
     camera = new Camera(canvas);
@@ -174,6 +185,10 @@ function update(dt) {
             hud.setElement(playerElement);
         }
 
+        // Gang war state: dynamic territory control and crossfire rifts.
+        if (snap.data.territoryControl) territoryControl = snap.data.territoryControl;
+        hazards = snap.data.hazards || [];
+
         // Terminal phase fallback: the authoritative phase rides every
         // snapshot, so a dropped event message can never wedge the win/lose
         // overlays (proto phase: 0 running, 1 won, 2 lost).
@@ -209,13 +224,15 @@ function update(dt) {
         for (const m of snap.data.minotaurs) {
             let buf = minotaurBuffers.get(m.id);
             if (!buf) {
-                buf = { pos: [m.x, 0.5, m.y], targetPos: [m.x, 0.5, m.y], stunned: m.stunned, type: m.type|0, element: m.element|0 };
+                buf = { pos: [m.x, 0.5, m.y], targetPos: [m.x, 0.5, m.y], stunned: m.stunned, type: m.type|0, element: m.element|0, hp: m.hp|0, strategy: m.strategy|0 };
                 minotaurBuffers.set(m.id, buf);
             }
             buf.targetPos = [m.x, 0.5, m.y];
             buf.stunned = m.stunned;
             buf.type = m.type|0;
             buf.element = m.element|0;
+            buf.hp = m.hp|0;
+            buf.strategy = m.strategy|0;
             buf.lastUpdate = now;
         }
     }
@@ -228,8 +245,16 @@ function update(dt) {
         buf.pos[2] += (buf.targetPos[2] - buf.pos[2]) * t;
     }
 
-    // Advance projectiles; cull after 0.5s.
+    // Prune buffers for actors the server removed (killed in the gang war).
+    // The death event prunes immediately; this backstop covers dropped
+    // events and keeps stale IDs from resurrecting ghosts.
+    for (const [id, buf] of minotaurBuffers) {
+        if (now - buf.lastUpdate > 2) minotaurBuffers.delete(id);
+    }
+
+    // Advance projectiles; cull after 0.5s. Clash sparks fade over 0.4s.
     projectiles = projectiles.filter(p => now - p.born < 0.5);
+    clashSparks = clashSparks.filter(s => now - s.born < 0.4);
     for (const p of projectiles) {
         p.pos[0] += p.dir[0] * 40 * dt;
         p.pos[1] += p.dir[1] * 40 * dt;
@@ -266,10 +291,13 @@ function update(dt) {
         get actors() {
             const out = [];
             for (const [id, buf] of minotaurBuffers) {
-                out.push({ id, pos: [...buf.pos], type: buf.type, stunned: buf.stunned });
+                out.push({ id, pos: [...buf.pos], type: buf.type, stunned: buf.stunned, element: buf.element, hp: buf.hp, strategy: buf.strategy });
             }
             return out;
         },
+        get hazards() { return hazards.map(h => ({ x: h.x, y: h.y, element: h.element, ttl: h.ttl })); },
+        get territoryControl() { return [...territoryControl]; },
+        get clashCount() { return clashCount; },
         get actorCount() { return minotaurBuffers.size; },
         get round() { const s = net.getSnapshot(); return s ? s.data.round : -1; },
         get intensity() { const s = net.getSnapshot(); return s ? s.data.intensity : -1; },
@@ -328,6 +356,21 @@ function handleEvent(evt) {
             audio.playStun();
             hitFlashTimer = 6;
             break;
+        case 'clash':
+            clashCount++;
+            if (evt.data) {
+                clashSparks.push({
+                    pos: [evt.data.x, 0.6, evt.data.y],
+                    born: performance.now() / 1000,
+                    colorA: ELEMENT_COLORS[evt.data.a|0] || ELEMENT_COLORS[0],
+                    colorB: ELEMENT_COLORS[evt.data.b|0] || ELEMENT_COLORS[0],
+                });
+            }
+            hud.setWar(clashCount);
+            break;
+        case 'death':
+            if (evt.data && evt.data.id) minotaurBuffers.delete(evt.data.id);
+            break;
         case 'hit':
             damageFlashTimer = 10;
             break;
@@ -366,7 +409,7 @@ function render() {
                     color: wallColor,
                 });
             } else {
-                const t = TERRITORY_TINTS[territoryAt(x, z, maze)];
+                const t = TERRITORY_TINTS[territoryControl[territoryAt(x, z, maze)]|0] || TERRITORY_TINTS[0];
                 instances.push({
                     pos: [x + 0.5, -0.05, z + 0.5],
                     scale: [1, 0.1, 1],
@@ -402,6 +445,41 @@ function render() {
         }
     }
 
+    // Crossfire rifts: pulsing elemental hazards left by faction clashes.
+    // These are the gang war's dynamic obstacles.
+    const nowMs = performance.now();
+    for (const h of hazards) {
+        const ec = ELEMENT_COLORS[h.element|0] || ELEMENT_COLORS[0];
+        const pulse = 0.75 + Math.sin(nowMs / 120) * 0.25;
+        const fade = Math.min(1, (h.ttl|0) / 120 + 0.25);
+        instances.push({
+            pos: [h.x, 0.12, h.y],
+            scale: [0.9 * pulse, 0.12, 0.9 * pulse],
+            color: [ec[0] * fade, ec[1] * fade, ec[2] * fade, 1.0],
+        });
+        instances.push({
+            pos: [h.x, 0.55, h.y],
+            scale: [0.12, 0.9 * pulse, 0.12],
+            color: [Math.min(1, ec[0] + 0.3), Math.min(1, ec[1] + 0.3), Math.min(1, ec[2] + 0.3), 1.0],
+        });
+    }
+
+    // Clash sparks: brief twin-color flash where two factions crossed fire.
+    const nowSec = nowMs / 1000;
+    for (const s of clashSparks) {
+        const grow = 0.2 + (nowSec - s.born) * 2.2;
+        instances.push({
+            pos: [s.pos[0], s.pos[1] + 0.1, s.pos[2]],
+            scale: [grow, 0.08, grow],
+            color: [s.colorA[0], s.colorA[1], s.colorA[2], 1.0],
+        });
+        instances.push({
+            pos: [s.pos[0], s.pos[1] + 0.25, s.pos[2]],
+            scale: [grow * 0.6, 0.06, grow * 0.6],
+            color: [s.colorB[0], s.colorB[1], s.colorB[2], 1.0],
+        });
+    }
+
     // Actors (interpolated). Silhouette is per archetype; body color is the
     // actor's faction element, so each of the four factions reads at a glance.
     for (const [id, buf] of minotaurBuffers) {
@@ -420,7 +498,10 @@ function render() {
                 bodyScale = [0.5, 0.8, 0.5]; headY = 0.8; eyeY = 0.85;
         }
         const ec = ELEMENT_COLORS[buf.element|0] || ELEMENT_COLORS[0];
-        const body = buf.stunned ? stunnedColor : [ec[0], ec[1], ec[2], 1.0];
+        // Wounded actors dim toward black so battle damage reads at a glance.
+        const hpFrac = Math.max(0, Math.min(1, (buf.hp === undefined ? 1 : buf.hp) / (ACTOR_MAX_HP[buf.type|0] || 30)));
+        const dim = 0.45 + 0.55 * hpFrac;
+        const body = buf.stunned ? stunnedColor : [ec[0] * dim, ec[1] * dim, ec[2] * dim, 1.0];
         head = buf.stunned ? stunnedColor : [Math.min(1, ec[0] + 0.2), Math.min(1, ec[1] + 0.2), Math.min(1, ec[2] + 0.2), 1.0];
         eye = [1.0, 1.0, 1.0, 1.0];
         instances.push({
@@ -442,6 +523,17 @@ function render() {
             pos: [buf.pos[0] + 0.1, buf.pos[1] + eyeY, buf.pos[2] - 0.15],
             scale: [0.08, 0.08, 0.08],
             color: eye,
+        });
+        // Strategy beacon: red=raid, cyan=retreat, dim grey=patrol.
+        const strat = buf.strategy|0;
+        const stratColor = buf.stunned ? stunnedColor
+            : strat === StrategyRaid ? [1.0, 0.15, 0.05, 1.0]
+            : strat === StrategyRetreat ? [0.15, 0.9, 1.0, 1.0]
+            : [0.35, 0.35, 0.45, 1.0];
+        instances.push({
+            pos: [buf.pos[0], buf.pos[1] + headY + 0.35, buf.pos[2]],
+            scale: [0.12, 0.12, 0.12],
+            color: stratColor,
         });
     }
 
@@ -468,7 +560,7 @@ function render() {
 
     // Update minimap with actors and power-ups.
     if (maze) {
-        hud.drawMinimap(maze, camera.pos, camera.yaw, minotaurBuffers, snap && snap.data ? snap.data.powerUps : null);
+        hud.drawMinimap(maze, camera.pos, camera.yaw, minotaurBuffers, snap && snap.data ? snap.data.powerUps : null, territoryControl, hazards);
     }
 }
 

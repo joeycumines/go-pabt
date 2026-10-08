@@ -9,6 +9,7 @@ export class HUD {
         this.chipRound = document.getElementById('chip-round');
         this.chipFps = document.getElementById('chip-fps');
         this.chipElement = document.getElementById('chip-element');
+        this.chipWar = document.getElementById('chip-war');
         this._fpsBuffer = [];
     }
 
@@ -49,7 +50,12 @@ export class HUD {
         this.chipElement.style.color = colors[elem] || '#ffffff';
     }
 
-    drawMinimap(mazeData, playerPos, playerYaw, minotaurBuffers, powerUps) {
+    setWar(clashes) {
+        if (!this.chipWar) return;
+        this.chipWar.textContent = 'War: ' + clashes + ' clashes';
+    }
+
+    drawMinimap(mazeData, playerPos, playerYaw, minotaurBuffers, powerUps, territoryControl, hazards) {
         const ctx = this.minimapCtx;
         const w = this.minimap.width;
         const h = this.minimap.height;
@@ -82,7 +88,8 @@ export class HUD {
                 const east = x >= mazeData.w / 2;
                 const north = y < mazeData.h / 2;
                 const ti = north ? (east ? 0 : 1) : (east ? 2 : 3);
-                ctx.fillStyle = terrTints[ti];
+                const ctrl = territoryControl || [0, 1, 2, 3];
+                ctx.fillStyle = terrTints[ctrl[ti]|0] || terrTints[0];
                 ctx.fillRect(x * cellW, y * cellH, cellW, cellH);
             }
         }
@@ -104,15 +111,37 @@ export class HUD {
             }
         }
 
-        // Draw actors
+        // Draw crossfire rifts (gang-war dynamic obstacles).
+        if (hazards) {
+            const hzColors = ['#ff5920', '#59bfff', '#fff240', '#8c33d9'];
+            for (const h of hazards) {
+                ctx.strokeStyle = hzColors[h.element|0] || '#ffffff';
+                ctx.lineWidth = 1;
+                ctx.beginPath();
+                ctx.arc(h.x * cellW, h.y * cellH, 4, 0, Math.PI * 2);
+                ctx.stroke();
+            }
+        }
+
+        // Draw actors, colored by faction element with a strategy ring:
+        // red ring = raid, cyan ring = retreat.
         if (minotaurBuffers) {
+            const elemColors = ['#ff5920', '#59bfff', '#fff240', '#8c33d9'];
             for (const [id, buf] of minotaurBuffers) {
                 const mx = buf.pos[0] * cellW;
                 const my = buf.pos[2] * cellH;
-                ctx.fillStyle = buf.stunned ? '#4040ff' : '#ff4040';
+                ctx.fillStyle = buf.stunned ? '#4040ff' : (elemColors[buf.element|0] || '#ff4040');
                 ctx.beginPath();
                 ctx.arc(mx, my, 2, 0, Math.PI * 2);
                 ctx.fill();
+                const strat = buf.strategy|0;
+                if (strat === 1 || strat === 2) {
+                    ctx.strokeStyle = strat === 1 ? '#ff2010' : '#20e0ff';
+                    ctx.lineWidth = 1;
+                    ctx.beginPath();
+                    ctx.arc(mx, my, 4, 0, Math.PI * 2);
+                    ctx.stroke();
+                }
             }
         }
 

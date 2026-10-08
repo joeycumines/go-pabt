@@ -18,8 +18,13 @@ import (
 //	south-west = Void (Void Cult)
 //	south-east = Lightning (Storm Pact)
 func TerritoryOf(m *maze.Maze, pos maze.Vec2) Element {
-	east := pos.X >= float64(m.W)/2
-	north := pos.Y < float64(m.H)/2
+	// Classify by cell index with the same float half-width comparison the
+	// client's integer-cell territoryAt uses (x >= w/2, y < h/2 in JS), so
+	// the center seam of an odd-sized maze reads identically on both sides.
+	cx := int(pos.X)
+	cy := int(pos.Y)
+	east := float64(cx) >= float64(m.W)/2
+	north := float64(cy) < float64(m.H)/2
 	switch {
 	case north && east:
 		return ElementFire

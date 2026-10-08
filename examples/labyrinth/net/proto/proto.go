@@ -28,12 +28,14 @@ type Envelope struct {
 
 // SnapshotPayload is the world state sent at 20 Hz.
 type SnapshotPayload struct {
-	Round     int             `json:"round"`
-	Phase     int             `json:"phase"`
-	Runner    RunnerState     `json:"runner"`
-	Minotaurs []MinotaurState `json:"minotaurs"`
-	PowerUps  []PowerUpState  `json:"powerUps"`
-	Intensity int             `json:"intensity"`
+	Round            int             `json:"round"`
+	Phase            int             `json:"phase"`
+	Runner           RunnerState     `json:"runner"`
+	Minotaurs        []MinotaurState `json:"minotaurs"`
+	PowerUps         []PowerUpState  `json:"powerUps"`
+	Intensity        int             `json:"intensity"`
+	TerritoryControl [4]int          `json:"territoryControl"`
+	Hazards          []HazardState   `json:"hazards"`
 }
 
 // RunnerState is the player's state in a snapshot.
@@ -57,6 +59,11 @@ type MinotaurState struct {
 	Type    int     `json:"type"`
 	// Element is the actor's innate element: 0=fire 1=ice 2=lightning 3=void.
 	Element int `json:"element"`
+	// HP is the actor's remaining health.
+	HP int `json:"hp"`
+	// Strategy is the actor's current faction strategy: 0=patrol 1=raid
+	// 2=retreat.
+	Strategy int `json:"strategy"`
 }
 
 // PowerUpState is one elemental pickup in a snapshot.
@@ -65,6 +72,14 @@ type PowerUpState struct {
 	Y       float64 `json:"y"`
 	Element int     `json:"element"`
 	Active  bool    `json:"active"`
+}
+
+// HazardState is one crossfire rift in a snapshot.
+type HazardState struct {
+	X       float64 `json:"x"`
+	Y       float64 `json:"y"`
+	Element int     `json:"element"`
+	TTL     int     `json:"ttl"`
 }
 
 // InputPayload is the client's input command.

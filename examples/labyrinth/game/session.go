@@ -124,6 +124,15 @@ type Game struct {
 	// lock. Seeding it from the maze seed makes the whole world
 	// reproducible.
 	rng *mrand.Rand
+
+	// nextActorID is a monotonic actor ID counter. IDs are never reused,
+	// because clients may still hold interpolation buffers for a removed
+	// actor when its old ID would otherwise be handed to a respawn.
+	nextActorID int
+
+	// actorStates is parallel to World.Minotaurs (faction combat cooldowns
+	// and strategy state). Only touched on the writer goroutine.
+	actorStates []*ActorState
 }
 
 // NewGame creates a game with the given maze and initial actor count. The
@@ -205,7 +214,8 @@ func (g *Game) spawnActor(typ ActorType) {
 		return
 	}
 
-	id := actorID(typ, len(g.World.Minotaurs))
+	g.nextActorID++
+	id := actorID(typ, g.nextActorID)
 	minotaur := &world.Minotaur{
 		ID:      id,
 		Pos:     pos,
@@ -224,11 +234,12 @@ func (g *Game) spawnActor(typ ActorType) {
 	b.SetMoveSpeed(actorSpeed(typ))
 	g.Brains = append(g.Brains, b)
 	g.Histories = append(g.Histories, netcode.NewMinotaurHistory())
+	g.actorStates = append(g.actorStates, &ActorState{StrategyTimer: StrategyReevalTicks})
 }
 
-func actorID(typ ActorType, idx int) string {
+func actorID(typ ActorType, n int) string {
 	prefixes := [4]string{"B", "S", "C", "K"}
-	return prefixes[typ%4] + "-" + strconv.Itoa(idx+1)
+	return prefixes[typ%4] + "-" + strconv.Itoa(n)
 }
 
 func distSq(a, b maze.Vec2) float64 {
@@ -243,6 +254,12 @@ func (g *Game) tickLogic(w *world.World) {
 	if w.Phase != world.PhaseRunning {
 		return
 	}
+
+	// Gang war ecosystem: inter-faction combat, rule-based strategies, and
+	// crossfire hazards. All on the writer goroutine.
+	g.factionCombat(w)
+	g.tickStrategies(w)
+	g.tickHazards(w)
 
 	// Decrement stun timers.
 	for _, m := range w.Minotaurs {
@@ -264,6 +281,9 @@ func (g *Game) tickLogic(w *world.World) {
 			break
 		}
 		m := w.Minotaurs[i]
+		if m.HP <= 0 {
+			continue
+		}
 		snap := w.Copy()
 		b.UpdateBelief(snap, m)
 		b.Tick("tick")
@@ -291,6 +311,9 @@ func (g *Game) tickLogic(w *world.World) {
 			}
 		}
 	}
+
+	// Strategy-driven movement for actors whose brain is not pursuing.
+	g.applyStrategyMovement(w)
 
 	// Check lose condition.
 	if w.Runner.HP <= 0 {
@@ -329,6 +352,12 @@ func (g *Game) tickLogic(w *world.World) {
 			})
 		}
 	}
+
+	// Remove actors killed by the gang war (or the player) and respawn to
+	// hold the roster; then refresh territory control so every snapshot
+	// carries the current front line.
+	g.respawnDeadActors(w)
+	w.TerritoryControl = territoryControl(w)
 }
 
 // AddSession registers a new player session.
@@ -402,6 +431,9 @@ func (g *Game) FirePulse(id SessionID, fireRound int, aimPos maze.Vec2) {
 		for i, hist := range g.Histories {
 			if i >= len(w.Minotaurs) {
 				break
+			}
+			if w.Minotaurs[i].HP <= 0 {
+				continue
 			}
 			if netcode.ValidateHit(hist, fireRound, aimPos) {
 				m := w.Minotaurs[i]

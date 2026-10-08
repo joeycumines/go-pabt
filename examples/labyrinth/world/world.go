@@ -45,6 +45,7 @@ type Minotaur struct {
 	Type           int // actor archetype: 0=brute, 1=swarm, 2=caster, 3=stalker
 	Element        int // 0=fire 1=ice 2=lightning 3=void; innate faction element
 	HP             int
+	Strategy       int // current faction strategy: 0=patrol 1=raid 2=retreat
 	AttackCooldown int // ticks until this minotaur may damage the runner again
 	Belief         Belief
 }
@@ -65,6 +66,18 @@ type PowerUp struct {
 	Active  bool // false once picked up
 }
 
+// Hazard is a temporary elemental rift left by faction crossfire. It damages
+// anything standing in it until its TTL expires, making active war zones
+// dynamic obstacles the player must route around.
+type Hazard struct {
+	Pos     maze.Vec2
+	Element int
+	TTL     int
+	// DamageCooldown ticks until the rift may damage whatever stands in it
+	// again, bounding rift DPS so hazards obstruct rather than delete.
+	DamageCooldown int
+}
+
 // World is the authoritative, mutable simulation state. It is owned by the
 // single-writer loop goroutine; all other access goes through Snapshot.
 type World struct {
@@ -72,8 +85,13 @@ type World struct {
 	Runner    Runner
 	Minotaurs []*Minotaur
 	PowerUps  []*PowerUp
+	Hazards   []*Hazard
 	Round     int
 	Phase     Phase
+	// TerritoryControl maps each quadrant (0=NE, 1=NW, 2=SE, 3=SW) to the
+	// element currently controlling it. Refreshed every tick by the game
+	// logic from faction presence.
+	TerritoryControl [4]int
 	// Intensity escalates on a schedule: hunter speed multiplier, extra
 	// spawns, tighter fog. Driven by Round thresholds.
 	Intensity int
@@ -113,6 +131,7 @@ type Snapshot struct {
 	Runner    Runner
 	Minotaurs []Minotaur
 	PowerUps  []PowerUp
+	Hazards   []Hazard
 	Intensity int
 	Gate      maze.Vec2
 	// TerritoryControl maps each quadrant (0=NE, 1=NW, 2=SE, 3=SW) to the
@@ -125,11 +144,12 @@ type Snapshot struct {
 // world do not affect a previously returned snapshot.
 func (w *World) Copy() *Snapshot {
 	s := &Snapshot{
-		Round:     w.Round,
-		Phase:     w.Phase,
-		Runner:    w.Runner,
-		Intensity: w.Intensity,
-		Gate:      w.Maze.Gate,
+		Round:            w.Round,
+		Phase:            w.Phase,
+		Runner:           w.Runner,
+		Intensity:        w.Intensity,
+		Gate:             w.Maze.Gate,
+		TerritoryControl: w.TerritoryControl,
 	}
 	s.Minotaurs = make([]Minotaur, len(w.Minotaurs))
 	for i, m := range w.Minotaurs {
@@ -138,6 +158,10 @@ func (w *World) Copy() *Snapshot {
 	s.PowerUps = make([]PowerUp, len(w.PowerUps))
 	for i, p := range w.PowerUps {
 		s.PowerUps[i] = *p
+	}
+	s.Hazards = make([]Hazard, len(w.Hazards))
+	for i, h := range w.Hazards {
+		s.Hazards[i] = *h
 	}
 	return s
 }
