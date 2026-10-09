@@ -205,3 +205,5 @@ body {
 #hit-marker.advantage { color: #ffd700; }
 #hit-marker.disadvantage { color: #8080a0; }
 #hit-marker.neutral { color: #ffffff; }
+
+#credits { position: fixed; right: 8px; bottom: 4px; font: 10px monospace; color: #666; z-index: 6; pointer-events: none; }

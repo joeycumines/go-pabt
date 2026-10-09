@@ -17,6 +17,11 @@ const Hz = 30
 // TickInterval is the fixed timestep duration.
 const TickInterval = time.Second / Hz
 
+// minTickDelay floors the inter-tick delay. time.Ticker.Reset panics on a
+// non-positive interval, and a writer goroutine that falls behind can
+// otherwise compute a zero delay.
+const minTickDelay = time.Millisecond
+
 // Command is a mutation submitted to the authoritative loop. It is applied
 // at the next tick boundary, never mid-tick.
 type Command func(w *world.World)
@@ -110,19 +115,29 @@ func (l *Loop) Run(ctx context.Context) {
 			l.tick()
 
 			// Reset with drift correction.
-			now := time.Now()
-			next = next.Add(TickInterval)
-			if now.After(next) {
-				// We fell behind; resync to avoid a burst of catch-up ticks.
-				next = now.Add(TickInterval)
-			}
-			delay := time.Until(next)
-			if delay < 0 {
-				delay = 0
-			}
+			var delay time.Duration
+			next, delay = nextTickDelay(time.Now(), next)
 			ticker.Reset(delay)
 		}
 	}
+}
+
+// nextTickDelay advances the ideal tick deadline by one interval, resyncs
+// it when the writer has fallen behind, and returns the updated deadline
+// with the delay until it. The delay is floored at minTickDelay because
+// Ticker.Reset panics on non-positive intervals: a live server died mid-
+// session when a slow tick made the unfloored computation land on zero.
+func nextTickDelay(now, next time.Time) (time.Time, time.Duration) {
+	next = next.Add(TickInterval)
+	if now.After(next) {
+		// We fell behind; resync to avoid a burst of catch-up ticks.
+		next = now.Add(TickInterval)
+	}
+	delay := next.Sub(now)
+	if delay < minTickDelay {
+		delay = minTickDelay
+	}
+	return next, delay
 }
 
 // Stop signals the loop to stop and waits for it to finish.

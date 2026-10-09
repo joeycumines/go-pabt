@@ -55,7 +55,10 @@ void main() {
 export class Renderer {
     constructor(canvas) {
         this.canvas = canvas;
-        this.gl = canvas.getContext('webgl2', { antialias: true, alpha: false });
+        // preserveDrawingBuffer keeps the canvas readable for screenshot
+        // evidence capture; without it headless captures race the buffer
+        // swap and read back black.
+        this.gl = canvas.getContext('webgl2', { antialias: true, alpha: false, preserveDrawingBuffer: true });
         if (!this.gl) throw new Error('WebGL2 not supported');
 
         this.program = this._createProgram(VERT_SRC, FRAG_SRC);
@@ -175,18 +178,22 @@ export class Renderer {
     }
 
     setView(viewMat) {
+        this.gl.useProgram(this.program);
         this.gl.uniformMatrix4fv(this.uView, false, viewMat);
     }
 
     setProj(projMat) {
+        this.gl.useProgram(this.program);
         this.gl.uniformMatrix4fv(this.uProj, false, projMat);
     }
 
     setCamera(pos) {
+        this.gl.useProgram(this.program);
         this.gl.uniform3f(this.uCameraPos, pos[0], pos[1], pos[2]);
     }
 
     setFog(density, color) {
+        this.gl.useProgram(this.program);
         this.gl.uniform1f(this.uFogDensity, density);
         this.gl.uniform3f(this.uFogColor, color[0], color[1], color[2]);
     }
@@ -196,6 +203,7 @@ export class Renderer {
         const gl = this.gl;
         const n = instances.length;
         if (n === 0) return;
+        gl.useProgram(this.program);
 
         const colors = new Float32Array(n * 4);
         const models = new Float32Array(n * 16);

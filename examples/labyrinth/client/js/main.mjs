@@ -6,6 +6,7 @@ import { Input } from './input.mjs';
 import { HUD } from './hud.mjs';
 import { NetClient } from './net.mjs';
 import { AudioEngine } from './audio.mjs';
+import { ModelBank, actorModelMatrix } from './models.mjs';
 
 const canvas = document.getElementById('glcanvas');
 const loading = document.getElementById('loading');
@@ -73,6 +74,43 @@ const ACTOR_MAX_HP = [40, 15, 25, 20]; // mirrors game.actorHP per archetype
 const StrategyRaid = 1;
 const StrategyRetreat = 2;
 
+// S6a: real skeletal creatures (CC BY 4.0, see assets/PROVENANCE.md).
+// Archetype -> model; stalkers alternate bat/wasp by ID hash for silhouette
+// variety. Models load async; until then actors render as fallback cubes.
+let modelBank = null;
+let modelsReady = false;
+const TYPE_MODELS = ['ps1_spider', 'ps1_rat', 'ps1_eaterplant', 'ps1_bat'];
+const corpses = []; // { id, pos, yaw, type, element, start }
+const MODEL_SCALE_TARGET = 1.5; // world units tall at full scale
+let lastRoarAt = 0;
+let nextRoarIn = 6;
+
+function actorDist(x, z) {
+    return Math.hypot(x - camera.pos[0], z - camera.pos[2]);
+}
+
+function modelFor(id, type) {
+    if ((type|0) === 3) {
+        let h = 0;
+        for (const ch of String(id)) h = (h * 31 + ch.charCodeAt(0)) | 0;
+        return (h & 1) ? 'ps1_wasp' : 'ps1_bat';
+    }
+    return TYPE_MODELS[type|0] || TYPE_MODELS[0];
+}
+
+function hashPhase(id) {
+    let h = 0;
+    for (const ch of String(id)) h = (h * 31 + ch.charCodeAt(0)) | 0;
+    return (h & 7) * 0.37;
+}
+
+function stratColorFor(buf) {
+    return buf.stunned ? [0.3, 0.3, 0.8, 1.0]
+        : (buf.strategy|0) === StrategyRaid ? [1.0, 0.15, 0.05, 1.0]
+        : (buf.strategy|0) === StrategyRetreat ? [0.15, 0.9, 1.0, 1.0]
+        : [0.35, 0.35, 0.45, 1.0];
+}
+
 function init() {
     renderer = new Renderer(canvas);
     camera = new Camera(canvas);
@@ -80,6 +118,20 @@ function init() {
     hud = new HUD();
     net = new NetClient();
     audio = new AudioEngine();
+
+    // Skeletal creature models; fallback primitives until they arrive.
+    modelBank = new ModelBank(renderer.gl);
+    Promise.all([
+        modelBank.load('ps1_spider', 'assets/ps1_spider.glb'),
+        modelBank.load('ps1_rat', 'assets/ps1_rat.glb'),
+        modelBank.load('ps1_eaterplant', 'assets/ps1_eaterplant.glb'),
+        modelBank.load('ps1_bat', 'assets/ps1_bat.glb'),
+        modelBank.load('ps1_wasp', 'assets/ps1_wasp.glb'),
+    ]).then(() => { modelsReady = true; }).catch((err) => {
+        modelsReady = false;
+        modelBank = null;
+        console.warn('models unavailable, falling back to primitives:', err);
+    });
 
     // Connect to server.
     net.connect();
@@ -243,6 +295,13 @@ function update(dt) {
         buf.pos[0] += (buf.targetPos[0] - buf.pos[0]) * t;
         buf.pos[1] += (buf.targetPos[1] - buf.pos[1]) * t;
         buf.pos[2] += (buf.targetPos[2] - buf.pos[2]) * t;
+        // Facing and gait: derive yaw from actual displacement so creatures
+        // look where they walk.
+        const px = buf.prevPos ? buf.pos[0] - buf.prevPos[0] : 0;
+        const pz = buf.prevPos ? buf.pos[2] - buf.prevPos[2] : 0;
+        buf.step = Math.hypot(px, pz);
+        if (buf.step > 0.002) buf.yaw = Math.atan2(px, pz);
+        buf.prevPos = [buf.pos[0], buf.pos[1], buf.pos[2]];
     }
 
     // Prune buffers for actors the server removed (killed in the gang war).
@@ -280,6 +339,11 @@ function update(dt) {
         if (d < nearestDist) nearestDist = d;
     }
     audio.setHeartbeatProximity(nearestDist);
+    if (now - lastRoarAt > nextRoarIn) {
+        lastRoarAt = now;
+        nextRoarIn = 5 + Math.random() * 7;
+        if (nearestDist < 14) audio.playRoar(nearestDist);
+    }
 
     // Read-only debug hook for verification and the S4 debugging GUI.
     // Exposes live game state without pausing the game.
@@ -299,6 +363,8 @@ function update(dt) {
         get territoryControl() { return [...territoryControl]; },
         get clashCount() { return clashCount; },
         get actorCount() { return minotaurBuffers.size; },
+        get actorPositions() { return Array.from(minotaurBuffers.values()).map(b => [b.pos[0], b.pos[2]]); },
+        get playerPosition() { return camera.pos.slice(); },
         get round() { const s = net.getSnapshot(); return s ? s.data.round : -1; },
         get intensity() { const s = net.getSnapshot(); return s ? s.data.intensity : -1; },
         get wsOpen() { return net.ws && net.ws.readyState === WebSocket.OPEN; },
@@ -310,6 +376,8 @@ function update(dt) {
             const s = net.getSnapshot();
             return s && s.data.powerUps ? s.data.powerUps.filter(p => p.active).map(p => ({x: p.x, y: p.y, element: p.element})) : [];
         },
+        get modelsLoaded() { return modelsReady; },
+        get corpseCount() { return corpses.length; },
         fire() { input.fire = true; },
         setYaw(y) { camera.yaw = y; },
         teleport(x, z) { camera.pos[0] = x; camera.pos[2] = z; net.sendDebugTeleport(x, z); },
@@ -332,6 +400,11 @@ function handleEvent(evt) {
             break;
         case 'stunned': {
             audio.playStun();
+            const sb = evt.data && evt.data.minotaur ? minotaurBuffers.get(evt.data.minotaur) : null;
+            if (sb) {
+                sb.hurtUntil = performance.now() / 1000 + 0.6;
+                audio.playHitReaction(actorDist(sb.pos[0], sb.pos[2]));
+            }
             hitFlashTimer = 8;
             // Show the elemental outcome of the pulse.
             const adv = evt.data && evt.data.advantage;
@@ -359,6 +432,11 @@ function handleEvent(evt) {
         case 'clash':
             clashCount++;
             if (evt.data) {
+                audio.playClash(actorDist(evt.data.x, evt.data.y));
+                for (const buf of minotaurBuffers.values()) {
+                    const dx = buf.pos[0] - evt.data.x, dz = buf.pos[2] - evt.data.y;
+                    if (dx*dx + dz*dz < 2.2 * 2.2) buf.attackUntil = performance.now() / 1000 + 0.7;
+                }
                 clashSparks.push({
                     pos: [evt.data.x, 0.6, evt.data.y],
                     born: performance.now() / 1000,
@@ -368,9 +446,15 @@ function handleEvent(evt) {
             }
             hud.setWar(clashCount);
             break;
-        case 'death':
-            if (evt.data && evt.data.id) minotaurBuffers.delete(evt.data.id);
+        case 'death': {
+            const buf = evt.data && evt.data.id ? minotaurBuffers.get(evt.data.id) : null;
+            if (buf) {
+                corpses.push({ id: evt.data.id, pos: [...buf.pos], yaw: buf.yaw || 0, type: buf.type, element: buf.element, start: performance.now() / 1000 });
+                audio.playDeath(actorDist(buf.pos[0], buf.pos[2]));
+                minotaurBuffers.delete(evt.data.id);
+            }
             break;
+        }
         case 'hit':
             damageFlashTimer = 10;
             break;
@@ -390,6 +474,9 @@ function render() {
     const snap = net.getSnapshot();
     const intensity = snap ? snap.data.intensity : 0;
     renderer.setFog(0.08 + intensity * 0.02, [0.04, 0.04, 0.06]);
+    if (modelsReady) {
+        modelBank.setViewProj(camera.viewMatrix(), camera.projMatrix(aspect), camera.pos, 0.08 + intensity * 0.02, [0.04, 0.04, 0.06]);
+    }
 
     const instances = [];
     const wallColor = [0.25, 0.25, 0.38, 1.0];
@@ -480,61 +567,59 @@ function render() {
         });
     }
 
-    // Actors (interpolated). Silhouette is per archetype; body color is the
-    // actor's faction element, so each of the four factions reads at a glance.
+    // Actors (interpolated): real skeletal creatures once models are loaded,
+    // fallback primitives otherwise. Body tint is the faction element so each
+    // of the four factions reads at a glance.
+    const actNow = performance.now() / 1000;
     for (const [id, buf] of minotaurBuffers) {
-        let head, eye, bodyScale, headY, eyeY;
-        switch (buf.type|0) {
-            case 1: // swarm imp
-                bodyScale = [0.3, 0.4, 0.3]; headY = 0.5; eyeY = 0.55;
-                break;
-            case 2: // caster pillar
-                bodyScale = [0.35, 1.0, 0.35]; headY = 1.05; eyeY = 1.1;
-                break;
-            case 3: // stalker hunter
-                bodyScale = [0.6, 0.5, 0.6]; headY = 0.6; eyeY = 0.65;
-                break;
-            default: // brute titan
-                bodyScale = [0.5, 0.8, 0.5]; headY = 0.8; eyeY = 0.85;
-        }
         const ec = ELEMENT_COLORS[buf.element|0] || ELEMENT_COLORS[0];
         // Wounded actors dim toward black so battle damage reads at a glance.
         const hpFrac = Math.max(0, Math.min(1, (buf.hp === undefined ? 1 : buf.hp) / (ACTOR_MAX_HP[buf.type|0] || 30)));
         const dim = 0.45 + 0.55 * hpFrac;
-        const body = buf.stunned ? stunnedColor : [ec[0] * dim, ec[1] * dim, ec[2] * dim, 1.0];
-        head = buf.stunned ? stunnedColor : [Math.min(1, ec[0] + 0.2), Math.min(1, ec[1] + 0.2), Math.min(1, ec[2] + 0.2), 1.0];
-        eye = [1.0, 1.0, 1.0, 1.0];
-        instances.push({
-            pos: [buf.pos[0], buf.pos[1] + bodyScale[1] / 2, buf.pos[2]],
-            scale: bodyScale,
-            color: body,
-        });
-        instances.push({
-            pos: [buf.pos[0], buf.pos[1] + headY, buf.pos[2]],
-            scale: [0.3, 0.3, 0.3],
-            color: head,
-        });
-        instances.push({
-            pos: [buf.pos[0] - 0.1, buf.pos[1] + eyeY, buf.pos[2] - 0.15],
-            scale: [0.08, 0.08, 0.08],
-            color: eye,
-        });
-        instances.push({
-            pos: [buf.pos[0] + 0.1, buf.pos[1] + eyeY, buf.pos[2] - 0.15],
-            scale: [0.08, 0.08, 0.08],
-            color: eye,
-        });
+        const tint = buf.stunned ? stunnedColor : [ec[0] * dim, ec[1] * dim, ec[2] * dim, 1.0];
+        const model = modelsReady ? modelBank.models.get(modelFor(id, buf.type)) : null;
+        if (model) {
+            let anim = 'idle';
+            if (buf.stunned || (buf.hurtUntil || 0) > actNow) anim = 'hurt';
+            else if ((buf.attackUntil || 0) > actNow) anim = 'attack';
+            else if ((buf.step || 0) > 0.002) anim = 'move';
+            const animName = ModelBank.pickAnim(model, anim) || ModelBank.pickAnim(model, 'idle');
+            const scale = MODEL_SCALE_TARGET / model.height;
+            const mm = new Float32Array(16);
+            actorModelMatrix(buf.pos, buf.yaw || 0, scale, -buf.pos[1] - model.minY * scale, mm);
+            modelBank.draw(model, animName, actNow + hashPhase(id), mm, tint);
+        } else {
+            let bodyScale, headY, eyeY;
+            switch (buf.type|0) {
+                case 1: bodyScale = [0.3, 0.4, 0.3]; headY = 0.5; eyeY = 0.55; break;
+                case 2: bodyScale = [0.35, 1.0, 0.35]; headY = 1.05; eyeY = 1.1; break;
+                case 3: bodyScale = [0.6, 0.5, 0.6]; headY = 0.6; eyeY = 0.65; break;
+                default: bodyScale = [0.5, 0.8, 0.5]; headY = 0.8; eyeY = 0.85;
+            }
+            instances.push({ pos: [buf.pos[0], buf.pos[1] + bodyScale[1] / 2, buf.pos[2]], scale: bodyScale, color: tint });
+            instances.push({ pos: [buf.pos[0], buf.pos[1] + headY, buf.pos[2]], scale: [0.3, 0.3, 0.3], color: buf.stunned ? stunnedColor : [Math.min(1, ec[0] + 0.2), Math.min(1, ec[1] + 0.2), Math.min(1, ec[2] + 0.2), 1.0] });
+            instances.push({ pos: [buf.pos[0] - 0.1, buf.pos[1] + eyeY, buf.pos[2] - 0.15], scale: [0.08, 0.08, 0.08], color: [1, 1, 1, 1] });
+            instances.push({ pos: [buf.pos[0] + 0.1, buf.pos[1] + eyeY, buf.pos[2] - 0.15], scale: [0.08, 0.08, 0.08], color: [1, 1, 1, 1] });
+        }
         // Strategy beacon: red=raid, cyan=retreat, dim grey=patrol.
-        const strat = buf.strategy|0;
-        const stratColor = buf.stunned ? stunnedColor
-            : strat === StrategyRaid ? [1.0, 0.15, 0.05, 1.0]
-            : strat === StrategyRetreat ? [0.15, 0.9, 1.0, 1.0]
-            : [0.35, 0.35, 0.45, 1.0];
         instances.push({
-            pos: [buf.pos[0], buf.pos[1] + headY + 0.35, buf.pos[2]],
+            pos: [buf.pos[0], buf.pos[1] + MODEL_SCALE_TARGET + 0.35, buf.pos[2]],
             scale: [0.12, 0.12, 0.12],
-            color: stratColor,
+            color: stratColorFor(buf),
         });
+    }
+
+    // Corpses: play the death clip once, then leave the world.
+    for (let i = corpses.length - 1; i >= 0; i--) {
+        const c = corpses[i];
+        const age = actNow - c.start;
+        const model = modelsReady ? modelBank.models.get(modelFor(c.id, c.type)) : null;
+        if (age > 2.5 || !model) { corpses.splice(i, 1); continue; }
+        const ec = ELEMENT_COLORS[c.element|0] || ELEMENT_COLORS[0];
+        const scale = MODEL_SCALE_TARGET / model.height;
+        const mm = new Float32Array(16);
+        actorModelMatrix(c.pos, c.yaw, scale, -c.pos[1] - model.minY * scale, mm);
+        modelBank.draw(model, ModelBank.pickAnim(model, 'death'), age, mm, [ec[0] * 0.35, ec[1] * 0.35, ec[2] * 0.35, 1.0], false);
     }
 
     // Projectile tracers.

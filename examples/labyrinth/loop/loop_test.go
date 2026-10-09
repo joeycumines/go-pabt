@@ -127,3 +127,39 @@ func TestTickRate(t *testing.T) {
 		t.Fatalf("tick rate off: got %d rounds in ~10s, want ~300 (240-360)", round)
 	}
 }
+
+// TestNextTickDelayNeverNonPositive is a regression test for a live-server
+// panic: the drift correction clamped the inter-tick delay to exactly zero
+// whenever the writer fell behind, and time.Ticker.Reset panics on a
+// non-positive interval. Across ahead, on-time, and behind schedules the
+// delay must stay at or above the floor and the deadline must never sit in
+// the past of the observed now.
+func TestNextTickDelayNeverNonPositive(t *testing.T) {
+	base := time.Now()
+	cases := []struct {
+		name string
+		now  time.Time
+		next time.Time
+	}{
+		{"ahead of deadline", base, base.Add(TickInterval)},
+		{"deadline equals now", base.Add(TickInterval), base},
+		{"now equals updated deadline", base.Add(TickInterval), base.Add(TickInterval)},
+		{"behind by half a second", base.Add(500 * time.Millisecond), base.Add(TickInterval)},
+		{"behind by an hour", base.Add(time.Hour), base.Add(TickInterval)},
+		{"one nanosecond early", base.Add(TickInterval - time.Nanosecond), base.Add(TickInterval)},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			deadline, delay := nextTickDelay(tc.now, tc.next)
+			if delay <= 0 {
+				t.Fatalf("delay %v is non-positive", delay)
+			}
+			if delay < minTickDelay {
+				t.Fatalf("delay %v below floor %v", delay, minTickDelay)
+			}
+			if deadline.Before(tc.now) {
+				t.Fatalf("deadline %v is in the past of now %v", deadline, tc.now)
+			}
+		})
+	}
+}
