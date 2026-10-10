@@ -153,6 +153,12 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request, g *game.Game) {
 	sess, token := g.AddSession(rejoinToken)
 	defer g.RemoveSession(sess.ID)
 
+	// If the world was in a terminal phase, AddSession queued a reset; wait
+	// for it to land so this connection's first snapshot is the fresh game,
+	// not a stale terminal phase that the client's terminal-phase fallback
+	// would turn into an instant game-over overlay.
+	g.WaitForRunningPhase(2 * time.Second)
+
 	// Send session token.
 	sessionMsg, _ := proto.EncodeSession(token)
 	conn.WriteMessage(ws.OpText, sessionMsg)

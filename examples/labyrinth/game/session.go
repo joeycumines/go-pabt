@@ -424,19 +424,19 @@ func (g *Game) AddSession(token string) (*PlayerSession, string) {
 	return sess, tok
 }
 
-// submitWorldResetIfTerminal submits a loop command that resets the world to
-// a fresh running game when the phase is terminal. The command runs on the
-// writer goroutine at the next tick boundary, so it is safe to call from any
-// goroutine.
+// submitWorldResetIfTerminal queues a loop command that resets the world to
+// a fresh running game if the phase is terminal when the command runs. The
+// phase is read only on the writer goroutine (the sole writer of
+// World.Phase), so AddSession stays race-free. The command is a cheap no-op
+// while the world is already running.
 func (g *Game) submitWorldResetIfTerminal(sess *PlayerSession) {
-	if g.World.Phase == world.PhaseRunning {
-		return
-	}
 	g.Loop.Submit(func(w *world.World) {
 		if w.Phase == world.PhaseRunning {
 			return // already reset by a concurrent session
 		}
 		w.Phase = world.PhaseRunning
+		w.Round = 0
+		w.Intensity = 0
 		w.Runner.Pos = g.Maze.Start
 		w.Runner.Vel = maze.Vec2{}
 		w.Runner.HP = world.MaxHP
@@ -462,6 +462,26 @@ func (g *Game) submitWorldResetIfTerminal(sess *PlayerSession) {
 			sess.Net.Pos = g.Maze.Start
 		}
 	})
+}
+
+// WaitForRunningPhase blocks until the loop snapshot reports a running world
+// or the timeout expires, returning whether the world is running. The
+// connect path calls this after AddSession: when the world was terminal,
+// AddSession queued a reset, and waiting for it to land ensures the new
+// subscriber's first snapshot is the fresh game rather than a stale terminal
+// phase that the client's terminal-phase fallback would turn into an instant
+// game-over overlay.
+func (g *Game) WaitForRunningPhase(timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	for {
+		if snap := g.Loop.Snapshot(); snap != nil && snap.Phase == world.PhaseRunning {
+			return true
+		}
+		if time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
 }
 
 // RemoveSession marks a player session as disconnected. The session is
