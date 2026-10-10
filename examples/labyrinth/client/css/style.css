@@ -318,6 +318,61 @@ body {
     background: rgba(255, 0, 255, 0.35);
 }
 
+/* G3: in-game BT-tick HUD. Sits bottom-right during normal play; toggled
+   with KeyB. Rows show per-actor planner activity. */
+#bt-hud {
+    position: absolute;
+    bottom: 20px;
+    right: 20px;
+    width: 240px;
+    max-height: 40vh;
+    overflow-y: auto;
+    background: rgba(0, 0, 0, 0.75);
+    border: 1px solid rgba(255, 0, 255, 0.5);
+    border-radius: 4px;
+    padding: 4px 6px;
+    font-size: 0.7rem;
+    line-height: 1.4;
+    pointer-events: none;
+}
+
+#bt-hud-header {
+    color: #ff00ff;
+    font-weight: bold;
+    margin-bottom: 4px;
+    border-bottom: 1px solid rgba(255, 0, 255, 0.3);
+    padding-bottom: 2px;
+}
+
+.bt-row {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.bt-elem {
+    display: inline-block;
+    width: 14px;
+    text-align: center;
+    border: 1px solid;
+    border-radius: 2px;
+    font-size: 0.6rem;
+    flex-shrink: 0;
+}
+
+.bt-id { color: #c0c0ff; flex-shrink: 0; }
+.bt-ticks { color: #80ff80; flex-shrink: 0; }
+.bt-delta { color: #ffff80; flex-shrink: 0; min-width: 28px; }
+.bt-active { color: #a0c0ff; flex: 1; overflow: hidden; text-overflow: ellipsis; }
+.bt-status { color: #e0e0ff; flex-shrink: 0; }
+.bt-badge { flex-shrink: 0; padding: 0 3px; border-radius: 2px; font-size: 0.6rem; }
+.bt-badge-adv { background: rgba(0, 255, 100, 0.2); color: #40ff80; }
+.bt-badge-dis { background: rgba(255, 60, 60, 0.2); color: #ff6060; }
+.bt-badge-neu { background: rgba(160, 160, 160, 0.15); color: #c0c0c0; }
+
 [hidden] {
     display: none !important;
 }

@@ -8,6 +8,7 @@ import { NetClient } from './net.mjs';
 import { AudioEngine } from './audio.mjs';
 import { ModelBank, actorModelMatrix } from './models.mjs';
 import { DebugPanel } from './debug.mjs';
+import { BTHud } from './bt-hud.mjs';
 
 const canvas = document.getElementById('glcanvas');
 const loading = document.getElementById('loading');
@@ -15,7 +16,7 @@ const hudEl = document.getElementById('hud');
 const prompt = document.getElementById('pointer-lock-prompt');
 const overlay = document.getElementById('overlay');
 
-let renderer, camera, input, hud, net, audio, debugPanel;
+let renderer, camera, input, hud, net, audio, debugPanel, btHud;
 let maze = null; // authoritative maze from server
 let lastTime = 0;
 let gameState = 'playing'; // 'playing' | 'caught' | 'won'
@@ -130,8 +131,12 @@ function init() {
     debugPanel = new DebugPanel();
     debugPanel.onCommand = (cmd, actorID) => net.sendDebugCmd(cmd, actorID);
     debugPanel.getInjectPos = () => maze ? [maze.gateX, maze.gateY] : [camera.pos[0], camera.pos[2]];
+    // G3: the in-game BT-tick HUD shares the same tree-frame fan-out as the
+    // debug panel so normal play shows live planner activity without Tab.
+    btHud = new BTHud();
     net.onTree = (actorID, frame) => {
         debugPanel.handleTreeFrame(actorID, frame);
+        btHud.handleTreeFrame(actorID, frame);
         // S5: update in-world projection threads from tree frame world view.
         if (frame.worldView && frame.worldView.hasLastKnown) {
             actorThreads.set(actorID, {
@@ -318,6 +323,9 @@ function update(dt) {
             buf.strategy = m.strategy|0;
             buf.lastUpdate = now;
         }
+        // G3: keep the BT HUD rows synced with the live roster so a dead
+        // actor drops immediately instead of lingering on its last frame.
+        if (btHud) btHud.pruneToRoster(snap.data.minotaurs.map(m => m.id));
     }
 
     // Lerp minotaur positions toward targets.
@@ -421,6 +429,9 @@ function update(dt) {
         fire() { input.fire = true; },
         setYaw(y) { camera.yaw = y; },
         teleport(x, z) { camera.pos[0] = x; camera.pos[2] = z; net.sendDebugTeleport(x, z); },
+        // G3: BT-tick HUD state for verification (__ariadne.btHud).
+        get btHud() { return btHud ? btHud.probe() : null; },
+        toggleBTHud() { if (btHud) btHud.toggle(); },
     };
 }
 
