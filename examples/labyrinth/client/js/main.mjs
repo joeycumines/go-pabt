@@ -36,6 +36,7 @@ let projectiles = []; // { pos, dir, born, color }
 
 // Pulse fire state
 let lastFireTime = 0;
+let lastShotElement = -1; // element of the most recent pulse (S6b probe)
 const FIRE_COOLDOWN = 0.5; // seconds
 let muzzleFlashTimer = 0;
 let hitFlashTimer = 0;
@@ -255,7 +256,8 @@ function update(dt) {
     const now = performance.now() / 1000;
     if (input.fire && now - lastFireTime > FIRE_COOLDOWN) {
         lastFireTime = now;
-        audio.playShot();
+        lastShotElement = playerElement;
+        audio.playShot(playerElement);
         net.sendInput(input.forward, input.strafe, camera.yaw, camera.pitch, input.sprint, false, true);
         const ec = ELEMENT_COLORS[playerElement];
         projectiles.push({
@@ -355,7 +357,7 @@ function update(dt) {
         get actors() {
             const out = [];
             for (const [id, buf] of minotaurBuffers) {
-                out.push({ id, pos: [...buf.pos], type: buf.type, stunned: buf.stunned, element: buf.element, hp: buf.hp, strategy: buf.strategy });
+                out.push({ id, pos: [...buf.pos], type: buf.type, stunned: buf.stunned, element: buf.element, hp: buf.hp, strategy: buf.strategy, attackUntil: buf.attackUntil || 0, hurtUntil: buf.hurtUntil || 0 });
             }
             return out;
         },
@@ -378,6 +380,8 @@ function update(dt) {
         },
         get modelsLoaded() { return modelsReady; },
         get corpseCount() { return corpses.length; },
+        get audioState() { return audio && audio.ctx ? audio.ctx.state : null; },
+        get lastShotElement() { return lastShotElement; },
         fire() { input.fire = true; },
         setYaw(y) { camera.yaw = y; },
         teleport(x, z) { camera.pos[0] = x; camera.pos[2] = z; net.sendDebugTeleport(x, z); },

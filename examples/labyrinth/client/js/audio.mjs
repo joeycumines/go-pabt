@@ -13,7 +13,10 @@ export class AudioEngine {
     }
 
     resume() {
-        if (this.ctx) return;
+        if (this.ctx) {
+            if (this.ctx.state === 'suspended') this.ctx.resume();
+            return;
+        }
         this.ctx = new (window.AudioContext || window.webkitAudioContext)();
 
         // Heartbeat: low-frequency oscillator modulated by proximity.
@@ -54,19 +57,22 @@ export class AudioEngine {
         requestAnimationFrame(() => this._updateHeartbeat());
     }
 
-    playShot() {
+    playShot(element) {
         if (!this.ctx) return;
-        // Short noise burst.
+        // Element-distinct pulse: each element gets a unique timbre.
+        // 0=fire (aggressive saw), 1=ice (clean sine), 2=lightning (harsh square), 3=void (dark triangle).
+        const FREQS = [440, 660, 880, 220];
+        const TYPES = ['sawtooth', 'sine', 'square', 'triangle'];
         const osc = this.ctx.createOscillator();
-        osc.type = 'square';
-        osc.frequency.value = 800;
+        osc.type = TYPES[element & 3];
+        osc.frequency.value = FREQS[element & 3];
         const gain = this.ctx.createGain();
         gain.gain.setValueAtTime(0.2, this.ctx.currentTime);
-        gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + 0.1);
+        gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + 0.12);
         osc.connect(gain);
         gain.connect(this.ctx.destination);
         osc.start();
-        osc.stop(this.ctx.currentTime + 0.1);
+        osc.stop(this.ctx.currentTime + 0.12);
     }
 
     playStun() {

@@ -148,7 +148,7 @@ body {
     border-radius: 8px;
     z-index: 200;
     cursor: pointer;
-    pointer-events: auto;
+    pointer-events: none;
 }
 
 #pointer-lock-prompt p {
