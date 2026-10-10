@@ -11,6 +11,7 @@ export class DebugPanel {
 
         this.visible = false;
         this.frames = new Map(); // actorID -> frame
+        this.frameTimes = new Map(); // actorID -> last frame arrival (ms)
         this.selectedActor = null;
         this.onCommand = null; // callback(cmd, arg)
         this.getInjectPos = null; // callback() -> [x, y] for inject command
@@ -56,7 +57,23 @@ export class DebugPanel {
     // handleTreeFrame is called by net.mjs when a tree frame arrives.
     handleTreeFrame(actorID, frame) {
         this.frames.set(actorID, frame);
+        this.frameTimes.set(actorID, Date.now());
+        this.pruneStale();
         if (this.visible) this.render();
+    }
+
+    // pruneStale drops actors that stopped broadcasting (removed from the
+    // server's world). Live actors - including paused ones - keep sending
+    // frames every broadcast cycle, so 10s without an update means gone.
+    pruneStale() {
+        const now = Date.now();
+        for (const [id, t] of this.frameTimes) {
+            if (now - t > 10000) {
+                this.frameTimes.delete(id);
+                this.frames.delete(id);
+                if (this.selectedActor === id) this.selectedActor = null;
+            }
+        }
     }
 
     selectPrev() {
