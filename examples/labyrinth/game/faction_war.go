@@ -341,11 +341,32 @@ func (g *Game) respawnDeadActors(w *world.World) {
 	}
 	for fails := 0; len(w.Minotaurs) < TargetActorCount && fails < TargetActorCount*4; {
 		before := len(w.Minotaurs)
-		g.spawnActor(ActorType(g.nextActorID % 4))
+		g.spawnActor(ActorType(g.leastPopulatedElement(w)))
 		if len(w.Minotaurs) == before {
 			fails++
 		}
 	}
+}
+
+// leastPopulatedElement returns the element with the fewest living actors,
+// breaking ties by lowest element index for determinism. This keeps all four
+// factions represented on the field: the old nextActorID%4 cycle drifted
+// when spawn attempts failed, collapsing rosters to one or two elements and
+// killing the war (same-element actors never clash).
+func (g *Game) leastPopulatedElement(w *world.World) Element {
+	counts := [elementCount]int{}
+	for _, m := range w.Minotaurs {
+		if m.HP > 0 && m.Element >= 0 && m.Element < elementCount {
+			counts[m.Element]++
+		}
+	}
+	best := 0
+	for e := 1; e < elementCount; e++ {
+		if counts[e] < counts[best] {
+			best = e
+		}
+	}
+	return Element(best)
 }
 
 // territoryControl returns the element controlling each quadrant, indexed

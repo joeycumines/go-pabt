@@ -390,6 +390,11 @@ func (g *Game) tickTimers(w *world.World) {
 // AddSession registers a new player session. If token is non-empty and
 // matches a recently-disconnected session, that session is reactivated
 // (rejoin) instead of creating a fresh one, preserving prediction state.
+//
+// When the world is in a terminal phase (won or lost), AddSession submits a
+// reset command so the rejoined or fresh session starts a new game. Without
+// this, a page reload after win/lose rejoins the terminal world and the
+// client's terminal-phase fallback instantly re-fires the win/lose overlay.
 func (g *Game) AddSession(token string) (*PlayerSession, string) {
 	g.sessMu.Lock()
 	defer g.sessMu.Unlock()
@@ -400,6 +405,7 @@ func (g *Game) AddSession(token string) (*PlayerSession, string) {
 			if sess.Token == token && !sess.disconnectedAt.IsZero() {
 				sess.disconnectedAt = time.Time{} // mark reconnected
 				sess.Net.ResetAckSeq()            // client restarts at seq 1
+				g.submitWorldResetIfTerminal(sess)
 				return sess, sess.Token
 			}
 		}
@@ -414,7 +420,48 @@ func (g *Game) AddSession(token string) (*PlayerSession, string) {
 		Token: tok,
 	}
 	g.sessions[id] = sess
+	g.submitWorldResetIfTerminal(sess)
 	return sess, tok
+}
+
+// submitWorldResetIfTerminal submits a loop command that resets the world to
+// a fresh running game when the phase is terminal. The command runs on the
+// writer goroutine at the next tick boundary, so it is safe to call from any
+// goroutine.
+func (g *Game) submitWorldResetIfTerminal(sess *PlayerSession) {
+	if g.World.Phase == world.PhaseRunning {
+		return
+	}
+	g.Loop.Submit(func(w *world.World) {
+		if w.Phase == world.PhaseRunning {
+			return // already reset by a concurrent session
+		}
+		w.Phase = world.PhaseRunning
+		w.Runner.Pos = g.Maze.Start
+		w.Runner.Vel = maze.Vec2{}
+		w.Runner.HP = world.MaxHP
+		w.Runner.Element = 0
+		w.Runner.Grounded = true
+		// Rebuild the actor roster from scratch: fresh HP, no stun, full
+		// faction balance. Clear brains/histories/states so spawnActor
+		// rebuilds them aligned with the new Minotaurs slice.
+		w.Minotaurs = nil
+		g.Brains = nil
+		g.Histories = nil
+		g.actorStates = nil
+		for i := 0; i < TargetActorCount; i++ {
+			g.spawnActor(ActorType(i % 4))
+		}
+		// Reset hazards and re-spawn power-ups.
+		w.Hazards = nil
+		w.PowerUps = nil
+		spawnPowerUps(w, g.rng)
+		// Sync the session's authoritative position so the client's
+		// prediction reconciles to the spawn point.
+		if sess != nil && sess.Net != nil {
+			sess.Net.Pos = g.Maze.Start
+		}
+	})
 }
 
 // RemoveSession marks a player session as disconnected. The session is

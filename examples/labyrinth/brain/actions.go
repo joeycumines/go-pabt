@@ -21,6 +21,13 @@ func (e *effect) Value() any { return e.V }
 // moveSpeed is cells per tick the actor advances along its path.
 const moveSpeed = 0.35
 
+// stuckLimit is the number of consecutive ticks a movement action may produce
+// zero displacement before it reports bt.Failure to the planner. At 30 Hz
+// this is one second of being wall-wedged or otherwise stuck — long enough to
+// absorb momentary gridlocks, short enough to prevent an actor from freezing
+// in place for the rest of the round.
+const stuckLimit = 30
+
 // moveAction is shared state for an action that moves the actor along an
 // A* path. It is stored on the action so that successive ticks of the same
 // action node continue advancing the same path.
@@ -28,6 +35,10 @@ type moveAction struct {
 	state *State
 	path  []maze.Vec2 // remaining path (front = next waypoint)
 	done  bool
+	// stuck counts consecutive ticks where the action produced no displacement
+	// (advance consumed nothing, or every retreat heading was blocked);
+	// reaching stuckLimit fails the action so the planner re-instances it.
+	stuck int
 }
 
 // advance moves the actor along the path by the state's per-tick speed.
@@ -41,6 +52,7 @@ func (a *moveAction) advance() (bt.Status, error) {
 		a.done = true
 		return bt.Success, nil
 	}
+	startX, startY := a.state.selfPos.X, a.state.selfPos.Y
 	remaining := moveSpeed
 	if a.state.MoveSpeed > 0 {
 		remaining = a.state.MoveSpeed
@@ -53,7 +65,12 @@ func (a *moveAction) advance() (bt.Status, error) {
 		if dist <= remaining {
 			a.state.selfPos.X = target.X
 			a.state.selfPos.Y = target.Y
-			a.state.movedThisTick = true
+			// A zero-distance waypoint (the path's start cell equals the
+			// actor's position) must not claim movement: it would make the
+			// strategy layer yield to a planner that stood still.
+			if dist > 1e-9 {
+				a.state.movedThisTick = true
+			}
 			a.path = a.path[1:]
 			remaining -= dist
 		} else {
@@ -66,6 +83,14 @@ func (a *moveAction) advance() (bt.Status, error) {
 	if len(a.path) == 0 {
 		a.done = true
 		return bt.Success, nil
+	}
+	if a.state.selfPos.X == startX && a.state.selfPos.Y == startY {
+		a.stuck++
+		if a.stuck >= stuckLimit {
+			return bt.Failure, nil
+		}
+	} else {
+		a.stuck = 0
 	}
 	return bt.Running, nil
 }
@@ -239,7 +264,9 @@ func (a *RetreatAction) Node() bt.Node {
 			a.state.world.AtDisadvantage = false
 			return bt.Success, nil
 		}
-		// Retreat: move one step in the direction away from the player.
+		// Retreat: step away from the player. If the direct away heading is
+		// blocked, fan out through alternate headings and take the passable
+		// one that gains the most distance from the player.
 		step := moveSpeed
 		if a.state.MoveSpeed > 0 {
 			step = a.state.MoveSpeed
@@ -248,15 +275,35 @@ func (a *RetreatAction) Node() bt.Node {
 		if dist < 1e-6 {
 			dist = 1e-6
 		}
-		retreatTarget := maze.Vec2{
-			X: a.state.selfPos.X + dx/dist*step,
-			Y: a.state.selfPos.Y + dy/dist*step,
+		baseX, baseY := dx/dist, dy/dist
+		best, bestDist2 := maze.Vec2{}, -1.0
+		for _, eighth := range []int{0, 1, -1, 2, -2, 3, -3, 4} {
+			angle := float64(eighth) * math.Pi / 4
+			dirX := baseX*math.Cos(angle) - baseY*math.Sin(angle)
+			dirY := baseX*math.Sin(angle) + baseY*math.Cos(angle)
+			resolved := a.state.maze.Resolve(maze.Vec2{
+				X: a.state.selfPos.X + dirX*step,
+				Y: a.state.selfPos.Y + dirY*step,
+			}, maze.Radius)
+			if resolved.X == a.state.selfPos.X && resolved.Y == a.state.selfPos.Y {
+				continue // heading fully blocked from here
+			}
+			gx, gy := resolved.X-playerPos.X, resolved.Y-playerPos.Y
+			if d2 := gx*gx + gy*gy; d2 > bestDist2 {
+				bestDist2, best = d2, resolved
+			}
 		}
-		resolved := a.state.maze.Resolve(retreatTarget, maze.Radius)
-		if resolved.X != a.state.selfPos.X || resolved.Y != a.state.selfPos.Y {
-			a.state.selfPos.X = resolved.X
-			a.state.selfPos.Y = resolved.Y
+		if bestDist2 >= 0 {
+			a.state.selfPos.X = best.X
+			a.state.selfPos.Y = best.Y
 			a.state.movedThisTick = true
+			a.stuck = 0
+		} else {
+			// Wall-wedged in every heading: fail so the planner re-instances.
+			a.stuck++
+			if a.stuck >= stuckLimit {
+				return bt.Failure, nil
+			}
 		}
 		return bt.Running, nil
 	})
