@@ -192,7 +192,7 @@ function update(dt) {
     // Movement: yaw-relative WASD.
     const speed = input.sprint ? 6.5 : 4.0;
     const fwd = [Math.sin(camera.yaw), 0, Math.cos(camera.yaw)];
-    const right = [Math.cos(camera.yaw), 0, -Math.sin(camera.yaw)];
+    const right = [-Math.cos(camera.yaw), 0, Math.sin(camera.yaw)];
 
     let dx = (fwd[0] * input.forward + right[0] * input.strafe) * speed * dt;
     let dz = (fwd[2] * input.forward + right[2] * input.strafe) * speed * dt;

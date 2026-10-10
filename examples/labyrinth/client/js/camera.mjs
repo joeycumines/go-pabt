@@ -34,7 +34,7 @@ export class Camera {
     }
 
     right() {
-        return [Math.cos(this.yaw), 0, -Math.sin(this.yaw)];
+        return [-Math.cos(this.yaw), 0, Math.sin(this.yaw)];
     }
 
     viewMatrix() {
