@@ -5,6 +5,7 @@ package game
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	mrand "math/rand"
 	"strconv"
 	"sync"
@@ -116,6 +117,8 @@ type Game struct {
 	subMu       sync.RWMutex
 	eventSubs   map[SessionID]chan Event
 	eventMu     sync.RWMutex
+	treeSubs    map[SessionID]chan map[string][]byte
+	treeMu      sync.RWMutex
 
 	escalationRounds []int
 
@@ -149,6 +152,7 @@ func NewGame(m *maze.Maze, initialActors int, seed uint64) *Game {
 		sessions:         make(map[SessionID]*PlayerSession),
 		subscribers:      make(map[SessionID]chan []byte),
 		eventSubs:        make(map[SessionID]chan Event),
+		treeSubs:         make(map[SessionID]chan map[string][]byte),
 		escalationRounds: []int{300, 600, 900},
 		rng:              mrand.New(mrand.NewSource(int64(seed))),
 	}
@@ -274,7 +278,7 @@ func (g *Game) tickLogic(w *world.World) {
 			continue
 		}
 		snap := w.Copy()
-		b.UpdateBelief(snap, m)
+		b.UpdateWorldView(snap, m)
 		b.Tick("tick")
 
 		// Record position for lag compensation.
@@ -299,6 +303,11 @@ func (g *Game) tickLogic(w *world.World) {
 				})
 			}
 		}
+	}
+
+	// Broadcast tree frames every 10 ticks (~3Hz) for the debug panel.
+	if w.Round%10 == 0 {
+		g.BroadcastTrees(g.TreeFrames(w))
 	}
 
 	// Strategy-driven movement for actors whose brain is not pursuing.
@@ -400,6 +409,29 @@ func (g *Game) RemoveSession(id SessionID) {
 	g.eventMu.Lock()
 	delete(g.eventSubs, id)
 	g.eventMu.Unlock()
+	g.treeMu.Lock()
+	delete(g.treeSubs, id)
+	g.treeMu.Unlock()
+}
+
+// SubscribeTrees registers a channel to receive tree frames.
+func (g *Game) SubscribeTrees(id SessionID, ch chan map[string][]byte) {
+	g.treeMu.Lock()
+	g.treeSubs[id] = ch
+	g.treeMu.Unlock()
+}
+
+// BroadcastTrees sends tree frames to all tree subscribers. Must be called
+// from the writer goroutine only.
+func (g *Game) BroadcastTrees(frames map[string][]byte) {
+	g.treeMu.RLock()
+	defer g.treeMu.RUnlock()
+	for _, ch := range g.treeSubs {
+		select {
+		case ch <- frames:
+		default:
+		}
+	}
 }
 
 // Subscribe registers a channel to receive encoded snapshots.
@@ -497,6 +529,72 @@ func (g *Game) broadcastEvent(evt Event) {
 		default:
 		}
 	}
+}
+
+// DebugReplan forces a specific actor's brain to rebuild its plan.
+func (g *Game) DebugReplan(actorID string) {
+	g.Loop.Submit(func(w *world.World) {
+		for i, m := range w.Minotaurs {
+			if m.ID == actorID && i < len(g.Brains) {
+				_ = g.Brains[i].Replan()
+				return
+			}
+		}
+	})
+}
+
+// DebugPause freezes a specific actor's brain decisions.
+func (g *Game) DebugPause(actorID string) {
+	g.Loop.Submit(func(w *world.World) {
+		for i, m := range w.Minotaurs {
+			if m.ID == actorID && i < len(g.Brains) {
+				g.Brains[i].Pause()
+				return
+			}
+		}
+	})
+}
+
+// DebugResume unfreezes a specific actor's brain.
+func (g *Game) DebugResume(actorID string) {
+	g.Loop.Submit(func(w *world.World) {
+		for i, m := range w.Minotaurs {
+			if m.ID == actorID && i < len(g.Brains) {
+				g.Brains[i].Resume()
+				return
+			}
+		}
+	})
+}
+
+// DebugInject redirects a specific actor's world view to a position.
+func (g *Game) DebugInject(actorID string, pos maze.Vec2) {
+	g.Loop.Submit(func(w *world.World) {
+		for i, m := range w.Minotaurs {
+			if m.ID == actorID && i < len(g.Brains) {
+				g.Brains[i].InjectWorldView(g.Maze.Resolve(pos, maze.Radius))
+				return
+			}
+		}
+	})
+}
+
+// TreeFrames returns the latest PA-BT frames for all actors. Called from
+// the writer goroutine via BroadcastTrees.
+func (g *Game) TreeFrames(w *world.World) map[string][]byte {
+	out := make(map[string][]byte)
+	for i, m := range w.Minotaurs {
+		if i < len(g.Brains) {
+			frame := g.Brains[i].LastFrame()
+			if frame != nil {
+				data, err := json.Marshal(frame)
+				if err == nil {
+					out[m.ID] = data
+				}
+			}
+		}
+	}
+	return out
 }
 
 // SnapshotFanOut sends encoded snapshots to all subscribers at 20Hz.

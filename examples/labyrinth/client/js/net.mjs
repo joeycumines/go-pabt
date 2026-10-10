@@ -8,6 +8,7 @@ export class NetClient {
         this.maze = null; // authoritative maze from server
         this.onEvent = null; // callback(Event)
         this.onMaze = null; // callback(mazeData)
+        this.onTree = null; // callback(actorID, frame) for PA-BT tree frames
         this.inputSeq = 0;
     }
 
@@ -38,6 +39,11 @@ export class NetClient {
                         if (this.onEvent) {
                             const evt = env.p;
                             this.onEvent(evt);
+                        }
+                        break;
+                    case 'tree':
+                        if (this.onTree && env.p) {
+                            this.onTree(env.p.id, env.p.f);
                         }
                         break;
                 }
@@ -75,6 +81,11 @@ export class NetClient {
     sendDebugTeleport(x, y) {
         if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
         this.ws.send(JSON.stringify({ t: 'debug', p: { x, y } }));
+    }
+
+    sendDebugCmd(cmd, arg) {
+        if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+        this.ws.send(JSON.stringify({ t: 'debugcmd', p: { cmd, arg } }));
     }
 
     getSnapshot() {

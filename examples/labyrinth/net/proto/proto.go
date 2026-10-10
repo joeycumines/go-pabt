@@ -241,6 +241,37 @@ func DecodeDebug(env *Envelope) (*DebugPayload, error) {
 	return &d, nil
 }
 
+// DebugCmdPayload holds a debug command (replan/pause/resume/inject).
+type DebugCmdPayload struct {
+	Cmd string `json:"cmd"` // "replan", "pause", "resume", "inject"
+	Arg string `json:"arg"` // actor ID; for inject: "actorID x,y"
+}
+
+// DecodeDebugCmd parses a debug command payload from an envelope.
+func DecodeDebugCmd(env *Envelope) (*DebugCmdPayload, error) {
+	var d DebugCmdPayload
+	if err := json.Unmarshal(env.Payload, &d); err != nil {
+		return nil, err
+	}
+	return &d, nil
+}
+
+// TreePayload carries one actor's PA-BT frame for the debug panel.
+type TreePayload struct {
+	ActorID string          `json:"id"`
+	Frame   json.RawMessage `json:"f"`
+}
+
+// EncodeTree encodes a tree frame message.
+func EncodeTree(actorID string, frame []byte) ([]byte, error) {
+	return json.Marshal(Envelope{Type: "tree", Payload: mustJSON(TreePayload{ActorID: actorID, Frame: frame})})
+}
+
+func mustJSON(v interface{}) json.RawMessage {
+	data, _ := json.Marshal(v)
+	return data
+}
+
 // DecodeMaze parses a maze payload from an envelope.
 func DecodeMaze(env *Envelope) (*MazePayload, error) {
 	var m MazePayload

@@ -9,11 +9,11 @@ import (
 	"github.com/joeycumines/go-pabt/examples/labyrinth/maze"
 )
 
-// Belief is the minotaur's model of the player and itself. It is the single
+// WorldView is the actor's model of the player and itself. It is the single
 // source of truth the planner reads through the state view. The brain updates
-// it each tick from the world snapshot; belief injection (T8) mutates it
+// it each tick from the world snapshot; state injection (S5) mutates it
 // directly to redirect the hunter.
-type Belief struct {
+type WorldView struct {
 	// PlayerDetected is true when line of sight to the player is held.
 	PlayerDetected bool
 
@@ -29,22 +29,34 @@ type Belief struct {
 	// DistanceBand: 0=adjacent, 1=near, 2=far, 3=unknown.
 	DistanceBand int
 
-	// Stunned is true while the minotaur is recovering from a pulse.
+	// Stunned is true while the actor is recovering from a pulse.
 	Stunned bool
 
 	// SearchExhausted is true after searching last-known yielded nothing.
 	SearchExhausted bool
 
-	// Caught is true when the minotaur caught the player.
+	// Caught is true when the actor caught the player.
 	Caught bool
+
+	// PlayerElement is the player's active element (0=fire 1=ice 2=lightning 3=void).
+	PlayerElement int
+
+	// SelfElement is this actor's innate element.
+	SelfElement int
+
+	// AtDisadvantage is true when the player's element beats ours in the cycle.
+	AtDisadvantage bool
+
+	// AtAdvantage is true when our element beats the player's in the cycle.
+	AtAdvantage bool
 }
 
-// State is the pabt.State implementation over the belief. It reads variables
-// from the belief and generates actions for failed conditions.
+// State is the pabt.State implementation over the world view. It reads variables
+// from the world view and generates actions for failed conditions.
 type State struct {
-	belief *Belief
+	world *WorldView
 	maze   *maze.Maze
-	// selfPos is a pointer to the minotaur's live position so actions can
+	// selfPos is a pointer to the actor's live position so actions can
 	// move it.
 	selfPos *maze.Vec2
 	// MoveSpeed is the per-tick movement distance for this actor's move
@@ -58,10 +70,10 @@ type State struct {
 	movedThisTick bool
 }
 
-// NewState builds a State over the given belief, maze, and a pointer to the
-// minotaur's live position.
-func NewState(b *Belief, m *maze.Maze, selfPos *maze.Vec2) *State {
-	return &State{belief: b, maze: m, selfPos: selfPos}
+// NewState builds a State over the given world view, maze, and a pointer to the
+// actor's live position.
+func NewState(w *WorldView, m *maze.Maze, selfPos *maze.Vec2) *State {
+	return &State{world: w, maze: m, selfPos: selfPos}
 }
 
 // Variable implements pabt.State. It returns the current value for key.
@@ -72,19 +84,27 @@ func (s *State) Variable(key any) (any, error) {
 	}
 	switch k {
 	case KeyPlayerDetected:
-		return s.belief.PlayerDetected, nil
+		return s.world.PlayerDetected, nil
 	case KeyPlayerPos:
-		return s.belief.PlayerPos, nil
+		return s.world.PlayerPos, nil
 	case KeyLastKnownPos:
-		return s.belief.LastKnownPos, nil
+		return s.world.LastKnownPos, nil
 	case KeyDistanceBand:
-		return s.belief.DistanceBand, nil
+		return s.world.DistanceBand, nil
 	case KeyStunned:
-		return s.belief.Stunned, nil
+		return s.world.Stunned, nil
 	case KeySearchExhausted:
-		return s.belief.SearchExhausted, nil
+		return s.world.SearchExhausted, nil
 	case KeyCaught:
-		return s.belief.Caught, nil
+		return s.world.Caught, nil
+	case KeyPlayerElement:
+		return s.world.PlayerElement, nil
+	case KeySelfElement:
+		return s.world.SelfElement, nil
+	case KeyAtDisadvantage:
+		return s.world.AtDisadvantage, nil
+	case KeyAtAdvantage:
+		return s.world.AtAdvantage, nil
 	default:
 		return nil, fmt.Errorf("brain: unknown VarKey %v", k)
 	}
@@ -117,6 +137,12 @@ func (s *State) Actions(failed Condition) ([]pabt.Action[Condition], error) {
 		// To exhaust the search we complete searching.
 		return []pabt.Action[Condition]{
 			NewSearchAction(s),
+		}, nil
+	case KeyAtDisadvantage:
+		// To resolve elemental disadvantage, retreat or reinforce.
+		return []pabt.Action[Condition]{
+			NewRetreatAction(s),
+			NewReinforceAction(s),
 		}, nil
 	default:
 		return nil, nil

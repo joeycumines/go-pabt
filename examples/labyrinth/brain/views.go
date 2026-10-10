@@ -9,8 +9,8 @@ import (
 	"github.com/joeycumines/go-pabt/examples/labyrinth/maze"
 )
 
-// ViewProvider is a pabt.TypedStateViewProvider over the belief. It opens
-// views labelled CoherenceRevisioned with the brain's belief revision, so a
+// ViewProvider is a pabt.TypedStateViewProvider over the world view. It opens
+// views labelled CoherenceRevisioned with the brain's world revision, so a
 // transition claim bracketing one action is authoritative.
 type ViewProvider struct {
 	state *State
@@ -30,7 +30,7 @@ func (p *ViewProvider) OpenStateView(req pabt.StateViewRequest) (pabt.TypedState
 	return &beliefView{state: p.state, brain: p.brain, req: req}, nil
 }
 
-// beliefView is one state view over the belief.
+// beliefView is one state view over the world view.
 type beliefView struct {
 	state *State
 	brain *Brain
@@ -46,7 +46,7 @@ func (v *beliefView) Actions(failed Condition) ([]pabt.Action[Condition], error)
 func (v *beliefView) Revision() pabt.StateRevision {
 	return pabt.StateRevision{
 		PlanRevision:  v.req.PlanRevision,
-		WorldRevision: fmt.Sprintf("%d", v.brain.BeliefRevision()),
+		WorldRevision: fmt.Sprintf("%d", v.brain.WorldRevision()),
 	}
 }
 
@@ -56,7 +56,7 @@ func (v *beliefView) Coherence() pabt.StateCoherence {
 
 func (v *beliefView) Close() error { return nil }
 
-// Observer is a pabt.ExecutionObserver that reads the post-action belief
+// Observer is a pabt.ExecutionObserver that reads the post-action world view
 // values for the action's effects.
 type Observer struct {
 	state *State
@@ -83,7 +83,7 @@ func (o *Observer) ObserveExecution(req pabt.ActionObservationRequest) (pabt.Act
 }
 
 // Verifier is a pabt.TransitionVerifier that issues preserves/breaks verdicts
-// by comparing each effect's declared value against the post-action belief.
+// by comparing each effect's declared value against the post-action world view.
 type Verifier struct {
 	state *State
 }

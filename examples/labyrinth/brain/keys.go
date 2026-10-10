@@ -31,6 +31,18 @@ const (
 
 	// KeyCaught is true when the minotaur has caught the player.
 	KeyCaught
+
+	// KeyPlayerElement is the player's active element (0-3).
+	KeyPlayerElement
+
+	// KeySelfElement is this actor's innate element (0-3).
+	KeySelfElement
+
+	// KeyAtDisadvantage is true when the player's element beats ours.
+	KeyAtDisadvantage
+
+	// KeyAtAdvantage is true when our element beats the player's.
+	KeyAtAdvantage
 )
 
 // String returns a human-readable name for a VarKey.
@@ -50,6 +62,14 @@ func (k VarKey) String() string {
 		return "searchExhausted"
 	case KeyCaught:
 		return "caught"
+	case KeyPlayerElement:
+		return "playerElement"
+	case KeySelfElement:
+		return "selfElement"
+	case KeyAtDisadvantage:
+		return "atDisadvantage"
+	case KeyAtAdvantage:
+		return "atAdvantage"
 	default:
 		return "unknown"
 	}

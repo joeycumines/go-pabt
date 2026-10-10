@@ -263,10 +263,10 @@ func TestStrategyMovementYieldsToBrainSearch(t *testing.T) {
 
 	// The brain saw the player once, then lost sight: its search action
 	// owns movement this tick.
-	g.Brains[0].InjectBelief(maze.Vec2{X: 1.5, Y: 1.5})
+	g.Brains[0].InjectWorldView(maze.Vec2{X: 1.5, Y: 1.5})
 	snap := w.Copy()
 	snap.Runner.Pos = maze.Vec2{X: 999, Y: 999}
-	g.Brains[0].UpdateBelief(snap, m)
+	g.Brains[0].UpdateWorldView(snap, m)
 	// The planner expands the tree on the tick it observes the failed
 	// condition and executes the new action on the next tick, so allow a
 	// couple of ticks for the search to own movement.
@@ -290,7 +290,7 @@ func TestStrategyMovementYieldsToBrainSearch(t *testing.T) {
 	// free to follow its strategy path.
 	m2 := w.Minotaurs[1]
 	st2 := g.actorStates[1]
-	g.Brains[1].UpdateBelief(w.Copy(), m2)
+	g.Brains[1].UpdateWorldView(w.Copy(), m2)
 	for i := 0; i < 3; i++ {
 		g.Brains[1].Tick("test")
 		if g.Brains[1].MovedLastTick() {
@@ -365,11 +365,11 @@ func TestCaughtClearsWhenSightLost(t *testing.T) {
 	// Runner standing on the actor: detected, pursued, caught.
 	snap := w.Copy()
 	snap.Runner.Pos = m.Pos
-	g.Brains[0].UpdateBelief(snap, m)
+	g.Brains[0].UpdateWorldView(snap, m)
 	caught := false
 	for i := 0; i < 3 && !caught; i++ {
 		g.Brains[0].Tick("test")
-		caught = g.Brains[0].BeliefCopy().Caught
+		caught = g.Brains[0].WorldViewCopy().Caught
 	}
 	if !caught {
 		t.Fatalf("caught not set while standing on the player")
@@ -377,8 +377,8 @@ func TestCaughtClearsWhenSightLost(t *testing.T) {
 
 	// Runner leaves: the catch is over and the planner must work again.
 	snap.Runner.Pos = maze.Vec2{X: 999, Y: 999}
-	g.Brains[0].UpdateBelief(snap, m)
-	if g.Brains[0].BeliefCopy().Caught {
+	g.Brains[0].UpdateWorldView(snap, m)
+	if g.Brains[0].WorldViewCopy().Caught {
 		t.Fatalf("caught latched after line of sight lost")
 	}
 }

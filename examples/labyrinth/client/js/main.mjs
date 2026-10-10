@@ -7,6 +7,7 @@ import { HUD } from './hud.mjs';
 import { NetClient } from './net.mjs';
 import { AudioEngine } from './audio.mjs';
 import { ModelBank, actorModelMatrix } from './models.mjs';
+import { DebugPanel } from './debug.mjs';
 
 const canvas = document.getElementById('glcanvas');
 const loading = document.getElementById('loading');
@@ -14,7 +15,7 @@ const hudEl = document.getElementById('hud');
 const prompt = document.getElementById('pointer-lock-prompt');
 const overlay = document.getElementById('overlay');
 
-let renderer, camera, input, hud, net, audio;
+let renderer, camera, input, hud, net, audio, debugPanel;
 let maze = null; // authoritative maze from server
 let lastTime = 0;
 let gameState = 'playing'; // 'playing' | 'caught' | 'won'
@@ -119,6 +120,9 @@ function init() {
     hud = new HUD();
     net = new NetClient();
     audio = new AudioEngine();
+    debugPanel = new DebugPanel();
+    debugPanel.onCommand = (cmd, actorID) => net.sendDebugCmd(cmd, actorID);
+    net.onTree = (actorID, frame) => debugPanel.handleTreeFrame(actorID, frame);
 
     // Skeletal creature models; fallback primitives until they arrive.
     modelBank = new ModelBank(renderer.gl);

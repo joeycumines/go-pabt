@@ -51,7 +51,7 @@ func TestActorsKeepMovingOverTicks(t *testing.T) {
 			if frozen == 1 {
 				for i, mm := range w.Minotaurs {
 					st := g.actorStates[i]
-					b := g.Brains[i].BeliefCopy()
+					b := g.Brains[i].WorldViewCopy()
 					t.Logf("FROZEN %s pos=%v strat=%d hasTarget=%v target=%v path=%d detected=%v lastKnown=%v exhausted=%v caught=%v stunned=%v hp=%d",
 						mm.ID, mm.Pos, st.Strategy, st.HasTarget, st.TargetPos, len(st.Path),
 						b.PlayerDetected, b.HasLastKnown, b.SearchExhausted, b.Caught, mm.Stunned, mm.HP)

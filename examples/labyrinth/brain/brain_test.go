@@ -39,10 +39,10 @@ func TestStationaryRunnerDetectedPursuedCaught(t *testing.T) {
 	}
 
 	snap := w.Copy()
-	b.UpdateBelief(snap, minotaur)
+	b.UpdateWorldView(snap, minotaur)
 
 	// The runner should be detected (within sight range).
-	if !b.belief.PlayerDetected {
+	if !b.world.PlayerDetected {
 		t.Fatalf("runner not detected: pos=%v minotaur=%v", w.Runner.Pos, minotaur.Pos)
 	}
 
@@ -50,9 +50,9 @@ func TestStationaryRunnerDetectedPursuedCaught(t *testing.T) {
 	var caught bool
 	for i := 0; i < 200; i++ {
 		snap = w.Copy()
-		b.UpdateBelief(snap, minotaur)
+		b.UpdateWorldView(snap, minotaur)
 		b.Tick("attempt")
-		if b.belief.Caught {
+		if b.world.Caught {
 			caught = true
 			break
 		}
@@ -73,53 +73,53 @@ func TestLossOfSightTriggersSearch(t *testing.T) {
 		t.Fatalf("NewBrain: %v", err)
 	}
 
-	// Use InjectBelief to establish initial detection at a known position.
+	// Use InjectWorldView to establish initial detection at a known position.
 	// This avoids depending on maze layout for the initial detection.
 	initialPos := maze.Vec2{X: minotaur.Pos.X + 2, Y: minotaur.Pos.Y}
-	b.InjectBelief(initialPos)
+	b.InjectWorldView(initialPos)
 
 	// Verify initial state.
-	if !b.belief.PlayerDetected {
-		t.Fatalf("belief injection did not set PlayerDetected")
+	if !b.world.PlayerDetected {
+		t.Fatalf("world view injection did not set PlayerDetected")
 	}
-	if !b.belief.HasLastKnown {
-		t.Fatalf("belief injection did not set HasLastKnown")
+	if !b.world.HasLastKnown {
+		t.Fatalf("world view injection did not set HasLastKnown")
 	}
 
 	// Tick once to process the initial state.
 	snap := w.Copy()
-	b.UpdateBelief(snap, minotaur)
+	b.UpdateWorldView(snap, minotaur)
 	b.Tick("attempt")
 
-	// Now: the runner is far away (at the gate), so UpdateBelief should
+	// Now: the runner is far away (at the gate), so UpdateWorldView should
 	// clear detection but preserve last-known.
 	snap = w.Copy()
-	b.UpdateBelief(snap, minotaur)
+	b.UpdateWorldView(snap, minotaur)
 
-	// The minotaur should no longer detect the player (gate is far).
-	if b.belief.PlayerDetected {
+	// The actor should no longer detect the player (gate is far).
+	if b.world.PlayerDetected {
 		t.Fatalf("player still detected after moving to gate")
 	}
 
-	// The minotaur should still have a last-known position.
-	if !b.belief.HasLastKnown {
+	// The actor should still have a last-known position.
+	if !b.world.HasLastKnown {
 		t.Fatalf("last-known position lost after loss of sight")
 	}
 
 	// Tick: the brain should search the last-known position.
 	for i := 0; i < 200; i++ {
 		snap = w.Copy()
-		b.UpdateBelief(snap, minotaur)
+		b.UpdateWorldView(snap, minotaur)
 		_, diag := b.TickDebug("attempt")
 		if i < 10 || i%20 == 0 {
 			t.Logf("tick %d: %s", i, diag)
 		}
-		if b.belief.SearchExhausted {
+		if b.world.SearchExhausted {
 			break
 		}
 	}
 	// After enough ticks, search should be exhausted.
-	if !b.belief.SearchExhausted {
+	if !b.world.SearchExhausted {
 		t.Fatalf("search not exhausted after 200 ticks")
 	}
 }
@@ -135,13 +135,13 @@ func TestStunnedMinotaurRecoversAndResumes(t *testing.T) {
 		t.Fatalf("NewBrain: %v", err)
 	}
 
-	// Stun the minotaur.
+	// Stun the actor.
 	minotaur.Stunned = true
 	snap := w.Copy()
-	b.UpdateBelief(snap, minotaur)
+	b.UpdateWorldView(snap, minotaur)
 
-	if !b.belief.Stunned {
-		t.Fatalf("belief not stunned")
+	if !b.world.Stunned {
+		t.Fatalf("world view not stunned")
 	}
 
 	// Tick: the brain should process the stun (recovery action).
@@ -153,20 +153,20 @@ func TestStunnedMinotaurRecoversAndResumes(t *testing.T) {
 	// After enough ticks, the stun should clear.
 	for i := 0; i < 10; i++ {
 		snap = w.Copy()
-		b.UpdateBelief(snap, minotaur)
+		b.UpdateWorldView(snap, minotaur)
 		b.Tick("attempt")
-		if !b.belief.Stunned {
+		if !b.world.Stunned {
 			break
 		}
 	}
-	if b.belief.Stunned {
-		t.Fatalf("minotaur still stunned after recovery ticks")
+	if b.world.Stunned {
+		t.Fatalf("actor still stunned after recovery ticks")
 	}
 
 	// Resume pursuing.
 	for i := 0; i < 50; i++ {
 		snap = w.Copy()
-		b.UpdateBelief(snap, minotaur)
+		b.UpdateWorldView(snap, minotaur)
 		frame := b.Tick("attempt")
 		if frame == nil {
 			t.Fatalf("frame nil after recovery")
@@ -186,7 +186,7 @@ func TestEveryTickProducesEncodedFrame(t *testing.T) {
 	}
 
 	snap := w.Copy()
-	b.UpdateBelief(snap, minotaur)
+	b.UpdateWorldView(snap, minotaur)
 	frame := b.Tick("attempt")
 
 	if frame == nil {
@@ -207,7 +207,7 @@ func TestEveryTickProducesEncodedFrame(t *testing.T) {
 	var foundExec bool
 	for i := 0; i < 20; i++ {
 		snap = w.Copy()
-		b.UpdateBelief(snap, minotaur)
+		b.UpdateWorldView(snap, minotaur)
 		frame = b.Tick("attempt")
 		if len(frame.Executions) > 0 {
 			foundExec = true
@@ -236,7 +236,7 @@ func TestReplanBumpsRevisionAndRebuildsTree(t *testing.T) {
 	}
 
 	snap := w.Copy()
-	b.UpdateBelief(snap, minotaur)
+	b.UpdateWorldView(snap, minotaur)
 	frame1 := b.Tick("attempt")
 	if frame1 == nil {
 		t.Fatalf("no frame before replan")
@@ -256,7 +256,7 @@ func TestReplanBumpsRevisionAndRebuildsTree(t *testing.T) {
 	}
 
 	snap = w.Copy()
-	b.UpdateBelief(snap, minotaur)
+	b.UpdateWorldView(snap, minotaur)
 	frame2 := b.Tick("attempt")
 	if frame2 == nil {
 		t.Fatalf("no frame after replan")
@@ -295,26 +295,26 @@ func TestBeliefInjectionRedirectsPursuit(t *testing.T) {
 	}
 
 	snap := w.Copy()
-	b.UpdateBelief(snap, minotaur)
+	b.UpdateWorldView(snap, minotaur)
 	frame1 := b.Tick("attempt")
 	if frame1 == nil {
 		t.Fatalf("no frame")
 	}
 
-	// Inject a false belief: player at the gate.
-	b.InjectBelief(m.Gate)
+	// Inject a false world view: player at the gate.
+	b.InjectWorldView(m.Gate)
 
-	// The belief should now be redirected.
-	if !b.belief.PlayerDetected {
-		t.Fatalf("belief injection did not set PlayerDetected")
+	// The world view should now be redirected.
+	if !b.world.PlayerDetected {
+		t.Fatalf("world view injection did not set PlayerDetected")
 	}
-	if b.belief.PlayerPos != m.Gate {
-		t.Fatalf("belief injection did not set PlayerPos to gate: got %v", b.belief.PlayerPos)
+	if b.world.PlayerPos != m.Gate {
+		t.Fatalf("world view injection did not set PlayerPos to gate: got %v", b.world.PlayerPos)
 	}
 
 	// Tick: the brain should now pursue the injected position.
 	snap = w.Copy()
-	b.UpdateBelief(snap, minotaur)
+	b.UpdateWorldView(snap, minotaur)
 	frame2 := b.Tick("attempt")
 	if frame2 == nil {
 		t.Fatalf("no frame after injection")
@@ -336,7 +336,7 @@ func TestPauseSkipsTick(t *testing.T) {
 	}
 
 	snap := w.Copy()
-	b.UpdateBelief(snap, minotaur)
+	b.UpdateWorldView(snap, minotaur)
 	frame := b.Tick("attempt")
 	if frame == nil {
 		t.Fatalf("no frame before pause")

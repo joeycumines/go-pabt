@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"flag"
+	"fmt"
 	"io/fs"
 	"log"
 	"math"
@@ -152,10 +153,12 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request, g *game.Game) {
 	// Subscribe to snapshots and events.
 	snapCh := make(chan []byte, 32)
 	eventCh := make(chan game.Event, 64)
+	treeCh := make(chan map[string][]byte, 4)
 	g.Subscribe(sess.ID, snapCh)
 	g.SubscribeEvents(sess.ID, eventCh)
+	g.SubscribeTrees(sess.ID, treeCh)
 
-	// Writer goroutine: send snapshots and events.
+	// Writer goroutine: send snapshots, events, and tree frames.
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -168,24 +171,37 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request, g *game.Game) {
 				if err := conn.WriteMessage(ws.OpText, data); err != nil {
 					return
 				}
-			case evt, ok := <-eventCh:
-				if !ok {
-					return
-				}
-				data, err := proto.EncodeEvent(proto.Event{
-					Type: evt.Type,
-					Data: mustMarshal(evt.Data),
-				})
+		case evt, ok := <-eventCh:
+			if !ok {
+				return
+			}
+			data, err := proto.EncodeEvent(proto.Event{
+				Type: evt.Type,
+				Data: mustMarshal(evt.Data),
+			})
+			if err != nil {
+				continue
+			}
+			// Write events on the socket directly. They must not be
+			// buffered into a side channel that nothing drains, or
+			// every gameplay event (clash, stun, hit, death) is lost.
+			if err := conn.WriteMessage(ws.OpText, data); err != nil {
+				return
+			}
+		case frames, ok := <-treeCh:
+			if !ok {
+				return
+			}
+			for actorID, frameData := range frames {
+				data, err := proto.EncodeTree(actorID, frameData)
 				if err != nil {
 					continue
 				}
-				// Write events on the socket directly. They must not be
-				// buffered into a side channel that nothing drains, or
-				// every gameplay event (clash, stun, hit, death) is lost.
 				if err := conn.WriteMessage(ws.OpText, data); err != nil {
 					return
 				}
 			}
+		}
 		}
 	}()
 
@@ -235,6 +251,25 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request, g *game.Game) {
 				continue
 			}
 			g.DebugTeleport(sess.ID, maze.Vec2{X: dbg.X, Y: dbg.Y})
+		case "debugcmd":
+			dc, err := proto.DecodeDebugCmd(env)
+			if err != nil {
+				continue
+			}
+			switch dc.Cmd {
+			case "replan":
+				g.DebugReplan(dc.Arg)
+			case "pause":
+				g.DebugPause(dc.Arg)
+			case "resume":
+				g.DebugResume(dc.Arg)
+			case "inject":
+				var actorID string
+				var x, y float64
+				if _, err := fmt.Sscanf(dc.Arg, "%s %f,%f", &actorID, &x, &y); err == nil {
+					g.DebugInject(actorID, maze.Vec2{X: x, Y: y})
+				}
+			}
 		}
 	}
 

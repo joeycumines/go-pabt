@@ -207,3 +207,112 @@ body {
 #hit-marker.neutral { color: #ffffff; }
 
 #credits { position: fixed; right: 8px; bottom: 4px; font: 10px monospace; color: #666; z-index: 6; pointer-events: none; }
+
+/* S4: Integrated PA-BT Debugging GUI */
+#debug-panel {
+    position: fixed;
+    top: 0;
+    right: 0;
+    width: 380px;
+    height: 100vh;
+    background: rgba(5, 5, 15, 0.95);
+    border-left: 2px solid #ff00ff;
+    z-index: 300;
+    display: flex;
+    flex-direction: column;
+    font-family: 'Courier New', monospace;
+    color: #e0e0ff;
+    overflow: hidden;
+}
+
+#debug-header {
+    padding: 8px 12px;
+    background: rgba(255, 0, 255, 0.15);
+    border-bottom: 1px solid #ff00ff;
+    font-weight: bold;
+    font-size: 0.9rem;
+}
+
+#debug-body {
+    flex: 1;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+}
+
+#debug-actor-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    padding: 8px;
+    border-bottom: 1px solid rgba(255, 0, 255, 0.3);
+}
+
+.debug-actor {
+    padding: 3px 8px;
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 0, 255, 0.4);
+    border-radius: 3px;
+    cursor: pointer;
+    font-size: 0.75rem;
+}
+
+.debug-actor.selected {
+    background: rgba(255, 0, 255, 0.3);
+    border-color: #ff00ff;
+}
+
+#debug-tree {
+    padding: 8px;
+    font-size: 0.75rem;
+    line-height: 1.5;
+}
+
+.debug-header {
+    color: #ff00ff;
+    font-weight: bold;
+    margin-bottom: 6px;
+}
+
+.debug-section {
+    color: #8080ff;
+    margin-top: 8px;
+    border-bottom: 1px solid rgba(128, 128, 255, 0.2);
+    padding-bottom: 2px;
+}
+
+.debug-node { padding-left: 8px; }
+.debug-type { color: #00ff80; }
+.debug-status { color: #ffcc00; }
+.debug-cond { padding-left: 8px; color: #59c8ff; }
+.debug-action { padding-left: 8px; color: #ff8040; }
+.debug-exec { padding-left: 8px; color: #c0c0c0; }
+.debug-rel { color: #ff0080; font-size: 0.7rem; }
+.debug-path { margin-top: 8px; color: #808080; font-style: italic; }
+.debug-empty { color: #606060; }
+
+#debug-controls {
+    display: flex;
+    gap: 6px;
+    padding: 8px;
+    border-top: 1px solid rgba(255, 0, 255, 0.3);
+}
+
+#debug-controls button {
+    padding: 4px 10px;
+    background: rgba(255, 0, 255, 0.15);
+    border: 1px solid #ff00ff;
+    color: #e0e0ff;
+    border-radius: 3px;
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 0.75rem;
+}
+
+#debug-controls button:hover {
+    background: rgba(255, 0, 255, 0.35);
+}
+
+[hidden] {
+    display: none !important;
+}

@@ -18,10 +18,10 @@ type effect struct {
 func (e *effect) Key() any   { return e.K }
 func (e *effect) Value() any { return e.V }
 
-// moveSpeed is cells per tick the minotaur advances along its path.
+// moveSpeed is cells per tick the actor advances along its path.
 const moveSpeed = 0.35
 
-// moveAction is shared state for an action that moves the minotaur along an
+// moveAction is shared state for an action that moves the actor along an
 // A* path. It is stored on the action so that successive ticks of the same
 // action node continue advancing the same path.
 type moveAction struct {
@@ -30,7 +30,7 @@ type moveAction struct {
 	done  bool
 }
 
-// advance moves the minotaur along the path by the state's per-tick speed.
+// advance moves the actor along the path by the state's per-tick speed.
 // It returns bt.Running while the path has more waypoints and bt.Success when
 // the endpoint is reached.
 func (a *moveAction) advance() (bt.Status, error) {
@@ -70,7 +70,7 @@ func (a *moveAction) advance() (bt.Status, error) {
 	return bt.Running, nil
 }
 
-// PursueAction moves the minotaur toward the player's believed position.
+// PursueAction moves the actor toward the player's position.
 type PursueAction struct {
 	*moveAction
 }
@@ -80,10 +80,10 @@ func NewPursueAction(s *State) *PursueAction {
 }
 
 func (a *PursueAction) Conditions() []Conditions {
-	// Pursue requires the player to be detected AND the minotaur not stunned.
-	// Both conditions are in one AND group (a single Conditions slice).
+	// Pursue requires the player to be detected AND the actor not stunned
+	// AND the actor not at elemental disadvantage.
 	return []Conditions{
-		{&BoolCond{K: KeyPlayerDetected, Want: true}, &BoolCond{K: KeyStunned, Want: false}},
+		{&BoolCond{K: KeyPlayerDetected, Want: true}, &BoolCond{K: KeyStunned, Want: false}, &BoolCond{K: KeyAtDisadvantage, Want: false}},
 	}
 }
 
@@ -95,11 +95,11 @@ func (a *PursueAction) Effects() Effects {
 
 func (a *PursueAction) Node() bt.Node {
 	return bt.New(func(children []bt.Node) (bt.Status, error) {
-		// Compute the path to the player's believed position on first tick.
+		// Compute the path to the player's position on first tick.
 		if a.path == nil && !a.done {
-			a.path = a.state.maze.Path(*a.state.selfPos, a.state.belief.LastKnownPos)
-			if a.state.belief.PlayerDetected {
-				a.path = a.state.maze.Path(*a.state.selfPos, a.state.belief.PlayerPos)
+			a.path = a.state.maze.Path(*a.state.selfPos, a.state.world.LastKnownPos)
+			if a.state.world.PlayerDetected {
+				a.path = a.state.maze.Path(*a.state.selfPos, a.state.world.PlayerPos)
 			}
 			if a.path == nil {
 				return bt.Failure, nil
@@ -111,17 +111,17 @@ func (a *PursueAction) Node() bt.Node {
 		}
 		if status == bt.Success {
 			// On arrival, check if we caught the player.
-			d := math.Hypot(a.state.belief.PlayerPos.X-a.state.selfPos.X,
-				a.state.belief.PlayerPos.Y-a.state.selfPos.Y)
-			if a.state.belief.PlayerDetected && d < 0.6 {
-				a.state.belief.Caught = true
+			d := math.Hypot(a.state.world.PlayerPos.X-a.state.selfPos.X,
+				a.state.world.PlayerPos.Y-a.state.selfPos.Y)
+			if a.state.world.PlayerDetected && d < 0.6 {
+				a.state.world.Caught = true
 			}
 		}
 		return status, nil
 	})
 }
 
-// SearchAction moves the minotaur to the last-known position and searches.
+// SearchAction moves the actor to the last-known position and searches.
 type SearchAction struct {
 	*moveAction
 }
@@ -145,11 +145,11 @@ func (a *SearchAction) Effects() Effects {
 func (a *SearchAction) Node() bt.Node {
 	return bt.New(func(children []bt.Node) (bt.Status, error) {
 		if a.path == nil && !a.done {
-			a.path = a.state.maze.Path(*a.state.selfPos, a.state.belief.LastKnownPos)
+			a.path = a.state.maze.Path(*a.state.selfPos, a.state.world.LastKnownPos)
 			if a.path == nil {
 				// Cannot reach last-known: the search is exhausted.
 				a.done = true
-				a.state.belief.SearchExhausted = true
+				a.state.world.SearchExhausted = true
 				return bt.Success, nil
 			}
 		}
@@ -159,15 +159,15 @@ func (a *SearchAction) Node() bt.Node {
 		}
 		if status == bt.Success {
 			// Arrived at last-known and the player is not here (they would
-			// have been re-detected by UpdateBelief otherwise): the search is
-			// exhausted.
-			a.state.belief.SearchExhausted = true
+			// have been re-detected by UpdateWorldView otherwise): the search
+			// is exhausted.
+			a.state.world.SearchExhausted = true
 		}
 		return status, nil
 	})
 }
 
-// RecoverAction is the minotaur recovering from a stun.
+// RecoverAction is the actor recovering from a stun.
 type RecoverAction struct {
 	state     *State
 	ticksLeft int
@@ -193,9 +193,108 @@ func (a *RecoverAction) Node() bt.Node {
 	return bt.New(func(children []bt.Node) (bt.Status, error) {
 		a.ticksLeft--
 		if a.ticksLeft <= 0 {
-			a.state.belief.Stunned = false
+			a.state.world.Stunned = false
 			return bt.Success, nil
 		}
 		return bt.Running, nil
+	})
+}
+
+// RetreatAction moves the actor away from the player when at elemental
+// disadvantage. This is the core PA-BT elemental planning behavior: a fire
+// mob facing an ice player retreats to avoid the disadvantage.
+type RetreatAction struct {
+	*moveAction
+}
+
+func NewRetreatAction(s *State) *RetreatAction {
+	return &RetreatAction{moveAction: &moveAction{state: s}}
+}
+
+func (a *RetreatAction) Conditions() []Conditions {
+	// Retreat requires: at disadvantage AND player detected AND not stunned.
+	return []Conditions{
+		{&BoolCond{K: KeyAtDisadvantage, Want: true}, &BoolCond{K: KeyPlayerDetected, Want: true}, &BoolCond{K: KeyStunned, Want: false}},
+	}
+}
+
+func (a *RetreatAction) Effects() Effects {
+	return Effects{
+		&effect{K: KeyAtDisadvantage, V: false},
+	}
+}
+
+func (a *RetreatAction) Node() bt.Node {
+	return bt.New(func(children []bt.Node) (bt.Status, error) {
+		if !a.state.world.PlayerDetected || a.state.world.Stunned {
+			return bt.Failure, nil
+		}
+		// Move away from the player.
+		playerPos := a.state.world.PlayerPos
+		dx := a.state.selfPos.X - playerPos.X
+		dy := a.state.selfPos.Y - playerPos.Y
+		dist2 := dx*dx + dy*dy
+		if dist2 > 8.0*8.0 {
+			// Far enough - disadvantage resolved by distance.
+			a.state.world.AtDisadvantage = false
+			return bt.Success, nil
+		}
+		// Retreat: move one step in the direction away from the player.
+		step := moveSpeed
+		if a.state.MoveSpeed > 0 {
+			step = a.state.MoveSpeed
+		}
+		dist := math.Sqrt(dist2)
+		if dist < 1e-6 {
+			dist = 1e-6
+		}
+		retreatTarget := maze.Vec2{
+			X: a.state.selfPos.X + dx/dist*step,
+			Y: a.state.selfPos.Y + dy/dist*step,
+		}
+		resolved := a.state.maze.Resolve(retreatTarget, maze.Radius)
+		if resolved.X != a.state.selfPos.X || resolved.Y != a.state.selfPos.Y {
+			a.state.selfPos.X = resolved.X
+			a.state.selfPos.Y = resolved.Y
+			a.state.movedThisTick = true
+		}
+		return bt.Running, nil
+	})
+}
+
+// ReinforceAction seeks a same-element ally when at elemental disadvantage.
+// This is the second PA-BT elemental planning behavior: instead of fleeing,
+// the actor groups up with allies to overcome the disadvantage.
+type ReinforceAction struct {
+	state *State
+}
+
+func NewReinforceAction(s *State) *ReinforceAction {
+	return &ReinforceAction{state: s}
+}
+
+func (a *ReinforceAction) Conditions() []Conditions {
+	// Reinforce requires: at disadvantage AND not stunned.
+	return []Conditions{
+		{&BoolCond{K: KeyAtDisadvantage, Want: true}, &BoolCond{K: KeyStunned, Want: false}},
+	}
+}
+
+func (a *ReinforceAction) Effects() Effects {
+	return Effects{
+		&effect{K: KeyAtDisadvantage, V: false},
+	}
+}
+
+func (a *ReinforceAction) Node() bt.Node {
+	return bt.New(func(children []bt.Node) (bt.Status, error) {
+		if a.state.world.Stunned {
+			return bt.Failure, nil
+		}
+		// For now, reinforce is a no-op that succeeds after a delay.
+		// The actual ally-seeking behavior requires access to other actors'
+		// positions, which the brain doesn't have. The game layer handles
+		// faction grouping via strategy movement.
+		return bt.Success, nil
 	})
 }
