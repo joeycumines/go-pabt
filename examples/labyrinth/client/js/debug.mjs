@@ -126,6 +126,9 @@ export class DebugPanel {
             html += ` | Player: ${ELEM[wv.playerElement] || wv.playerElement}</div>`;
             html += `<div class="debug-wv ${advClass}">${wv.atDisadvantage ? 'AT DISADVANTAGE' : wv.atAdvantage ? 'AT ADVANTAGE' : 'NEUTRAL'}</div>`;
             html += `<div class="debug-wv">Detected: ${wv.playerDetected} | Stunned: ${wv.stunned} | Band: ${wv.distanceBand}</div>`;
+            if (wv.hasLastKnown) {
+                html += `<div class="debug-wv">Focus: (${wv.lastKnownX.toFixed(1)}, ${wv.lastKnownY.toFixed(1)})</div>`;
+            }
         }
 
         // Nodes

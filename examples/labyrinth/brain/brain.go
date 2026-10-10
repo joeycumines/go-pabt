@@ -237,6 +237,9 @@ func (b *Brain) worldViewFrame() BTWorldView {
 		PlayerDetected: b.world.PlayerDetected,
 		Stunned:        b.world.Stunned,
 		DistanceBand:   b.world.DistanceBand,
+		LastKnownX:     b.world.LastKnownPos.X,
+		LastKnownY:     b.world.LastKnownPos.Y,
+		HasLastKnown:   b.world.HasLastKnown,
 	}
 }
 

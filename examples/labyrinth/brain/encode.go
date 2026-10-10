@@ -27,13 +27,16 @@ type BTFrame struct {
 // GUI: an actor at disadvantage will show atDisadvantage=true alongside its
 // retreat/reinforce action selection.
 type BTWorldView struct {
-	PlayerElement  int  `json:"playerElement"`
-	SelfElement    int  `json:"selfElement"`
-	AtDisadvantage bool `json:"atDisadvantage"`
-	AtAdvantage    bool `json:"atAdvantage"`
-	PlayerDetected bool `json:"playerDetected"`
-	Stunned        bool `json:"stunned"`
-	DistanceBand   int  `json:"distanceBand"`
+	PlayerElement  int     `json:"playerElement"`
+	SelfElement    int     `json:"selfElement"`
+	AtDisadvantage bool    `json:"atDisadvantage"`
+	AtAdvantage    bool    `json:"atAdvantage"`
+	PlayerDetected bool    `json:"playerDetected"`
+	Stunned        bool    `json:"stunned"`
+	DistanceBand   int     `json:"distanceBand"`
+	LastKnownX     float64 `json:"lastKnownX"`
+	LastKnownY     float64 `json:"lastKnownY"`
+	HasLastKnown   bool    `json:"hasLastKnown"`
 }
 
 // BTNode is one node in the encoded tree.
