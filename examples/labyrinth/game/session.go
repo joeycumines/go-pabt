@@ -33,6 +33,11 @@ type PlayerSession struct {
 	ID    SessionID
 	Net   *netcode.Session
 	Token string
+
+	// disconnectedAt records when the session's WebSocket closed. Zero means
+	// currently connected. Sessions are retained for a grace period after
+	// disconnect so the same token can rejoin without losing prediction state.
+	disconnectedAt time.Time
 }
 
 // Event is a typed game event sent to clients.
@@ -382,26 +387,44 @@ func (g *Game) tickTimers(w *world.World) {
 	}
 }
 
-// AddSession registers a new player session.
-func (g *Game) AddSession() (*PlayerSession, string) {
+// AddSession registers a new player session. If token is non-empty and
+// matches a recently-disconnected session, that session is reactivated
+// (rejoin) instead of creating a fresh one, preserving prediction state.
+func (g *Game) AddSession(token string) (*PlayerSession, string) {
 	g.sessMu.Lock()
 	defer g.sessMu.Unlock()
 
+	// Attempt rejoin: find a disconnected session with this token.
+	if token != "" {
+		for _, sess := range g.sessions {
+			if sess.Token == token && !sess.disconnectedAt.IsZero() {
+				sess.disconnectedAt = time.Time{} // mark reconnected
+				sess.Net.ResetAckSeq()             // client restarts at seq 1
+				return sess, sess.Token
+			}
+		}
+	}
+
+	// Fresh session.
 	id := generateSessionID()
-	token := string(id)
+	tok := string(id)
 	sess := &PlayerSession{
 		ID:    id,
-		Net:   netcode.NewSession(token, g.Maze.Start, 0),
-		Token: token,
+		Net:   netcode.NewSession(tok, g.Maze.Start, 0),
+		Token: tok,
 	}
 	g.sessions[id] = sess
-	return sess, token
+	return sess, tok
 }
 
-// RemoveSession unregisters a player session.
+// RemoveSession marks a player session as disconnected. The session is
+// retained for a grace period so the same token can rejoin. Subscriptions
+// are removed immediately (the socket is gone).
 func (g *Game) RemoveSession(id SessionID) {
 	g.sessMu.Lock()
-	delete(g.sessions, id)
+	if sess, ok := g.sessions[id]; ok {
+		sess.disconnectedAt = time.Now()
+	}
 	g.sessMu.Unlock()
 	g.subMu.Lock()
 	delete(g.subscribers, id)
@@ -412,6 +435,23 @@ func (g *Game) RemoveSession(id SessionID) {
 	g.treeMu.Lock()
 	delete(g.treeSubs, id)
 	g.treeMu.Unlock()
+}
+
+// sessionGracePeriod is how long a disconnected session is retained before
+// being garbage-collected.
+const sessionGracePeriod = 60 * time.Second
+
+// CleanupSessions removes sessions that have been disconnected longer than
+// the grace period. Call periodically (e.g. from a ticker goroutine).
+func (g *Game) CleanupSessions() {
+	now := time.Now()
+	g.sessMu.Lock()
+	for id, sess := range g.sessions {
+		if !sess.disconnectedAt.IsZero() && now.Sub(sess.disconnectedAt) > sessionGracePeriod {
+			delete(g.sessions, id)
+		}
+	}
+	g.sessMu.Unlock()
 }
 
 // SubscribeTrees registers a channel to receive tree frames.

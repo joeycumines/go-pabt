@@ -68,6 +68,20 @@ func main() {
 		return encoder.EncodeSnap(snapshotToProto(snap), ackSeq)
 	})
 
+	// Periodically garbage-collect sessions that exceeded the rejoin grace period.
+	go func() {
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				g.CleanupSessions()
+			}
+		}
+	}()
+
 	// HTTP server: static files + WebSocket upgrade.
 	ln, err := net.Listen("tcp", *addr)
 	if err != nil {
@@ -132,8 +146,11 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request, g *game.Game) {
 	conn := ws.NewConn(rawConn, br, 32)
 	defer conn.Close()
 
-	// Create a player session.
-	sess, token := g.AddSession()
+	// Create or rejoin a player session. A reconnecting client presents its
+	// prior token as a query parameter; if it matches a retained session the
+	// prediction state is preserved instead of resetting to maze start.
+	rejoinToken := r.URL.Query().Get("token")
+	sess, token := g.AddSession(rejoinToken)
 	defer g.RemoveSession(sess.ID)
 
 	// Send session token.

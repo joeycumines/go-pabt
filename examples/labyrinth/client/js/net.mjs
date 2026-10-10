@@ -14,7 +14,12 @@ export class NetClient {
 
     connect() {
         const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const url = `${proto}//${location.host}/ws`;
+        // Rejoin: present the prior session token so the server preserves
+        // prediction state instead of resetting to maze start.
+        const saved = sessionStorage.getItem('ariadne-token');
+        const url = saved
+            ? `${proto}//${location.host}/ws?token=${encodeURIComponent(saved)}`
+            : `${proto}//${location.host}/ws`;
         this.ws = new WebSocket(url);
 
         this.ws.onmessage = (e) => {
@@ -23,6 +28,7 @@ export class NetClient {
                 switch (env.t) {
                     case 'session':
                         this.token = env.p.token;
+                        sessionStorage.setItem('ariadne-token', env.p.token);
                         break;
                     case 'maze':
                         this.maze = env.p;

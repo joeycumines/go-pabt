@@ -78,6 +78,11 @@ func (s *Session) AckSeq() uint64 {
 	return s.lastAckSeq.Load()
 }
 
+// ResetAckSeq resets the acknowledged sequence to zero. Called on rejoin:
+// the client starts fresh at seq 1, so the server must accept those inputs
+// rather than dropping them as stale duplicates.
+func (s *Session) ResetAckSeq() { s.lastAckSeq.Store(0) }
+
 // History returns a copy of the retained input history, oldest first.
 func (s *Session) History() []InputCmd {
 	out := make([]InputCmd, len(s.history))
