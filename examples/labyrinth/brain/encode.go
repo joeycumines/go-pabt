@@ -19,6 +19,21 @@ type BTFrame struct {
 	Actions      []BTAction    `json:"actions"`
 	Executions   []BTExecution `json:"executions"`
 	Path         string        `json:"path"`
+	WorldView    BTWorldView   `json:"worldView"`
+}
+
+// BTWorldView is the actor's elemental and detection state at frame time. It
+// makes elemental-disadvantage planning directly observable in the debugging
+// GUI: an actor at disadvantage will show atDisadvantage=true alongside its
+// retreat/reinforce action selection.
+type BTWorldView struct {
+	PlayerElement  int  `json:"playerElement"`
+	SelfElement    int  `json:"selfElement"`
+	AtDisadvantage bool `json:"atDisadvantage"`
+	AtAdvantage    bool `json:"atAdvantage"`
+	PlayerDetected bool `json:"playerDetected"`
+	Stunned        bool `json:"stunned"`
+	DistanceBand   int  `json:"distanceBand"`
 }
 
 // BTNode is one node in the encoded tree.

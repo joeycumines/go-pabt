@@ -156,6 +156,7 @@ func (b *Brain) Tick(attemptID string) *BTFrame {
 	b.state.movedThisTick = false
 	path := pabt.GetPath(b.plan)
 	frame := EncodeFrame(result.Snapshot, path)
+	frame.WorldView = b.worldViewFrame()
 	b.lastFrame = frame
 	return frame
 }
@@ -172,6 +173,7 @@ func (b *Brain) TickDebug(attemptID string) (*BTFrame, string) {
 	b.state.movedThisTick = false
 	path := pabt.GetPath(b.plan)
 	frame := EncodeFrame(result.Snapshot, path)
+	frame.WorldView = b.worldViewFrame()
 	b.lastFrame = frame
 
 	diag := fmt.Sprintf("status=%v statusKnown=%v", result.Status, result.StatusKnown)
@@ -224,6 +226,19 @@ func (b *Brain) InjectWorldView(playerPos maze.Vec2) {
 
 // WorldViewCopy returns a copy of the current world view, for inspection.
 func (b *Brain) WorldViewCopy() WorldView { return b.world }
+
+// worldViewFrame encodes the current world view for the debugging GUI.
+func (b *Brain) worldViewFrame() BTWorldView {
+	return BTWorldView{
+		PlayerElement:  b.world.PlayerElement,
+		SelfElement:    b.world.SelfElement,
+		AtDisadvantage: b.world.AtDisadvantage,
+		AtAdvantage:    b.world.AtAdvantage,
+		PlayerDetected: b.world.PlayerDetected,
+		Stunned:        b.world.Stunned,
+		DistanceBand:   b.world.DistanceBand,
+	}
+}
 
 // MovedLastTick reports whether the planner's move actions stepped the
 // actor during the most recent Tick.

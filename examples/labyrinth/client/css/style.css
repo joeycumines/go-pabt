@@ -291,6 +291,11 @@ body {
 .debug-path { margin-top: 8px; color: #808080; font-style: italic; }
 .debug-empty { color: #606060; }
 
+.debug-wv { padding-left: 8px; color: #a0ffa0; font-size: 0.72rem; }
+.debug-wv.debug-disadv { color: #ff4040; font-weight: bold; }
+.debug-wv.debug-advant { color: #40ff40; font-weight: bold; }
+.debug-wv.debug-neutral { color: #c0c0c0; }
+
 #debug-controls {
     display: flex;
     gap: 6px;

@@ -122,6 +122,7 @@ function init() {
     audio = new AudioEngine();
     debugPanel = new DebugPanel();
     debugPanel.onCommand = (cmd, actorID) => net.sendDebugCmd(cmd, actorID);
+    debugPanel.getInjectPos = () => maze ? [maze.gateX, maze.gateY] : [camera.pos[0], camera.pos[2]];
     net.onTree = (actorID, frame) => debugPanel.handleTreeFrame(actorID, frame);
 
     // Skeletal creature models; fallback primitives until they arrive.

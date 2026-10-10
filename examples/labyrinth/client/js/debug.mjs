@@ -13,6 +13,7 @@ export class DebugPanel {
         this.frames = new Map(); // actorID -> frame
         this.selectedActor = null;
         this.onCommand = null; // callback(cmd, arg)
+        this.getInjectPos = null; // callback() -> [x, y] for inject command
 
         // Tab toggles the panel. This works even during pointer lock.
         document.addEventListener('keydown', (e) => {
@@ -30,6 +31,9 @@ export class DebugPanel {
                     break;
                 case 'KeyU': // resume
                     this.sendCommand('resume');
+                    break;
+                case 'KeyI': // inject state override
+                    this.sendInject();
                     break;
                 case 'ArrowUp':
                     e.preventDefault();
@@ -78,6 +82,12 @@ export class DebugPanel {
         this.onCommand(cmd, this.selectedActor);
     }
 
+    sendInject() {
+        if (!this.onCommand || !this.selectedActor || !this.getInjectPos) return;
+        const [x, y] = this.getInjectPos();
+        this.onCommand('inject', this.selectedActor + ' ' + x.toFixed(1) + ',' + y.toFixed(1));
+    }
+
     render() {
         if (!this.visible) return;
         this.renderActorList();
@@ -105,6 +115,18 @@ export class DebugPanel {
         }
         const frame = this.frames.get(this.selectedActor);
         let html = `<div class="debug-header">${this.selectedActor} (rev ${frame.planRevision})</div>`;
+
+        // World View: elemental state, detection, advantage
+        if (frame.worldView) {
+            const wv = frame.worldView;
+            const ELEM = ['Fire', 'Ice', 'Lightning', 'Void'];
+            const advClass = wv.atDisadvantage ? 'debug-disadv' : wv.atAdvantage ? 'debug-advant' : 'debug-neutral';
+            html += `<div class="debug-section">World View</div>`;
+            html += `<div class="debug-wv">Self: <span class="${advClass}">${ELEM[wv.selfElement] || wv.selfElement}</span>`;
+            html += ` | Player: ${ELEM[wv.playerElement] || wv.playerElement}</div>`;
+            html += `<div class="debug-wv ${advClass}">${wv.atDisadvantage ? 'AT DISADVANTAGE' : wv.atAdvantage ? 'AT ADVANTAGE' : 'NEUTRAL'}</div>`;
+            html += `<div class="debug-wv">Detected: ${wv.playerDetected} | Stunned: ${wv.stunned} | Band: ${wv.distanceBand}</div>`;
+        }
 
         // Nodes
         html += '<div class="debug-section">Nodes</div>';
@@ -167,5 +189,9 @@ export class DebugPanel {
         this.controlsEl.appendChild(mkBtn('Replan [R]', 'replan'));
         this.controlsEl.appendChild(mkBtn('Pause [P]', 'pause'));
         this.controlsEl.appendChild(mkBtn('Resume [U]', 'resume'));
+        const injectBtn = document.createElement('button');
+        injectBtn.textContent = 'Inject [I]';
+        injectBtn.onclick = () => this.sendInject();
+        this.controlsEl.appendChild(injectBtn);
     }
 }
