@@ -108,7 +108,7 @@ type MazePayload struct {
 
 // BTPayload is a BT operation request.
 type BTPayload struct {
-	// For belief injection: the fake player position.
+	// For debug injection: the fake player position.
 	X float64 `json:"x"`
 	Y float64 `json:"y"`
 }
@@ -122,7 +122,6 @@ const (
 	EventLose    = "lose"
 	EventReplan  = "replan"
 	EventSpawn   = "spawn"
-	EventBelief  = "belief"
 )
 
 // Event is a typed game event.

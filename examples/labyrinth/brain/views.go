@@ -27,34 +27,34 @@ func (p *ViewProvider) OpenStateView(req pabt.StateViewRequest) (pabt.TypedState
 	if p == nil || p.state == nil {
 		return nil, fmt.Errorf("brain: nil state for view")
 	}
-	return &beliefView{state: p.state, brain: p.brain, req: req}, nil
+	return &stateView{state: p.state, brain: p.brain, req: req}, nil
 }
 
-// beliefView is one state view over the world view.
-type beliefView struct {
+// stateView is one state view over the world view.
+type stateView struct {
 	state *State
 	brain *Brain
 	req   pabt.StateViewRequest
 }
 
-func (v *beliefView) Variable(key any) (any, error) { return v.state.Variable(key) }
+func (v *stateView) Variable(key any) (any, error) { return v.state.Variable(key) }
 
-func (v *beliefView) Actions(failed Condition) ([]pabt.Action[Condition], error) {
+func (v *stateView) Actions(failed Condition) ([]pabt.Action[Condition], error) {
 	return v.state.Actions(failed)
 }
 
-func (v *beliefView) Revision() pabt.StateRevision {
+func (v *stateView) Revision() pabt.StateRevision {
 	return pabt.StateRevision{
 		PlanRevision:  v.req.PlanRevision,
 		WorldRevision: fmt.Sprintf("%d", v.brain.WorldRevision()),
 	}
 }
 
-func (v *beliefView) Coherence() pabt.StateCoherence {
+func (v *stateView) Coherence() pabt.StateCoherence {
 	return pabt.CoherenceRevisioned
 }
 
-func (v *beliefView) Close() error { return nil }
+func (v *stateView) Close() error { return nil }
 
 // Observer is a pabt.ExecutionObserver that reads the post-action world view
 // values for the action's effects.
@@ -102,7 +102,7 @@ func (v *Verifier) VerifyTransitions(req pabt.TransitionRequest) ([]pabt.Relatio
 		verdict := pabt.RelationVerdict{
 			EffectID:        eff.ID,
 			PostconditionID: req.PostconditionID,
-			Method:          "belief-compare",
+			Method:          "worldview-compare",
 		}
 		if err != nil {
 			verdict.Result = pabt.RelationUnavailable

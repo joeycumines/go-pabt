@@ -283,7 +283,7 @@ func TestReplanBumpsRevisionAndRebuildsTree(t *testing.T) {
 	}
 }
 
-func TestBeliefInjectionRedirectsPursuit(t *testing.T) {
+func TestWorldViewInjectionRedirectsPursuit(t *testing.T) {
 	m, w, minotaur := newTestWorld(t)
 
 	// Runner at start.

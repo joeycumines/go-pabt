@@ -163,7 +163,7 @@ func TestDecodeBT(t *testing.T) {
 	payload, _ := json.Marshal(btPayload)
 	env := Envelope{
 		Type:    "bt",
-		Op:      "belief",
+		Op:      "inject",
 		MID:     "M-1",
 		Payload: payload,
 	}
@@ -176,8 +176,8 @@ func TestDecodeBT(t *testing.T) {
 	if decoded.Type != "bt" {
 		t.Fatalf("type = %q, want bt", decoded.Type)
 	}
-	if decoded.Op != "belief" {
-		t.Fatalf("op = %q, want belief", decoded.Op)
+	if decoded.Op != "inject" {
+		t.Fatalf("op = %q, want inject", decoded.Op)
 	}
 	if decoded.MID != "M-1" {
 		t.Fatalf("mid = %q, want M-1", decoded.MID)

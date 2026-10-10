@@ -46,6 +46,7 @@ export class DebugPanel {
     toggle() {
         this.visible = !this.visible;
         this.el.hidden = !this.visible;
+        if (this.visible) this.render();
     }
 
     // handleTreeFrame is called by net.mjs when a tree frame arrives.

@@ -47,15 +47,6 @@ type Minotaur struct {
 	HP             int
 	Strategy       int // current faction strategy: 0=patrol 1=raid 2=retreat
 	AttackCooldown int // ticks until this minotaur may damage the runner again
-	Belief         Belief
-}
-
-// Belief is a minotaur's model of the player's state.
-type Belief struct {
-	PlayerDetected  bool      // line-of-sight currently held
-	LastKnownPos    maze.Vec2 // last position where the player was seen
-	DistanceBand    int       // 0=adjacent, 1=near, 2=far, 3=unknown
-	SearchExhausted bool      // true when search at last-known yielded nothing
 }
 
 // PowerUp is an elemental pickup in the maze. Stepping on one changes the

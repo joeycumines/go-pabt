@@ -231,7 +231,7 @@ func (g *Game) applyStrategyMovement(w *world.World) {
 		// Yield exactly when the brain's own move actions (pursuit or
 		// search) stepped this actor this tick: stepping here too would
 		// double its speed toward a different target. Keying off actual
-		// movement (not belief flags) also means an idle planner can
+		// movement (not world-view flags) also means an idle planner can
 		// never latch strategy movement closed.
 		if i < len(g.Brains) && g.Brains[i].MovedLastTick() {
 			continue
