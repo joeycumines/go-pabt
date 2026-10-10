@@ -399,7 +399,7 @@ func (g *Game) AddSession(token string) (*PlayerSession, string) {
 		for _, sess := range g.sessions {
 			if sess.Token == token && !sess.disconnectedAt.IsZero() {
 				sess.disconnectedAt = time.Time{} // mark reconnected
-				sess.Net.ResetAckSeq()             // client restarts at seq 1
+				sess.Net.ResetAckSeq()            // client restarts at seq 1
 				return sess, sess.Token
 			}
 		}

@@ -188,37 +188,37 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request, g *game.Game) {
 				if err := conn.WriteMessage(ws.OpText, data); err != nil {
 					return
 				}
-		case evt, ok := <-eventCh:
-			if !ok {
-				return
-			}
-			data, err := proto.EncodeEvent(proto.Event{
-				Type: evt.Type,
-				Data: mustMarshal(evt.Data),
-			})
-			if err != nil {
-				continue
-			}
-			// Write events on the socket directly. They must not be
-			// buffered into a side channel that nothing drains, or
-			// every gameplay event (clash, stun, hit, death) is lost.
-			if err := conn.WriteMessage(ws.OpText, data); err != nil {
-				return
-			}
-		case frames, ok := <-treeCh:
-			if !ok {
-				return
-			}
-			for actorID, frameData := range frames {
-				data, err := proto.EncodeTree(actorID, frameData)
+			case evt, ok := <-eventCh:
+				if !ok {
+					return
+				}
+				data, err := proto.EncodeEvent(proto.Event{
+					Type: evt.Type,
+					Data: mustMarshal(evt.Data),
+				})
 				if err != nil {
 					continue
 				}
+				// Write events on the socket directly. They must not be
+				// buffered into a side channel that nothing drains, or
+				// every gameplay event (clash, stun, hit, death) is lost.
 				if err := conn.WriteMessage(ws.OpText, data); err != nil {
 					return
 				}
+			case frames, ok := <-treeCh:
+				if !ok {
+					return
+				}
+				for actorID, frameData := range frames {
+					data, err := proto.EncodeTree(actorID, frameData)
+					if err != nil {
+						continue
+					}
+					if err := conn.WriteMessage(ws.OpText, data); err != nil {
+						return
+					}
+				}
 			}
-		}
 		}
 	}()
 

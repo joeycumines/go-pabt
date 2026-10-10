@@ -55,7 +55,7 @@ type WorldView struct {
 // from the world view and generates actions for failed conditions.
 type State struct {
 	world *WorldView
-	maze   *maze.Maze
+	maze  *maze.Maze
 	// selfPos is a pointer to the actor's live position so actions can
 	// move it.
 	selfPos *maze.Vec2
