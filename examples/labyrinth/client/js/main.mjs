@@ -65,6 +65,13 @@ const TERRITORY_TINTS = [
 let playerElement = 0; // active element; power-ups change it
 let hitMarkerTimer = 0; // frames the hit marker text stays visible
 
+// S5: territory overlay toggle. When off the floor renders neutral; when on,
+// floor tiles glow with the controlling faction's element color.
+let territoryOverlayOn = false;
+
+// S5: in-world PA-BT projection threads, updated from tree-frame world views.
+let actorThreads = new Map(); // actorID -> { focus: [x,y], element, advantage }
+
 // S3 gang war: live territory control from the server, indexed by quadrant
 // (0=NE, 1=NW, 2=SE, 3=SW) with the controlling element as value. Defaults
 // to innate control until the first snapshot arrives.
@@ -123,7 +130,24 @@ function init() {
     debugPanel = new DebugPanel();
     debugPanel.onCommand = (cmd, actorID) => net.sendDebugCmd(cmd, actorID);
     debugPanel.getInjectPos = () => maze ? [maze.gateX, maze.gateY] : [camera.pos[0], camera.pos[2]];
-    net.onTree = (actorID, frame) => debugPanel.handleTreeFrame(actorID, frame);
+    net.onTree = (actorID, frame) => {
+        debugPanel.handleTreeFrame(actorID, frame);
+        // S5: update in-world projection threads from tree frame world view.
+        if (frame.worldView && frame.worldView.hasLastKnown) {
+            actorThreads.set(actorID, {
+                focus: [frame.worldView.lastKnownX, frame.worldView.lastKnownY],
+                element: frame.worldView.selfElement,
+                advantage: frame.worldView.atAdvantage ? 1 : frame.worldView.atDisadvantage ? -1 : 0,
+            });
+        } else {
+            actorThreads.delete(actorID);
+        }
+    };
+
+    // S5: territory overlay toggle via KeyT.
+    document.addEventListener('keydown', (e) => {
+        if (e.code === 'KeyT') territoryOverlayOn = !territoryOverlayOn;
+    });
 
     // Skeletal creature models; fallback primitives until they arrive.
     modelBank = new ModelBank(renderer.gl);
@@ -387,6 +411,13 @@ function update(dt) {
         get corpseCount() { return corpses.length; },
         get audioState() { return audio && audio.ctx ? audio.ctx.state : null; },
         get lastShotElement() { return lastShotElement; },
+        get territoryOverlayOn() { return territoryOverlayOn; },
+        get actorThreadCount() { return actorThreads.size; },
+        get actorThreads() {
+            const out = [];
+            for (const [id, t] of actorThreads) out.push({ id, focus: [...t.focus], element: t.element, advantage: t.advantage });
+            return out;
+        },
         fire() { input.fire = true; },
         setYaw(y) { camera.yaw = y; },
         teleport(x, z) { camera.pos[0] = x; camera.pos[2] = z; net.sendDebugTeleport(x, z); },
@@ -505,16 +536,24 @@ function render() {
                     color: wallColor,
                 });
             } else {
-                const t = TERRITORY_TINTS[territoryControl[territoryAt(x, z, maze)]|0] || TERRITORY_TINTS[0];
+                // S5: territory overlay toggle. When off, floor is neutral;
+                // when on, floor glows with the controlling faction color.
+                let floorCol;
+                if (territoryOverlayOn) {
+                    const t = TERRITORY_TINTS[territoryControl[territoryAt(x, z, maze)]|0] || TERRITORY_TINTS[0];
+                    floorCol = [
+                        floorColor[0] + t[0] * 2.5,
+                        floorColor[1] + t[1] * 2.5,
+                        floorColor[2] + t[2] * 2.5,
+                        1.0,
+                    ];
+                } else {
+                    floorCol = [floorColor[0], floorColor[1], floorColor[2], 1.0];
+                }
                 instances.push({
                     pos: [x + 0.5, -0.05, z + 0.5],
                     scale: [1, 0.1, 1],
-                    color: [
-                        floorColor[0] + t[0],
-                        floorColor[1] + t[1],
-                        floorColor[2] + t[2],
-                        1.0,
-                    ],
+                    color: floorCol,
                 });
             }
         }
@@ -573,6 +612,40 @@ function render() {
             pos: [s.pos[0], s.pos[1] + 0.25, s.pos[2]],
             scale: [grow * 0.6, 0.06, grow * 0.6],
             color: [s.colorB[0], s.colorB[1], s.colorB[2], 1.0],
+        });
+    }
+
+    // S5: In-world PA-BT projection: glowing floor threads from each actor
+    // to its current focus (lastKnownPos). Threads pulse and use the actor's
+    // element color; advantage actors glow brighter, disadvantage dimmer.
+    for (const [id, thread] of actorThreads) {
+        const buf = minotaurBuffers.get(id);
+        if (!buf) continue;
+        const ec = ELEMENT_COLORS[thread.element|0] || ELEMENT_COLORS[0];
+        const brightness = thread.advantage > 0 ? 1.0 : thread.advantage < 0 ? 0.4 : 0.7;
+        const pulse = 0.6 + Math.sin(nowMs / 200 + buf.pos[0] * 3) * 0.4;
+        const ax = buf.pos[0], az = buf.pos[2];
+        const fx = thread.focus[0], fz = thread.focus[1];
+        const dx = fx - ax, dz = fz - az;
+        const dist = Math.hypot(dx, dz);
+        if (dist < 0.5) continue;
+        const steps = Math.min(12, Math.max(3, Math.floor(dist * 2)));
+        for (let i = 0; i < steps; i++) {
+            const t = i / steps;
+            const px = ax + dx * t;
+            const pz = az + dz * t;
+            const fade = brightness * pulse * (0.3 + 0.7 * t);
+            instances.push({
+                pos: [px, 0.02, pz],
+                scale: [0.15, 0.04, 0.15],
+                color: [ec[0] * fade, ec[1] * fade, ec[2] * fade, 1.0],
+            });
+        }
+        // Focus marker: small bright beacon at the target position.
+        instances.push({
+            pos: [fx, 0.05, fz],
+            scale: [0.25, 0.1, 0.25],
+            color: [Math.min(1, ec[0] + 0.3) * brightness, Math.min(1, ec[1] + 0.3) * brightness, Math.min(1, ec[2] + 0.3) * brightness, 1.0],
         });
     }
 
