@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"math"
 	mrand "math/rand"
 	"strconv"
 	"sync"
@@ -577,6 +578,7 @@ func (g *Game) ApplyInput(id SessionID, cmd netcode.InputCmd) {
 		sess.Net.ApplyInput(g.Maze, cmd, loop.TickInterval.Seconds())
 		w.Runner.Pos = sess.Net.Pos
 		w.Runner.Yaw = sess.Net.Yaw
+		w.Runner.Pitch = sess.Net.Pitch
 	})
 }
 
@@ -587,8 +589,10 @@ const PulseBaseDamage = 15
 // FirePulse processes a pulse fire with lag-compensated hit validation.
 // Damage scales by elemental advantage between the runner's active element
 // and the struck actor's innate element.
-func (g *Game) FirePulse(id SessionID, fireRound int, aimPos maze.Vec2) {
+func (g *Game) FirePulse(id SessionID, fireRound int, aim netcode.RayHitOrigin) {
 	g.Loop.Submit(func(w *world.World) {
+		bestIdx := -1
+		bestRange := math.MaxFloat64
 		for i, hist := range g.Histories {
 			if i >= len(w.Minotaurs) {
 				break
@@ -596,26 +600,68 @@ func (g *Game) FirePulse(id SessionID, fireRound int, aimPos maze.Vec2) {
 			if w.Minotaurs[i].HP <= 0 {
 				continue
 			}
-			if netcode.ValidateHit(hist, fireRound, aimPos) {
-				m := w.Minotaurs[i]
-				mult := advantage(Element(w.Runner.Element), Element(m.Element))
-				dmg := int(float64(PulseBaseDamage) * mult)
-				m.HP -= dmg
-				m.Stunned = true
-				m.StunTicks = world.StunDuration
-				g.broadcastEvent(Event{
-					Type: "stunned",
-					Data: map[string]interface{}{
-						"minotaur":  m.ID,
-						"hp":        m.HP,
-						"damage":    dmg,
-						"advantage": mult,
-					},
-				})
-				return
+			hit, ok := netcode.ValidateRayHit(hist, fireRound, aim)
+			if !ok {
+				continue
+			}
+			// Occlusion: a wall cell between the shooter and the actor
+			// along the ray blocks the pulse, matching the client's own
+			// visibility rules (walls render opaque, so the crosshair cannot
+			// legitimately rest on an occluded actor).
+			if g.rayOccluded(aim.Pos, hit.Range, aim.Yaw, aim.Pitch) {
+				continue
+			}
+			if hit.Range < bestRange {
+				bestRange = hit.Range
+				bestIdx = i
 			}
 		}
+		if bestIdx < 0 {
+			return
+		}
+		m := w.Minotaurs[bestIdx]
+		mult := advantage(Element(w.Runner.Element), Element(m.Element))
+		dmg := int(float64(PulseBaseDamage) * mult)
+		m.HP -= dmg
+		m.Stunned = true
+		m.StunTicks = world.StunDuration
+		g.broadcastEvent(Event{
+			Type: "stunned",
+			Data: map[string]interface{}{
+				"minotaur":  m.ID,
+				"hp":        m.HP,
+				"damage":    dmg,
+				"advantage": mult,
+			},
+		})
 	})
+}
+
+// rayOccluded samples the maze grid along a ray from origin toward
+// (yaw, pitch) for up to range units and reports whether any solid cell
+// lies between the shooter and a target at that range. The sampling
+// resolution is sub-cell (0.25 units) so a thin wall sliver cannot slip
+// between samples. Only the horizontal (maze-plane) projection is traced,
+// matching how the maze is authored and rendered (walls are full-height
+// columns, not floating obstacles).
+func (g *Game) rayOccluded(origin maze.Vec2, rangeAlong, yaw, pitch float64) bool {
+	cp := math.Cos(pitch)
+	if cp < 1e-6 {
+		return false // degenerate near-vertical aim; nothing to occlude against in-plane
+	}
+	fx := math.Sin(yaw) * cp
+	fy := math.Cos(yaw) * cp
+	const step = 0.25
+	for d := step; d < rangeAlong; d += step {
+		x := origin.X + fx*d
+		y := origin.Y + fy*d
+		cx := int(math.Floor(x))
+		cy := int(math.Floor(y))
+		if !g.Maze.At(cx, cy).Walkable() {
+			return true
+		}
+	}
+	return false
 }
 
 // DebugTeleport relocates the runner authoritatively, for the integrated

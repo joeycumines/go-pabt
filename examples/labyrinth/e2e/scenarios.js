@@ -142,6 +142,80 @@ export default [
         },
     },
 
+    // G6 close-range ray hit: a target dead-center at ~2u used to be
+    // unreachable under the old point-distance ValidateHit (which required
+    // the target to sit within HitRadius of a fixed aim point ~5u ahead).
+    // The ray-vs-actor fix must let a point-blank crosshair hit land.
+    //
+    // The assertion requires a FRESH stun: stun is set only by the player's
+    // pulse (FirePulse), never by faction clash or hazard damage, so it is
+    // the only signal that isolates the player's shot. The target is chosen
+    // alive and NOT already stunned, so a pre-existing stun cannot satisfy
+    // the check.
+    {
+        name: 'G6 close-range ray hit (<4u)',
+        async run(ctx) {
+            await gotoGame(ctx);
+            await relocateSafe(ctx);
+            const before = await ctx.page.evaluate(() => {
+                const a = window.__ariadne;
+                const me = a.playerPos;
+                let best = null, bd = Infinity;
+                for (const act of a.actors) {
+                    if (act.hp <= 0 || act.stunned) continue; // must be alive and NOT already stunned
+                    const d = Math.hypot(act.pos[0] - me[0], act.pos[2] - me[2]);
+                    if (d < bd) { bd = d; best = act; }
+                }
+                if (!best) return null;
+                // Stand 2 units from the target - well inside the old
+                // point-distance model's minimum-~4.2u blind window.
+                const dx = best.pos[0] - me[0], dz = best.pos[2] - me[2];
+                const d = Math.hypot(dx, dz) || 1;
+                a.teleport(best.pos[0] - dx / d * 2.0, best.pos[2] - dz / d * 2.0);
+                a.setYaw(Math.atan2(dx, dz));
+                return { id: best.id };
+            });
+            if (!before) throw new Error('G6 scenario found no live, unstunned actor to target - world state not suitable for isolation');
+            let effect = false;
+            const deadline = Date.now() + 12000;
+            while (!effect && Date.now() < deadline) {
+                // Re-aim at the target right before each shot: the actor
+                // moves between shots (world tick), so a stale aim ray can
+                // legitimately miss. The ray is resolved server-side from
+                // the player's yaw at the moment of firing. Re-teleport if
+                // the actor has drifted beyond 4u (the ray max is 12u, but
+                // the scenario asserts a CLOSE-range hit).
+                const inRange = await ctx.page.evaluate(({ id }) => {
+                    const a = window.__ariadne;
+                    const me = a.playerPos;
+                    const act = a.actors.find(x => x.id === id);
+                    if (!act || act.hp <= 0) return false;
+                    const dx = act.pos[0] - me[0], dz = act.pos[2] - me[2];
+                    const dist = Math.hypot(dx, dz);
+                    if (dist > 4.0) {
+                        // Re-stand 2u from the drifted target.
+                        a.teleport(act.pos[0] - dx / dist * 2.0, act.pos[2] - dz / dist * 2.0);
+                    }
+                    a.setYaw(Math.atan2(dx, dz));
+                    return true;
+                }, { id: before.id });
+                if (!inRange) break; // target died or removed
+                await ctx.page.evaluate(() => window.__ariadne.fire());
+                await ctx.page.waitForTimeout(400);
+                // Fresh stun or kill caused by the player's pulse. A dead
+                // actor (hp 0) is pruned from the snapshot, so a missing
+                // actor is also an effect.
+                effect = await ctx.page.evaluate(({ id }) => {
+                    const a = window.__ariadne;
+                    const act = a.actors.find(x => x.id === id);
+                    if (!act) return true; // died and pruned
+                    return act.stunned === true || act.hp <= 0;
+                }, { id: before.id });
+            }
+            if (!effect) throw new Error('close-range (<4u) fire produced no stun/kill effect after repeated aimed shots - ray hit model still has a near-field blind window');
+        },
+    },
+
     // gate->win overlay
     {
         name: 'gate->win overlay',

@@ -251,21 +251,25 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request, g *game.Game) {
 				Forward: input.Forward,
 				Strafe:  input.Strafe,
 				Yaw:     input.Yaw,
+				Pitch:   input.Pitch,
 				Sprint:  input.Sprint,
 			}
 			g.ApplyInput(sess.ID, cmd)
 
 			if input.Fire {
-				// Pulse fire: raycast from runner position in aim direction.
+				// Pulse fire: raycast from the runner's eye position along
+				// the aim ray (yaw + pitch), matching the client camera's
+				// forward vector. The server resolves the ray against actor
+				// history and the maze grid; the client only supplies the
+				// aim angles, never a target position.
 				snap := g.Loop.Snapshot()
 				if snap != nil {
-					// Aim 5 units ahead in the yaw direction.
-					aimDist := 5.0
-					aimPos := maze.Vec2{
-						X: snap.Runner.Pos.X + aimDist*sin(input.Yaw),
-						Y: snap.Runner.Pos.Y + aimDist*cos(input.Yaw),
+					aim := netcode.RayHitOrigin{
+						Pos:   snap.Runner.Pos,
+						Yaw:   input.Yaw,
+						Pitch: input.Pitch,
 					}
-					g.FirePulse(sess.ID, snap.Round, aimPos)
+					g.FirePulse(sess.ID, snap.Round, aim)
 				}
 			}
 		case "debug":

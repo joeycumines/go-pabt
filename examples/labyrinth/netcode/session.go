@@ -14,6 +14,7 @@ type InputCmd struct {
 	Forward float64
 	Strafe  float64
 	Yaw     float64
+	Pitch   float64
 	Sprint  bool
 }
 
@@ -26,8 +27,9 @@ type Session struct {
 	// Pos is the server-authoritative runner position. It is only ever set
 	// by ApplyInput, which runs Move and resolves collision, so it can never
 	// penetrate a wall.
-	Pos maze.Vec2
-	Yaw float64
+	Pos   maze.Vec2
+	Yaw   float64
+	Pitch float64
 
 	// lastAckSeq is the sequence number of the most recently processed
 	// input. It is included in every snapshot sent to this session. It is
@@ -64,6 +66,7 @@ func (s *Session) ApplyInput(m *maze.Maze, cmd InputCmd, dt float64) {
 	}
 	s.Pos = Move(m, s.Pos, cmd.Yaw, cmd.Forward, cmd.Strafe, cmd.Sprint, dt)
 	s.Yaw = cmd.Yaw
+	s.Pitch = cmd.Pitch
 	s.lastAckSeq.Store(cmd.Seq)
 
 	s.history = append(s.history, cmd)
