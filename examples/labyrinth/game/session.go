@@ -388,8 +388,14 @@ func (g *Game) tickTimers(w *world.World) {
 }
 
 // AddSession registers a new player session. If token is non-empty and
-// matches a recently-disconnected session, that session is reactivated
-// (rejoin) instead of creating a fresh one, preserving prediction state.
+// matches a retained session, that session is reactivated (rejoin) instead
+// of creating a fresh one, preserving prediction state.
+//
+// The token itself is the session ID, so a reconnect presenting the same
+// token deterministically finds the same session even if the prior
+// connection's disconnect (RemoveSession, driven by the read pump observing
+// the close) has not landed yet - the browser closes the old WebSocket and
+// opens the new one during a page reload, and the two events race.
 //
 // When the world is in a terminal phase (won or lost), AddSession submits a
 // reset command so the rejoined or fresh session starts a new game. Without
@@ -399,19 +405,22 @@ func (g *Game) AddSession(token string) (*PlayerSession, string) {
 	g.sessMu.Lock()
 	defer g.sessMu.Unlock()
 
-	// Attempt rejoin: find a disconnected session with this token.
+	// Attempt rejoin: the token IS the session ID, so a matching session is
+	// the same session regardless of whether it is currently connected or
+	// retained-disconnected. This closes the reload race where the old
+	// socket's close had not yet been observed when the new socket arrives.
 	if token != "" {
-		for _, sess := range g.sessions {
-			if sess.Token == token && !sess.disconnectedAt.IsZero() {
-				sess.disconnectedAt = time.Time{} // mark reconnected
-				sess.Net.ResetAckSeq()            // client restarts at seq 1
-				g.submitWorldResetIfTerminal(sess)
-				return sess, sess.Token
-			}
+		if sess, ok := g.sessions[SessionID(token)]; ok {
+			sess.disconnectedAt = time.Time{} // mark (re)connected
+			sess.Net.ResetAckSeq()            // client restarts at seq 1
+			g.submitWorldResetIfTerminal(sess)
+			return sess, sess.Token
 		}
 	}
 
-	// Fresh session.
+	// Fresh session. The ID doubles as the token the client will present on
+	// reconnect, so it must be unguessable (crypto/rand) - not derived from
+	// any guessable counter.
 	id := generateSessionID()
 	tok := string(id)
 	sess := &PlayerSession{

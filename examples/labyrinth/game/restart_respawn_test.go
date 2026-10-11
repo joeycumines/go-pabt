@@ -80,6 +80,27 @@ func TestWorldResetOnRejoinAfterLoss(t *testing.T) {
 	}
 }
 
+// TestRejoinSameTokenWhileStillConnected verifies the reload race is closed:
+// a client presenting a token whose session has NOT yet been marked
+// disconnected (because the prior connection's read pump has not observed
+// the close) must still rejoin that session, not get a fresh one. The
+// token doubles as the session ID, so the match is deterministic.
+func TestRejoinSameTokenWhileStillConnected(t *testing.T) {
+	m := maze.Generate(42, 21, 21)
+	g := NewGame(m, 8, 42)
+
+	sess, token := g.AddSession("")
+	// Do NOT call RemoveSession - simulate the browser closing the old WS
+	// and opening the new one faster than the server's read pump notices.
+	got, gotToken := g.AddSession(token)
+	if gotToken != token {
+		t.Fatalf("rejoin token = %q, want %q (same session must be reused)", gotToken, token)
+	}
+	if got.ID != sess.ID {
+		t.Fatalf("rejoin session ID = %q, want %q (must be the same session, not a fresh one)", got.ID, sess.ID)
+	}
+}
+
 // TestNoResetWhenPhaseRunning verifies that AddSession does not reset a
 // running world, preserving in-progress gameplay.
 func TestNoResetWhenPhaseRunning(t *testing.T) {

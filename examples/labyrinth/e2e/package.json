@@ -1,0 +1,13 @@
+{
+  "name": "labyrinth-e2e",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Committed automated end-to-end suite for the Labyrinth example. One command: npm test.",
+  "type": "module",
+  "scripts": {
+    "test": "node run.js"
+  },
+  "dependencies": {
+    "playwright": "1.63.0"
+  }
+}
