@@ -43,6 +43,8 @@ uniform vec3 uCameraPos;
 uniform float uFogDensity;
 uniform vec3 uFogColor;
 uniform vec4 uColor;
+uniform vec3 uEmissive;      // faction trim color (rim glow)
+uniform float uEmissiveStrength; // 0..1 intensity of the rim glow
 
 out vec4 fragColor;
 
@@ -50,6 +52,13 @@ void main() {
     vec3 lightDir = normalize(vec3(0.3, 1.0, 0.5));
     float diff = max(dot(normalize(vNormal), lightDir), 0.0);
     vec3 lit = uColor.rgb * (0.30 + 0.70 * diff) + uColor.rgb * 0.12;
+    // Fresnel rim: edges facing away from the camera glow with the faction
+    // trim color, giving each faction a distinct emissive accent beyond
+    // the body tint.
+    vec3 viewDir = normalize(uCameraPos - vWorldPos);
+    float rim = 1.0 - max(dot(normalize(vNormal), viewDir), 0.0);
+    rim = pow(rim, 3.0);
+    lit += uEmissive * rim * uEmissiveStrength;
     float dist = length(vWorldPos - uCameraPos);
     float fog = 1.0 - exp(-uFogDensity * dist);
     vec3 final = mix(lit, uFogColor, fog);
@@ -274,6 +283,8 @@ export class ModelBank {
         this.uFogDensity = gl.getUniformLocation(this.program, 'uFogDensity');
         this.uFogColor = gl.getUniformLocation(this.program, 'uFogColor');
         this.uColor = gl.getUniformLocation(this.program, 'uColor');
+        this.uEmissive = gl.getUniformLocation(this.program, 'uEmissive');
+        this.uEmissiveStrength = gl.getUniformLocation(this.program, 'uEmissiveStrength');
         this.boneBuf = new Float32Array(MAX_JOINTS * 16);
         this.scratch = new Float32Array(16);
         this.scratch2 = new Float32Array(16);
@@ -440,7 +451,7 @@ export class ModelBank {
     }
 
     // Draw one actor instance. animName null => bind pose.
-    draw(model, animName, timeSec, modelMat, color, loop = true) {
+    draw(model, animName, timeSec, modelMat, color, loop = true, emissive = [0, 0, 0], emissiveStrength = 0) {
         const gl = this.gl;
         const anim = animName ? model.animations[animName] : null;
         let t = timeSec;
@@ -452,6 +463,8 @@ export class ModelBank {
         gl.uniformMatrix4fv(this.uBones, false, this.boneBuf);
         gl.uniformMatrix4fv(this.uModel, false, modelMat);
         gl.uniform4f(this.uColor, color[0], color[1], color[2], color[3] ?? 1);
+        gl.uniform3f(this.uEmissive, emissive[0], emissive[1], emissive[2]);
+        gl.uniform1f(this.uEmissiveStrength, emissiveStrength);
         gl.bindVertexArray(model.vao);
         gl.drawElements(gl.TRIANGLES, model.indexCount, model.glIndexType, 0);
         gl.bindVertexArray(null);

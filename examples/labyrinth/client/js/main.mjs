@@ -63,6 +63,15 @@ const TERRITORY_TINTS = [
     [0.30, 0.28, 0.05], // lightning (SE)
     [0.17, 0.07, 0.27]  // void (SW)
 ];
+// Per-faction emissive trim (rim glow). Distinct hues so each faction reads
+// as a different culture, not just a body-tint swap.
+const FACTION_EMISSIVE = [
+    [1.0, 0.25, 0.05],  // fire — hot ember rim
+    [0.20, 0.85, 1.0],  // ice — cold cyan rim
+    [1.0, 0.90, 0.15],  // lightning — electric yellow rim
+    [0.75, 0.30, 1.0]   // void — violet arcane rim
+];
+const FACTION_EMISSIVE_STRENGTH = [0.6, 0.55, 0.7, 0.65]; // per-faction intensity
 let playerElement = 0; // active element; power-ups change it
 let hitMarkerTimer = 0; // frames the hit marker text stays visible
 
@@ -85,11 +94,21 @@ const StrategyRaid = 1;
 const StrategyRetreat = 2;
 
 // S6a: real skeletal creatures (CC BY 4.0, see assets/PROVENANCE.md).
-// Archetype -> model; stalkers alternate bat/wasp by ID hash for silhouette
-// variety. Models load async; until then actors render as fallback cubes.
+// Archetype -> base model. Stalkers alternate bat/wasp by ID hash for
+// silhouette variety. Models load async; until then actors render as
+// fallback cubes.
 let modelBank = null;
 let modelsReady = false;
 const TYPE_MODELS = ['ps1_spider', 'ps1_rat', 'ps1_eaterplant', 'ps1_bat'];
+// Per-faction model overrides so the same archetype in different factions
+// renders a different silhouette. Index = element (0=fire,1=ice,2=lightning,
+// 3=void). null falls back to TYPE_MODELS[type].
+const FACTION_MODEL_OVERRIDES = [
+    ['ps1_spider', 'ps1_rat',     'ps1_eaterplant', 'ps1_bat'],   // fire
+    ['ps1_spider', 'ps1_rat',     'ps1_eaterplant', 'ps1_wasp'],  // ice
+    ['ps1_wasp',   'ps1_spider',  'ps1_rat',        'ps1_bat'],   // lightning
+    ['ps1_eaterplant', 'ps1_wasp','ps1_spider',     'ps1_rat'],   // void
+];
 const corpses = []; // { id, pos, yaw, type, element, start }
 const MODEL_SCALE_TARGET = 1.5; // world units tall at full scale
 let lastRoarAt = 0;
@@ -99,12 +118,18 @@ function actorDist(x, z) {
     return Math.hypot(x - camera.pos[0], z - camera.pos[2]);
 }
 
-function modelFor(id, type) {
-    if ((type|0) === 3) {
-        let h = 0;
-        for (const ch of String(id)) h = (h * 31 + ch.charCodeAt(0)) | 0;
-        return (h & 1) ? 'ps1_wasp' : 'ps1_bat';
-    }
+function hashId(id) {
+    let h = 0;
+    for (const ch of String(id)) h = (h * 31 + ch.charCodeAt(0)) | 0;
+    return h;
+}
+
+function modelFor(id, type, element) {
+    // Prefer the faction override so two factions never share a silhouette
+    // for the same archetype; fall back to the archetype default.
+    const ov = FACTION_MODEL_OVERRIDES[element|0];
+    if (ov && ov[type|0]) return ov[type|0];
+    if ((type|0) === 3) return (hashId(id) & 1) ? 'ps1_wasp' : 'ps1_bat';
     return TYPE_MODELS[type|0] || TYPE_MODELS[0];
 }
 
@@ -670,7 +695,7 @@ function render() {
         const hpFrac = Math.max(0, Math.min(1, (buf.hp === undefined ? 1 : buf.hp) / (ACTOR_MAX_HP[buf.type|0] || 30)));
         const dim = 0.45 + 0.55 * hpFrac;
         const tint = buf.stunned ? stunnedColor : [ec[0] * dim, ec[1] * dim, ec[2] * dim, 1.0];
-        const model = modelsReady ? modelBank.models.get(modelFor(id, buf.type)) : null;
+        const model = modelsReady ? modelBank.models.get(modelFor(id, buf.type, buf.element)) : null;
         if (model) {
             let anim = 'idle';
             if (buf.stunned || (buf.hurtUntil || 0) > actNow) anim = 'hurt';
@@ -680,7 +705,9 @@ function render() {
             const scale = MODEL_SCALE_TARGET / model.height;
             const mm = new Float32Array(16);
             actorModelMatrix(buf.pos, buf.yaw || 0, scale, -buf.pos[1] - model.minY * scale, mm);
-            modelBank.draw(model, animName, actNow + hashPhase(id), mm, tint);
+            const fae = FACTION_EMISSIVE[buf.element|0] || FACTION_EMISSIVE[0];
+            const fas = FACTION_EMISSIVE_STRENGTH[buf.element|0] || 0.5;
+            modelBank.draw(model, animName, actNow + hashPhase(id), mm, tint, true, fae, fas);
         } else {
             let bodyScale, headY, eyeY;
             switch (buf.type|0) {
@@ -706,7 +733,7 @@ function render() {
     for (let i = corpses.length - 1; i >= 0; i--) {
         const c = corpses[i];
         const age = actNow - c.start;
-        const model = modelsReady ? modelBank.models.get(modelFor(c.id, c.type)) : null;
+        const model = modelsReady ? modelBank.models.get(modelFor(c.id, c.type, c.element)) : null;
         if (age > 2.5 || !model) { corpses.splice(i, 1); continue; }
         const ec = ELEMENT_COLORS[c.element|0] || ELEMENT_COLORS[0];
         const scale = MODEL_SCALE_TARGET / model.height;
