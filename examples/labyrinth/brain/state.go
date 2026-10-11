@@ -44,6 +44,12 @@ type WorldView struct {
 	// SelfElement is this actor's innate element.
 	SelfElement int
 
+	// ReinforceTarget is the position of the nearest friendly same-element
+	// ally, set by UpdateWorldView when one exists within sight range.
+	// Zero-value means no ally found.
+	ReinforceTarget maze.Vec2
+	HasReinforceTarget bool
+
 	// AtDisadvantage is true when the player's element beats ours in the cycle.
 	AtDisadvantage bool
 

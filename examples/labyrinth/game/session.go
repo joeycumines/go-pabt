@@ -93,19 +93,26 @@ func actorDamage(t ActorType) int {
 // 30 Hz these are 3.0/4.8/2.7/4.2 cells per second: every archetype is
 // slower than the player's sprint (6.5) but several beat the walk speed
 // (4.0), so escape depends on sprinting, stunning, and maze knowledge.
-func actorSpeed(t ActorType) float64 {
+//
+// intensity is the world's Intensity level (0-5). It scales the base speed
+// by (1 + 0.1*intensity), so a level-5 round makes every actor 1.5x faster.
+func actorSpeed(t ActorType, intensity int) float64 {
+	var base float64
 	switch t {
 	case ActorBrute:
-		return 0.10
+		base = 0.10
 	case ActorSwarm:
-		return 0.16
+		base = 0.16
 	case ActorCaster:
-		return 0.09
+		base = 0.09
 	case ActorStalker:
-		return 0.14
+		base = 0.14
 	default:
-		return 0.12
+		base = 0.12
 	}
+	// Intensity scales speed: level 5 gives 1.5x base. This makes
+	// escalating rounds genuinely harder, not just fog-tinted.
+	return base * (1.0 + 0.1*float64(intensity))
 }
 
 // Game is the authoritative game server.
@@ -241,7 +248,7 @@ func (g *Game) spawnActor(typ ActorType) {
 		return
 	}
 	g.World.Minotaurs = append(g.World.Minotaurs, minotaur)
-	b.SetMoveSpeed(actorSpeed(typ))
+	b.SetMoveSpeed(actorSpeed(typ, g.World.Intensity))
 	g.Brains = append(g.Brains, b)
 	g.Histories = append(g.Histories, netcode.NewMinotaurHistory())
 	g.actorStates = append(g.actorStates, &ActorState{StrategyTimer: StrategyReevalTicks})
@@ -283,6 +290,9 @@ func (g *Game) tickLogic(w *world.World) {
 		if m.HP <= 0 {
 			continue
 		}
+		// Refresh brain move speed from current Intensity so escalation
+		// takes effect without waiting for a respawn.
+		b.SetMoveSpeed(actorSpeed(ActorType(m.Type), w.Intensity))
 		snap := w.Copy()
 		b.UpdateWorldView(snap, m)
 		b.Tick("tick")

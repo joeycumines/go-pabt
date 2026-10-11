@@ -95,6 +95,12 @@ func (b *Brain) SetMoveSpeed(cellsPerTick float64) {
 	b.state.MoveSpeed = cellsPerTick
 }
 
+// GetMoveSpeed returns the per-tick movement distance currently set on this
+// brain's state. It is zero when SetMoveSpeed has never been called.
+func (b *Brain) GetMoveSpeed() float64 {
+	return b.state.MoveSpeed
+}
+
 // UpdateWorldView refreshes the brain's world view from the world snapshot
 // and the actor's own position. It is called by the loop before Tick.
 func (b *Brain) UpdateWorldView(snap *world.Snapshot, self *world.Minotaur) {
@@ -140,6 +146,27 @@ func (b *Brain) UpdateWorldView(snap *world.Snapshot, self *world.Minotaur) {
 		// goal forever, idling the brain while strategy movement yields.
 		b.world.Caught = false
 	}
+
+	// Find the nearest friendly same-element ally for ReinforceAction.
+	// Only set when an ally is within sight range (same heuristic as
+	// player detection), so the brain doesn't chase allies across the map.
+	b.world.HasReinforceTarget = false
+	const allySightRange2 = 6.0 * 6.0
+	bestDist2 := allySightRange2
+	for _, other := range snap.Minotaurs {
+		if other.Element != self.Element || other.HP <= 0 || other.Stunned {
+			continue
+		}
+		adx := other.Pos.X - self.Pos.X
+		ady := other.Pos.Y - self.Pos.Y
+		ad2 := adx*adx + ady*ady
+		if ad2 < bestDist2 && ad2 > 1e-6 {
+			bestDist2 = ad2
+			b.world.ReinforceTarget = other.Pos
+			b.world.HasReinforceTarget = true
+		}
+	}
+
 	b.worldRevision.Add(1)
 }
 

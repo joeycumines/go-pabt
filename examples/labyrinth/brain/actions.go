@@ -313,11 +313,11 @@ func (a *RetreatAction) Node() bt.Node {
 // This is the second PA-BT elemental planning behavior: instead of fleeing,
 // the actor groups up with allies to overcome the disadvantage.
 type ReinforceAction struct {
-	state *State
+	*moveAction
 }
 
 func NewReinforceAction(s *State) *ReinforceAction {
-	return &ReinforceAction{state: s}
+	return &ReinforceAction{moveAction: &moveAction{state: s}}
 }
 
 func (a *ReinforceAction) Conditions() []Conditions {
@@ -338,10 +338,24 @@ func (a *ReinforceAction) Node() bt.Node {
 		if a.state.world.Stunned {
 			return bt.Failure, nil
 		}
-		// For now, reinforce is a no-op that succeeds after a delay.
-		// The actual ally-seeking behavior requires access to other actors'
-		// positions, which the brain doesn't have. The game layer handles
-		// faction grouping via strategy movement.
+		// If we have a reinforce target (nearest friendly ally), move
+		// toward it. This makes a disadvantaged actor visibly fall back
+		// to reinforce rather than idling.
+		if a.state.world.HasReinforceTarget {
+			a.path = []maze.Vec2{a.state.world.ReinforceTarget}
+			a.done = false
+			a.stuck = 0
+			status, err := a.advance()
+			if err != nil {
+				return bt.Failure, nil
+			}
+			if status == bt.Running {
+				return bt.Running, nil
+			}
+			// Reached the ally: mark reinforce satisfied.
+			return bt.Success, nil
+		}
+		// No ally nearby: succeed without moving (matches old behavior).
 		return bt.Success, nil
 	})
 }

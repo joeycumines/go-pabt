@@ -231,6 +231,24 @@ function frame(time) {
     if (maze) {
         render();
     }
+
+    // HUD updates that must continue on the caught/win overlay: HP, round,
+    // and intensity are driven by the latest snapshot regardless of gameState.
+    // They sit outside update() so the death screen shows final HP, not a
+    // frozen value from the last playing frame.
+    const snap = net.getSnapshot();
+    if (snap && snap.data) {
+        const sp = snap.data.runner;
+        lastHP = sp.hp;
+        hud.setHP(sp.hp, MAX_HP);
+        hud.setRound(snap.data.round);
+        hud.setIntensity(snap.data.intensity);
+        if (sp.element !== undefined) {
+            playerElement = sp.element | 0;
+            hud.setElement(playerElement);
+        }
+    }
+
     hud.updateFps(dt);
 
     // Hit-flash overlay (server-confirmed stun feedback).
@@ -286,16 +304,6 @@ function update(dt) {
         const lerpRate = 0.1;
         camera.pos[0] += (serverPos[0] - camera.pos[0]) * lerpRate;
         camera.pos[2] += (serverPos[2] - camera.pos[2]) * lerpRate;
-
-        // Update HUD HP and the active element.
-        lastHP = sp.hp;
-        hud.setHP(sp.hp, MAX_HP);
-        hud.setRound(snap.data.round);
-        hud.setIntensity(snap.data.intensity);
-        if (sp.element !== undefined) {
-            playerElement = sp.element | 0;
-            hud.setElement(playerElement);
-        }
 
         // Gang war state: dynamic territory control and crossfire rifts.
         if (snap.data.territoryControl) territoryControl = snap.data.territoryControl;

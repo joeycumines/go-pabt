@@ -254,7 +254,7 @@ func (g *Game) applyStrategyMovement(w *world.World) {
 		}
 		// Waypoints are open-cell centers on a 4-connected path, so
 		// segment travel cannot clip a wall.
-		remaining := actorSpeed(ActorType(m.Type))
+		remaining := actorSpeed(ActorType(m.Type), w.Intensity)
 		for remaining > 0 && len(st.Path) > 0 {
 			wp := st.Path[0]
 			wx := wp.X - m.Pos.X
@@ -298,10 +298,17 @@ func (g *Game) separateActors(w *world.World) {
 			dx := b.Pos.X - a.Pos.X
 			dy := b.Pos.Y - a.Pos.Y
 			d2 := dx*dx + dy*dy
-			if d2 >= ActorSeparation*ActorSeparation || d2 < 1e-9 {
+			if d2 >= ActorSeparation*ActorSeparation {
 				continue
 			}
 			d := math.Sqrt(d2)
+			if d < 1e-9 {
+				// Perfect overlap: nudge along a fixed axis so the two
+				// actors separate even when their positions are identical.
+				// A fixed axis keeps the nudge deterministic.
+				d = 1e-9
+				dx, dy = 1e-9, 0
+			}
 			push := (ActorSeparation - d) / 2
 			ux, uy := dx/d, dy/d
 			a.Pos.X -= ux * push
