@@ -340,9 +340,10 @@ func (a *ReinforceAction) Node() bt.Node {
 		}
 		// If we have a reinforce target (nearest friendly ally), move
 		// toward it. This makes a disadvantaged actor visibly fall back
-		// to reinforce rather than idling.
+		// to reinforce rather than idling. Uses maze.Path so walls are
+		// respected, matching PursueAction/SearchAction.
 		if a.state.world.HasReinforceTarget {
-			a.path = []maze.Vec2{a.state.world.ReinforceTarget}
+			a.path = a.state.maze.Path(*a.state.selfPos, a.state.world.ReinforceTarget)
 			a.done = false
 			a.stuck = 0
 			status, err := a.advance()
