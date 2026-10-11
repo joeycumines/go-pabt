@@ -343,9 +343,12 @@ func (a *ReinforceAction) Node() bt.Node {
 		// to reinforce rather than idling. Uses maze.Path so walls are
 		// respected, matching PursueAction/SearchAction.
 		if a.state.world.HasReinforceTarget {
-			a.path = a.state.maze.Path(*a.state.selfPos, a.state.world.ReinforceTarget)
-			a.done = false
-			a.stuck = 0
+			// Compute path once (or when stale), then follow it across
+			// ticks. Recomputing every tick causes the actor to oscillate
+			// between cell centers without ever advancing.
+			if a.path == nil && !a.done {
+				a.path = a.state.maze.Path(*a.state.selfPos, a.state.world.ReinforceTarget)
+			}
 			status, err := a.advance()
 			if err != nil {
 				return bt.Failure, nil
