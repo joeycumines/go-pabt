@@ -20,11 +20,11 @@ const (
 	StrategyReevalTicks   = 90 // re-pick a strategy every 3s at 30Hz
 	TargetActorCount      = 9  // was 8; G7 raises the roster so all 4 factions
 	// can be represented at once with a spare slot for respawn balancing.
-	HazardRadius          = 0.9
-	HazardTTL             = 120 // 4s at 30Hz
-	HazardDamage          = 2   // per damage tick to anything standing in a rift
-	HazardDamageInterval  = 15  // 0.5s at 30Hz between rift damage ticks
-	MaxHazards            = 10
+	HazardRadius         = 0.9
+	HazardTTL            = 120 // 4s at 30Hz
+	HazardDamage         = 2   // per damage tick to anything standing in a rift
+	HazardDamageInterval = 15  // 0.5s at 30Hz between rift damage ticks
+	MaxHazards           = 10
 )
 
 // Strategy is a rule-based high-level behavior. PA-BT-driven faction strategy
