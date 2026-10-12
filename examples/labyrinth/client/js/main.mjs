@@ -9,6 +9,7 @@ import { AudioEngine } from './audio.mjs';
 import { ModelBank, actorModelMatrix } from './models.mjs';
 import { DebugPanel } from './debug.mjs';
 import { BTHud } from './bt-hud.mjs';
+import { ParticleEngine } from './particles.mjs';
 
 const canvas = document.getElementById('glcanvas');
 const loading = document.getElementById('loading');
@@ -16,7 +17,7 @@ const hudEl = document.getElementById('hud');
 const prompt = document.getElementById('pointer-lock-prompt');
 const overlay = document.getElementById('overlay');
 
-let renderer, camera, input, hud, net, audio, debugPanel, btHud;
+let renderer, camera, input, hud, net, audio, debugPanel, btHud, particles;
 let maze = null; // authoritative maze from server
 let lastTime = 0;
 let gameState = 'playing'; // 'playing' | 'caught' | 'won'
@@ -159,6 +160,9 @@ function init() {
     // G3: the in-game BT-tick HUD shares the same tree-frame fan-out as the
     // debug panel so normal play shows live planner activity without Tab.
     btHud = new BTHud();
+    // I1: particle engine for projectile trails, muzzle bursts, impact sparks,
+    // and death bursts. Renders as GL_POINTS with additive blending.
+    particles = new ParticleEngine(renderer.gl);
     net.onTree = (actorID, frame) => {
         debugPanel.handleTreeFrame(actorID, frame);
         btHud.handleTreeFrame(actorID, frame);
@@ -372,6 +376,11 @@ function update(dt) {
             color: [Math.min(1, ec[0] + 0.35), Math.min(1, ec[1] + 0.35), Math.min(1, ec[2] + 0.35), 1.0],
         });
         muzzleFlashTimer = 3;
+        // I1: muzzle burst at weapon position.
+        if (particles) {
+            const muzzPos = [camera.pos[0] + rd[0] * 0.6, camera.pos[1] + rd[1] * 0.6 - 0.2, camera.pos[2] + rd[2] * 0.6];
+            particles.muzzleBurst(muzzPos, rd, ec);
+        }
         // Apply recoil AFTER firing so the shot itself is accurate
         camera.applyRecoil(0.02);
         camera.kickFov(3);
@@ -454,7 +463,11 @@ function update(dt) {
         p.pos[0] += p.dir[0] * 40 * dt;
         p.pos[1] += p.dir[1] * 40 * dt;
         p.pos[2] += p.dir[2] * 40 * dt;
+        // I1: trail particle behind each projectile every frame.
+        if (particles) particles.trail(p.pos, p.color);
     }
+    // I1: advance particle simulation.
+    if (particles) particles.update(dt);
     if (muzzleFlashTimer > 0) muzzleFlashTimer--;
     if (hitFlashTimer > 0) hitFlashTimer--;
     if (damageFlashTimer > 0) damageFlashTimer--;
@@ -507,6 +520,7 @@ function update(dt) {
         get mazeSize() { return maze ? [maze.w, maze.h] : null; },
         get gate() { return maze ? [maze.gateX, maze.gateY] : null; },
         get projectileCount() { return projectiles.length; },
+        get particleCount() { return particles ? particles.count : 0; },
         get playerElement() { return playerElement; },
         get powerUps() {
             const s = net.getSnapshot();
@@ -614,6 +628,12 @@ function handleEvent(evt) {
             if (sb) {
                 sb.hurtUntil = performance.now() / 1000 + 0.6;
                 audio.playHitReaction(actorDist(sb.pos[0], sb.pos[2]));
+                // I1: impact sparks at the hit actor's position.
+                if (particles) {
+                    const elemIdx = (evt.data && evt.data.element !== undefined) ? (evt.data.element|0) : playerElement;
+                    const sparkColor = ELEMENT_COLORS[elemIdx] || ELEMENT_COLORS[playerElement];
+                    particles.impactSparks([sb.pos[0], sb.pos[1] + 0.4, sb.pos[2]], sparkColor);
+                }
             }
             hitFlashTimer = 8;
             // Show the elemental outcome of the pulse.
@@ -661,6 +681,11 @@ function handleEvent(evt) {
             if (buf) {
                 corpses.push({ id: evt.data.id, pos: [...buf.pos], yaw: buf.yaw || 0, type: buf.type, element: buf.element, start: performance.now() / 1000 });
                 audio.playDeath(actorDist(buf.pos[0], buf.pos[2]));
+                // I1: death burst at corpse position.
+                if (particles) {
+                    const ec = ELEMENT_COLORS[buf.element|0] || ELEMENT_COLORS[0];
+                    particles.deathBurst([buf.pos[0], buf.pos[1] + 0.4, buf.pos[2]], ec);
+                }
                 minotaurBuffers.delete(evt.data.id);
             }
             break;
@@ -953,6 +978,10 @@ function render() {
     }
 
     renderer.drawInstances(instances);
+
+    // I1: render particles AFTER world geometry (additive blending layers
+    // correctly on top; depth writes disabled inside render()).
+    if (particles) particles.render(camera.viewMatrix(), camera.projMatrix(canvas.width / canvas.height));
 
     // H1: First-person weapon model. Clear depth so it renders on top of
     // the world, then draw a procedural elemental gauntlet in camera space.
