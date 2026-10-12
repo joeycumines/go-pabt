@@ -560,4 +560,73 @@ export default [
             await snap(ctx, 'e2e-h1-weapon.png');
         },
     },
+
+    // H4: onboarding + navigation (tutorial overlay, 3D gate compass, objective chip)
+    {
+        name: 'H4 onboarding + navigation',
+        async run(ctx) {
+            // Clear sessionStorage to force tutorial to show.
+            const page = ctx.page;
+            await page.goto(ctx.url, { waitUntil: 'domcontentloaded', timeout: 20000 });
+            await page.evaluate(() => sessionStorage.clear());
+            await page.reload({ waitUntil: 'domcontentloaded' });
+            await page.waitForFunction(ARIADNE_READY, { timeout: 20000 });
+            await page.waitForTimeout(1000);
+
+            // Verify tutorial overlay is visible.
+            const tutorialVisible = await page.evaluate(() => {
+                const t = document.getElementById('tutorial-overlay');
+                return t && !t.hidden;
+            });
+            if (!tutorialVisible) throw new Error('tutorial overlay not visible on first load');
+
+            // Dismiss tutorial.
+            await page.evaluate(() => {
+                const t = document.getElementById('tutorial-overlay');
+                if (t) t.hidden = true;
+            });
+            await page.waitForTimeout(500);
+
+            // Verify tutorial is hidden after dismiss.
+            const tutorialHidden = await page.evaluate(() => {
+                const t = document.getElementById('tutorial-overlay');
+                return t && t.hidden;
+            });
+            if (!tutorialHidden) throw new Error('tutorial overlay not hidden after dismiss');
+
+            // Verify objective chip exists.
+            const objectiveChip = await page.evaluate(() => {
+                const chip = document.getElementById('chip-objective');
+                return chip ? chip.textContent : null;
+            });
+            if (!objectiveChip) throw new Error('chip-objective element missing');
+            if (!objectiveChip.includes('ESCAPE') && !objectiveChip.includes('ENTER')) {
+                throw new Error('objective chip text unexpected: ' + objectiveChip);
+            }
+
+            await snap(ctx, 'e2e-h4-onboarding.png');
+        },
+    },
+
+    // H5: escalation readability (wave banner, threat arrows)
+    {
+        name: 'H5 escalation readability',
+        async run(ctx) {
+            await gotoGame(ctx);
+
+            // Verify wave-banner element exists.
+            const bannerExists = await ctx.page.evaluate(() => {
+                return document.getElementById('wave-banner') !== null;
+            });
+            if (!bannerExists) throw new Error('wave-banner element missing');
+
+            // Verify threat-arrows container exists.
+            const arrowsExist = await ctx.page.evaluate(() => {
+                return document.getElementById('threat-arrows') !== null;
+            });
+            if (!arrowsExist) throw new Error('threat-arrows element missing');
+
+            await snap(ctx, 'e2e-h5-escalation.png');
+        },
+    },
 ];

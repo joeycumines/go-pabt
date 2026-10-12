@@ -45,11 +45,32 @@
         <p>Click to enter the labyrinth</p>
     </div>
 
+    <!-- H4: Tutorial overlay for first-time players -->
+    <div id="tutorial-overlay" hidden>
+        <h2>ARIADNE</h2>
+        <p><strong>Objective:</strong> Reach the <span style="color:#00ff80">GREEN GATE</span> to escape the labyrinth.</p>
+        <p><strong>Controls:</strong></p>
+        <ul>
+            <li><strong>WASD</strong> — Move</li>
+            <li><strong>SHIFT</strong> — Sprint</li>
+            <li><strong>SPACE</strong> — Jump</li>
+            <li><strong>MOUSE</strong> — Look around</li>
+            <li><strong>CLICK</strong> — Fire elemental pulse</li>
+            <li><strong>TAB</strong> — PA-BT debugger</li>
+            <li><strong>B</strong> — Toggle BT tick HUD</li>
+            <li><strong>T</strong> — Toggle territory overlay</li>
+        </ul>
+        <p><strong>Factions:</strong> Four elemental factions war for territory. Use elemental advantage (Fire > Ice > Lightning > Void > Fire) to manipulate the conflict and escape.</p>
+        <p style="text-align:center;margin-top:20px;"><em>Click or press ENTER to begin</em></p>
+    </div>
+
     <div id="credits">Creatures: "Animated Creatures PS1 Style" by Zsky (@Zsky_01), CC BY 4.0 - patreon.com/Zsky</div>
 
     <div id="hit-flash" hidden></div>
     <div id="hit-marker" class="neutral" hidden></div>
     <div id="overlay" hidden></div>
+    <div id="wave-banner" hidden></div>
+    <div id="threat-arrows"></div>
 
     <!-- S4: Integrated PA-BT Debugging GUI -->
     <div id="debug-panel" hidden>

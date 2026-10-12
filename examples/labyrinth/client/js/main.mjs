@@ -193,6 +193,25 @@ function init() {
         console.warn('models unavailable, falling back to primitives:', err);
     });
 
+    // H4: Show tutorial on first load.
+    const tutorialSeen = sessionStorage.getItem('ariadne-tutorial');
+    if (!tutorialSeen) {
+        const tutorial = document.getElementById('tutorial-overlay');
+        if (tutorial) {
+            tutorial.hidden = false;
+            const dismissTutorial = () => {
+                tutorial.hidden = true;
+                sessionStorage.setItem('ariadne-tutorial', '1');
+                document.removeEventListener('keydown', dismissOnEnter);
+            };
+            const dismissOnEnter = (e) => {
+                if (e.code === 'Enter') dismissTutorial();
+            };
+            tutorial.addEventListener('click', dismissTutorial);
+            document.addEventListener('keydown', dismissOnEnter);
+        }
+    }
+
     // Connect to server.
     net.connect();
     net.onEvent = handleEvent;
@@ -246,6 +265,19 @@ function frame(time) {
         if (sp.element !== undefined) {
             playerElement = sp.element | 0;
             hud.setElement(playerElement);
+        }
+
+        // H4: Update objective chip based on gate proximity.
+        const objectiveChip = document.getElementById('chip-objective');
+        if (objectiveChip && maze) {
+            const gateDistChip = Math.hypot(sp.x - maze.gateX, sp.y - maze.gateY);
+            if (gateDistChip < 5) {
+                objectiveChip.textContent = 'ENTER THE GATE';
+                objectiveChip.style.animation = 'pulse-text 0.8s ease-in-out infinite';
+            } else {
+                objectiveChip.textContent = 'ESCAPE THE LABYRINTH';
+                objectiveChip.style.animation = '';
+            }
         }
     }
 
@@ -637,6 +669,19 @@ function handleEvent(evt) {
             damageFlashTimer = 10;
             break;
         case 'spawn':
+            // H5: Wave announcement banner.
+            if (evt.data && evt.data.intensity !== undefined) {
+                const banner = document.getElementById('wave-banner');
+                if (banner) {
+                    banner.textContent = 'WAVE ' + evt.data.count + ' — INTENSITY ' + evt.data.intensity;
+                    banner.hidden = false;
+                    // Re-trigger animation by removing and re-adding the element.
+                    banner.style.animation = 'none';
+                    banner.offsetHeight; // force reflow
+                    banner.style.animation = '';
+                    setTimeout(() => { banner.hidden = true; }, 3000);
+                }
+            }
             break;
     }
 }
@@ -698,11 +743,35 @@ function render() {
     }
 
     // Gate marker.
+    const gateDist = Math.hypot(camera.pos[0] - maze.gateX, camera.pos[2] - maze.gateY);
+    const gatePulse = gateDist < 5 ? 0.7 + Math.sin(performance.now() / 150) * 0.3 : 1.0;
     instances.push({
         pos: [maze.gateX, 0.5, maze.gateY],
         scale: [0.8, 1.0, 0.8],
-        color: gateColor,
+        color: [gateColor[0] * gatePulse, gateColor[1] * gatePulse, gateColor[2] * gatePulse, gateColor[3]],
     });
+
+    // H4: 3D gate compass — tall beacon visible from anywhere.
+    const compassHeight = 3.0;
+    instances.push({
+        pos: [maze.gateX, compassHeight / 2, maze.gateY],
+        scale: [0.15, compassHeight, 0.15],
+        color: [0, 1, 0.5, 0.6],
+    });
+    // Compass arrow pointing toward gate from player.
+    const gdx = maze.gateX - camera.pos[0];
+    const gdz = maze.gateY - camera.pos[2];
+    const gDist = Math.hypot(gdx, gdz);
+    if (gDist > 2) {
+        const arrowDist = 1.5;
+        const arrowX = camera.pos[0] + (gdx / gDist) * arrowDist;
+        const arrowZ = camera.pos[2] + (gdz / gDist) * arrowDist;
+        instances.push({
+            pos: [arrowX, 1.2, arrowZ],
+            scale: [0.2, 0.2, 0.2],
+            color: [0, 1, 0.5, 0.8],
+        });
+    }
 
     // Elemental power-up orbs (only active ones).
     if (snap && snap.data.powerUps) {
@@ -895,6 +964,32 @@ function render() {
     // Update minimap with actors and power-ups.
     if (maze) {
         hud.drawMinimap(maze, camera.pos, camera.yaw, minotaurBuffers, snap && snap.data ? snap.data.powerUps : null, territoryControl, hazards);
+    }
+
+    // H5: Off-screen threat arrows.
+    const threatArrowsEl = document.getElementById('threat-arrows');
+    if (threatArrowsEl) {
+        threatArrowsEl.innerHTML = '';
+        const fwd = camera.aimDir();
+        for (const [id, buf] of minotaurBuffers) {
+            if (buf.stunned || buf.hp <= 0) continue;
+            const dx = buf.pos[0] - camera.pos[0];
+            const dz = buf.pos[2] - camera.pos[2];
+            const dist = Math.hypot(dx, dz);
+            if (dist > 8 || dist < 1) continue;
+            const toActorX = dx / dist;
+            const toActorZ = dz / dist;
+            const dot = fwd[0] * toActorX + fwd[2] * toActorZ;
+            if (dot < 0.3) {
+                const ec = ELEMENT_COLORS[buf.element|0] || ELEMENT_COLORS[0];
+                const angle = Math.atan2(toActorX, toActorZ);
+                const arrow = document.createElement('div');
+                arrow.className = 'threat-arrow';
+                arrow.style.borderBottomColor = 'rgb(' + Math.round(ec[0]*255) + ',' + Math.round(ec[1]*255) + ',' + Math.round(ec[2]*255) + ')';
+                arrow.style.transform = 'rotate(' + angle + 'rad)';
+                threatArrowsEl.appendChild(arrow);
+            }
+        }
     }
 }
 

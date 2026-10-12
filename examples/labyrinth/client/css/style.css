@@ -429,3 +429,80 @@ body {
     color: #ff4040;
     text-shadow: 0 0 8px #ff0000;
 }
+
+/* === H4: Tutorial overlay === */
+#tutorial-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    background: rgba(10, 10, 15, 0.95);
+    z-index: 1000;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    color: #e0e0ff;
+    font-family: 'Courier New', monospace;
+    padding: 40px;
+    cursor: pointer;
+}
+#tutorial-overlay h2 {
+    font-size: 3rem;
+    color: #ff00ff;
+    text-shadow: 0 0 20px #ff00ff;
+    margin-bottom: 20px;
+}
+#tutorial-overlay p { font-size: 1.1rem; margin: 10px 0; max-width: 600px; }
+#tutorial-overlay ul { list-style: none; padding: 0; margin: 15px 0; }
+#tutorial-overlay li { font-size: 1rem; margin: 6px 0; }
+#tutorial-overlay strong { color: #ff00ff; }
+
+@keyframes pulse-text {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+}
+
+/* === H5: Wave announcement banner === */
+#wave-banner {
+    position: fixed;
+    top: 40%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    font-size: 2.5rem;
+    font-weight: bold;
+    color: #ff00ff;
+    text-shadow: 0 0 20px #ff00ff, 0 0 10px #ff00ff;
+    z-index: 400;
+    pointer-events: none;
+    animation: wave-banner 3s ease-out forwards;
+}
+@keyframes wave-banner {
+    0% { opacity: 0; transform: translate(-50%, -50%) scale(0.8); }
+    20% { opacity: 1; transform: translate(-50%, -50%) scale(1.1); }
+    80% { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+    100% { opacity: 0; transform: translate(-50%, -50%) scale(1); }
+}
+
+#threat-arrows {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    width: 0;
+    height: 0;
+    z-index: 250;
+    pointer-events: none;
+}
+.threat-arrow {
+    position: absolute;
+    width: 0;
+    height: 0;
+    border-left: 12px solid transparent;
+    border-right: 12px solid transparent;
+    border-bottom: 20px solid;
+    transform-origin: center -100px;
+    top: -120px;
+    left: -12px;
+    opacity: 0.8;
+}
