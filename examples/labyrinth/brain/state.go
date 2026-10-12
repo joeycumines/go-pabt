@@ -55,6 +55,11 @@ type WorldView struct {
 
 	// AtAdvantage is true when our element beats the player's in the cycle.
 	AtAdvantage bool
+
+	// AllyYielding is true when the runner is same-element and approaching.
+	// Move actions offset their target laterally so the actor steps aside
+	// rather than blocking the player's path (I4).
+	AllyYielding bool
 }
 
 // State is the pabt.State implementation over the world view. It reads variables

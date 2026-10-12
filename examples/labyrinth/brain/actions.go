@@ -9,6 +9,24 @@ import (
 	"github.com/joeycumines/go-pabt/examples/labyrinth/maze"
 )
 
+// I4: yieldOffset shifts a target position laterally (perpendicular to the
+// actor→target direction) by 1.5 cells so same-element actors path around
+// the player instead of blocking them. The offset direction is deterministic
+// (always +Y perpendicular) to avoid oscillation.
+func yieldOffset(target, selfPos maze.Vec2) maze.Vec2 {
+	dx := target.X - selfPos.X
+	dy := target.Y - selfPos.Y
+	d := math.Hypot(dx, dy)
+	if d < 1e-9 {
+		return maze.Vec2{X: target.X + 1.5, Y: target.Y}
+	}
+	// Perpendicular: (-dy, dx) normalized, scaled by yield distance.
+	const yieldDist = 1.5
+	px := -dy / d * yieldDist
+	py := dx / d * yieldDist
+	return maze.Vec2{X: target.X + px, Y: target.Y + py}
+}
+
 // effect is the planner's effect type: a key and its new value.
 type effect struct {
 	K VarKey
@@ -122,10 +140,16 @@ func (a *PursueAction) Node() bt.Node {
 	return bt.New(func(children []bt.Node) (bt.Status, error) {
 		// Compute the path to the player's position on first tick.
 		if a.path == nil && !a.done {
-			a.path = a.state.maze.Path(*a.state.selfPos, a.state.world.LastKnownPos)
+			target := a.state.world.LastKnownPos
 			if a.state.world.PlayerDetected {
-				a.path = a.state.maze.Path(*a.state.selfPos, a.state.world.PlayerPos)
+				target = a.state.world.PlayerPos
 			}
+			// I4: allied yielding — offset target laterally so same-element
+			// actors step aside instead of blocking the player's path.
+			if a.state.world.AllyYielding {
+				target = yieldOffset(target, *a.state.selfPos)
+			}
+			a.path = a.state.maze.Path(*a.state.selfPos, target)
 			if a.path == nil {
 				return bt.Failure, nil
 			}
@@ -170,7 +194,12 @@ func (a *SearchAction) Effects() Effects {
 func (a *SearchAction) Node() bt.Node {
 	return bt.New(func(children []bt.Node) (bt.Status, error) {
 		if a.path == nil && !a.done {
-			a.path = a.state.maze.Path(*a.state.selfPos, a.state.world.LastKnownPos)
+			target := a.state.world.LastKnownPos
+			// I4: allied yielding — offset search target laterally.
+			if a.state.world.AllyYielding {
+				target = yieldOffset(target, *a.state.selfPos)
+			}
+			a.path = a.state.maze.Path(*a.state.selfPos, target)
 			if a.path == nil {
 				// Cannot reach last-known: the search is exhausted.
 				a.done = true
