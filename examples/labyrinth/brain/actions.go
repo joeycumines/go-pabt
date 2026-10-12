@@ -113,25 +113,6 @@ func (a *moveAction) advance() (bt.Status, error) {
 	return bt.Running, nil
 }
 
-// actionCost returns the planner cost for each action type. Used by the
-// debugging GUI (I5) to show why one candidate was chosen over another.
-func actionCost(name string) int {
-	switch name {
-	case "Pursue":
-		return 1
-	case "Search":
-		return 2
-	case "Recover":
-		return 1
-	case "Retreat":
-		return 3
-	case "Reinforce":
-		return 2
-	default:
-		return 99
-	}
-}
-
 // PursueAction moves the actor toward the player's position.
 type PursueAction struct {
 	*moveAction

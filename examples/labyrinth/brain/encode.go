@@ -238,7 +238,59 @@ func EncodeFrame(snap pabt.TickSnapshot, path pabt.Path[Condition]) *BTFrame {
 	f.ClosedSetExpanded = expanded
 	f.ClosedSetUnexpanded = unexpanded
 
+	// I5: Populate CandidatesWithCost with cost and verdict per candidate.
+	// For each action targeting the failed condition, record its cost and
+	// the verdict of any prior execution of that action.
+	for _, a := range snap.Actions {
+		if a.PostconditionID == "" {
+			continue
+		}
+		// Find the failed condition this action targets.
+		isCandidate := false
+		for _, c := range snap.Conditions {
+			if c.ID == a.PostconditionID && c.Truth == bt.Failure && c.TruthKnown {
+				isCandidate = true
+				break
+			}
+		}
+		if !isCandidate {
+			continue
+		}
+		info := CandidateInfo{
+			ActionName: a.Name,
+			Cost:       actionCost(a.Name),
+			Verdict:    "unknown",
+		}
+		// Find a verdict from any prior execution of this action.
+		for _, ex := range snap.Executions {
+			if ex.Execution.ActionID == a.ID && len(ex.Relations) > 0 {
+				// Use the last relation's result as the verdict.
+				last := ex.Relations[len(ex.Relations)-1]
+				info.Verdict = string(last.Result)
+				break
+			}
+		}
+		f.CandidatesWithCost = append(f.CandidatesWithCost, info)
+	}
+
 	return f
+}
+
+func actionCost(name string) int {
+	switch name {
+	case "Pursue":
+		return 1
+	case "Search":
+		return 2
+	case "Recover":
+		return 1
+	case "Retreat":
+		return 3
+	case "Reinforce":
+		return 2
+	default:
+		return 99
+	}
 }
 
 func keyString(key any) string {
