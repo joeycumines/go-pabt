@@ -49,6 +49,9 @@ export class BTHud {
                 ? (frame.worldView.atAdvantage ? 'ADV' : frame.worldView.atDisadvantage ? 'DIS' : 'NEU')
                 : 'NEU',
             sinceLast: prev ? Math.min(9999, prev.sinceLast + (now - (this._lastFrameAt.get(actorID) || now))) : 0,
+            // H3: Planning process visibility.
+            failedCondition: frame.failedCondition || null,
+            candidates: frame.candidates || [],
         };
         this.rows.set(actorID, row);
         this.frames.set(actorID, frame);
@@ -160,8 +163,7 @@ export class BTHud {
                 : r.advantage === 'DIS' ? 'dis' : 'neu';
             const badgeClass = r.advantage === 'ADV' ? 'bt-badge-adv'
                 : r.advantage === 'DIS' ? 'bt-badge-dis' : 'bt-badge-neu';
-            parts.push(
-                `<div class="bt-row">` +
+            let rowHtml = `<div class="bt-row">` +
                 `<span class="bt-elem" style="border-color:${color};color:${color}">${abbr}</span>` +
                 `<span class="bt-id">${r.id}</span>` +
                 `<span class="bt-ticks">t${r.ticks}</span>` +
@@ -169,8 +171,14 @@ export class BTHud {
                 `<span class="bt-active">${r.active || '-'}</span>` +
                 `<span class="bt-status">${STATUS_ABBR[r.status] || r.status}</span>` +
                 `<span class="bt-badge ${badgeClass}">${badge}</span>` +
-                `</div>`
-            );
+                `</div>`;
+            // H3: Show planning process data if available.
+            if (r.failedCondition && r.candidates.length > 0) {
+                const candStr = r.candidates.slice(0, 3).join(', ');
+                const more = r.candidates.length > 3 ? ` +${r.candidates.length - 3}` : '';
+                rowHtml += `<div class="bt-plan-row" style="font-size:0.55rem;color:#a0a0c0;padding-left:20px;margin-top:-2px;margin-bottom:4px;">↳ ${r.failedCondition}: ${candStr}${more}</div>`;
+            }
+            parts.push(rowHtml);
         }
         this.rowsEl.innerHTML = parts.join('');
     }

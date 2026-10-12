@@ -346,6 +346,29 @@ function update(dt) {
     }
     input.fire = false;
 
+    // H2: Crosshair aim feedback — raycast from camera forward, turn crosshair
+    // red if it intersects an actor within 12u.
+    const crosshairEl = document.getElementById('crosshair');
+    if (crosshairEl) {
+        const aimDir = camera.aimDir();
+        let aimLocked = false;
+        for (const [id, buf] of minotaurBuffers) {
+            if (buf.stunned || buf.hp <= 0) continue;
+            const dx = buf.pos[0] - camera.pos[0];
+            const dz = buf.pos[2] - camera.pos[2];
+            const dist = Math.hypot(dx, dz);
+            if (dist > 12 || dist < 0.5) continue;
+            const toActorX = dx / dist;
+            const toActorZ = dz / dist;
+            const dot = aimDir[0] * toActorX + aimDir[2] * toActorZ;
+            if (dot > 0.95) {
+                aimLocked = true;
+                break;
+            }
+        }
+        crosshairEl.classList.toggle('aim-locked', aimLocked);
+    }
+
     // Send regular movement input with authoritative aim (no recoil).
     net.sendInput(input.forward, input.strafe, camera.yaw, camera.pitch, input.sprint, false, false);
 
@@ -481,6 +504,63 @@ function update(dt) {
         get weaponVisible() { return true; }, // weapon always renders when modelsReady
     };
 }
+
+// H2: Project world position to screen pixel coordinates.
+function worldToScreen(wx, wy, wz) {
+    const view = camera.viewMatrix();
+    const proj = camera.projMatrix(canvas.width / canvas.height);
+    const vx = view[0]*wx + view[4]*wy + view[8]*wz + view[12];
+    const vy = view[1]*wx + view[5]*wy + view[9]*wz + view[13];
+    const vz = view[2]*wx + view[6]*wy + view[10]*wz + view[14];
+    const vw = view[3]*wx + view[7]*wy + view[11]*wz + view[15];
+    const cx = proj[0]*vx + proj[4]*vy + proj[8]*vz + proj[12]*vw;
+    const cy = proj[1]*vx + proj[5]*vy + proj[9]*vz + proj[13]*vw;
+    const cw = proj[3]*vx + proj[7]*vy + proj[11]*vz + proj[15]*vw;
+    if (cw <= 0.01) return null;
+    return [(cx/cw * 0.5 + 0.5) * canvas.clientWidth,
+            (1 - (cy/cw * 0.5 + 0.5)) * canvas.clientHeight];
+}
+
+// H2: Floating damage number at an actor's screen-projected position.
+function spawnDamageNumber(worldX, worldZ, damage, advantage) {
+    const sp = worldToScreen(worldX, 0.8, worldZ);
+    if (!sp) return;
+    const el = document.createElement('div');
+    el.className = 'damage-number';
+    if (advantage >= 2) {
+        el.classList.add('advantage');
+        el.textContent = damage + ' x2';
+    } else if (advantage > 0 && advantage < 1) {
+        el.classList.add('disadvantage');
+        el.textContent = damage + ' resisted';
+    } else {
+        el.classList.add('neutral');
+        el.textContent = String(damage);
+    }
+    el.style.left = sp[0] + 'px';
+    el.style.top = sp[1] + 'px';
+    document.body.appendChild(el);
+    setTimeout(() => el.remove(), 1200);
+}
+
+// H2: Kill feed entry.
+const FACTION_NAMES = ['Ember Legion', 'Frost Covenant', 'Storm Pact', 'Void Cult'];
+const TYPE_NAMES = ['Brute', 'Swarm', 'Caster', 'Stalker'];
+function addKillEntry(element, type) {
+    const feed = document.getElementById('kill-feed');
+    if (!feed) return;
+    const entry = document.createElement('div');
+    entry.className = 'kill-entry';
+    entry.style.borderColor = FACTION_COLORS[element] || '#ffffff';
+    entry.textContent = (FACTION_NAMES[element] || 'Unknown') + ' ' + (TYPE_NAMES[type] || 'hunter') + ' eliminated';
+    feed.appendChild(entry);
+    while (feed.children.length > 5) feed.removeChild(feed.firstChild);
+    setTimeout(() => entry.remove(), 5000);
+}
+
+// H2: Screen shake state.
+let screenShakeTimer = 0;
+let screenShakeIntensity = 0;
 
 function handleEvent(evt) {
     switch (evt.type) {
@@ -743,6 +823,25 @@ function render() {
             instances.push({ pos: [buf.pos[0] - 0.1, buf.pos[1] + eyeY, buf.pos[2] - 0.15], scale: [0.08, 0.08, 0.08], color: [1, 1, 1, 1] });
             instances.push({ pos: [buf.pos[0] + 0.1, buf.pos[1] + eyeY, buf.pos[2] - 0.15], scale: [0.08, 0.08, 0.08], color: [1, 1, 1, 1] });
         }
+        // H2: Enemy HP bar billboard above wounded actors.
+        if (buf.hp !== undefined && buf.hp > 0 && buf.hp < (ACTOR_MAX_HP[buf.type|0] || 30)) {
+            const barW = 0.8;
+            const barH = 0.08;
+            const barY = buf.pos[1] + MODEL_SCALE_TARGET + 0.6;
+            instances.push({
+                pos: [buf.pos[0], barY, buf.pos[2]],
+                scale: [barW, barH, 0.02],
+                color: [0.1, 0.1, 0.1, 0.85],
+            });
+            const fillW = barW * hpFrac;
+            const fillColor = hpFrac > 0.5 ? [0, 1, 0.3, 1] : hpFrac > 0.25 ? [1, 0.8, 0, 1] : [1, 0.2, 0.2, 1];
+            instances.push({
+                pos: [buf.pos[0] - (barW - fillW) / 2, barY, buf.pos[2] + 0.01],
+                scale: [fillW, barH, 0.03],
+                color: fillColor,
+            });
+        }
+
         // Strategy beacon: red=raid, cyan=retreat, dim grey=patrol.
         instances.push({
             pos: [buf.pos[0], buf.pos[1] + MODEL_SCALE_TARGET + 0.35, buf.pos[2]],

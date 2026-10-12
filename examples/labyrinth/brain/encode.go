@@ -20,6 +20,12 @@ type BTFrame struct {
 	Executions   []BTExecution `json:"executions"`
 	Path         string        `json:"path"`
 	WorldView    BTWorldView   `json:"worldView"`
+	// H3: Planning process visibility.
+	FailedCondition string   `json:"failedCondition,omitempty"`
+	Candidates      []string `json:"candidates,omitempty"`
+	// H6: Closed-set sizes.
+	ClosedSetExpanded   int `json:"closedSetExpanded,omitempty"`
+	ClosedSetUnexpanded int `json:"closedSetUnexpanded,omitempty"`
 }
 
 // BTWorldView is the actor's elemental and detection state at frame time. It
@@ -189,6 +195,38 @@ func EncodeFrame(snap pabt.TickSnapshot, path pabt.Path[Condition]) *BTFrame {
 		}
 		f.Executions = append(f.Executions, exec)
 	}
+
+	// H3: Identify the most recent failed condition and candidates considered.
+	// Heuristic: find a condition with Truth=false that has actions targeting it
+	// as a postcondition. This indicates recent expansion.
+	for _, c := range snap.Conditions {
+		if !c.Truth && c.TruthKnown {
+			var candidates []string
+			for _, a := range snap.Actions {
+				if a.PostconditionID == c.ID {
+					candidates = append(candidates, a.Name)
+				}
+			}
+			if len(candidates) > 0 {
+				f.FailedCondition = keyString(c.Key)
+				f.Candidates = candidates
+				break
+			}
+		}
+	}
+
+	// H6: Closed-set sizes — count conditions with TruthKnown (expanded) vs
+	// without (unexpanded).
+	var expanded, unexpanded int
+	for _, c := range snap.Conditions {
+		if c.TruthKnown {
+			expanded++
+		} else {
+			unexpanded++
+		}
+	}
+	f.ClosedSetExpanded = expanded
+	f.ClosedSetUnexpanded = unexpanded
 
 	return f
 }

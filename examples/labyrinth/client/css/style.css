@@ -376,3 +376,56 @@ body {
 [hidden] {
     display: none !important;
 }
+
+/* === H2: Combat feedback styles === */
+.damage-number {
+    position: fixed;
+    pointer-events: none;
+    font-family: 'Courier New', monospace;
+    font-size: 1.4rem;
+    font-weight: bold;
+    z-index: 350;
+    text-shadow: 0 0 6px #000, 0 2px 2px #000;
+    animation: damage-float 1.2s ease-out forwards;
+    transform: translate(-50%, 0);
+}
+.damage-number.neutral { color: #ffffff; }
+.damage-number.advantage { color: #ffd700; font-size: 1.7rem; }
+.damage-number.disadvantage { color: #8080a0; font-size: 1.1rem; }
+
+@keyframes damage-float {
+    0% { opacity: 1; transform: translate(-50%, 0); }
+    80% { opacity: 1; }
+    100% { opacity: 0; transform: translate(-50%, -60px); }
+}
+
+#kill-feed {
+    position: absolute;
+    top: 60px;
+    left: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    pointer-events: none;
+    z-index: 150;
+}
+.kill-entry {
+    padding: 6px 10px;
+    background: rgba(0, 0, 0, 0.7);
+    border-left: 3px solid #ffffff;
+    border-radius: 2px;
+    font-size: 0.85rem;
+    color: #e0e0ff;
+    animation: kill-fade 5s ease-in forwards;
+}
+@keyframes kill-fade {
+    0% { opacity: 0; transform: translateX(-10px); }
+    8% { opacity: 1; transform: translateX(0); }
+    80% { opacity: 1; }
+    100% { opacity: 0; }
+}
+
+#crosshair.aim-locked {
+    color: #ff4040;
+    text-shadow: 0 0 8px #ff0000;
+}

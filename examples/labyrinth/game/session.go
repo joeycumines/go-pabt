@@ -642,6 +642,8 @@ func (g *Game) FirePulse(id SessionID, fireRound int, aim netcode.RayHitOrigin) 
 				"hp":        m.HP,
 				"damage":    dmg,
 				"advantage": mult,
+				"pos":       []float64{m.Pos.X, m.Pos.Y},
+				"element":   m.Element,
 			},
 		})
 	})

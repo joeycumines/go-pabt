@@ -131,7 +131,15 @@ export class DebugPanel {
             return;
         }
         const frame = this.frames.get(this.selectedActor);
-        let html = `<div class="debug-header">${this.selectedActor} (rev ${frame.planRevision})</div>`;
+        // H6: Show closed-set info at the top.
+        let html = '';
+        if (frame.closedSetExpanded !== undefined || frame.closedSetUnexpanded !== undefined) {
+            html += `<div class="debug-closed-set" style="padding:6px 8px;background:rgba(255,0,255,0.08);border-bottom:1px solid rgba(255,0,255,0.2);margin-bottom:8px;">`;
+            html += `<span style="color:#80ff80;">✓ Expanded: ${frame.closedSetExpanded || 0}</span>`;
+            html += `<span style="color:#ffff80;margin-left:12px;">? Unexpanded: ${frame.closedSetUnexpanded || 0}</span>`;
+            html += `</div>`;
+        }
+        html += `<div class="debug-header">${this.selectedActor} (rev ${frame.planRevision})</div>`;
 
         // World View: elemental state, detection, advantage
         if (frame.worldView) {

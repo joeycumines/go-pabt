@@ -450,6 +450,62 @@ export default [
         },
     },
 
+    // H2: combat feedback (damage numbers, kill feed, screen shake, HP bars, aim feedback)
+    {
+        name: 'H2 combat feedback',
+        async run(ctx) {
+            await gotoGame(ctx);
+
+            // Teleport the player close to the nearest non-stunned actor.
+            await ctx.page.evaluate(() => {
+                const a = window.__ariadne;
+                const actors = a.actors.filter(act => !act.stunned && act.hp > 0);
+                if (actors.length === 0) throw new Error('no live actors');
+                const target = actors[0];
+                a.teleport(target.pos[0], target.pos[2] - 2);
+                a.setYaw(0);
+            });
+            await ctx.page.waitForTimeout(500);
+
+            const gsBefore = await ctx.page.evaluate(() => window.__ariadne.gameState);
+            if (gsBefore !== 'playing') throw new Error('gameState not playing: ' + gsBefore);
+
+            // Fire at close range with cooldown-aware retries.
+            let damageNumber = null;
+            for (let attempt = 0; attempt < 3; attempt++) {
+                if (attempt > 0) await ctx.page.waitForTimeout(1000);
+                await ctx.page.evaluate(() => window.__ariadne.fire());
+                await ctx.page.waitForTimeout(800);
+                damageNumber = await ctx.page.evaluate(() => {
+                    const el = document.querySelector('.damage-number');
+                    return el ? el.textContent : null;
+                });
+                if (damageNumber) break;
+            }
+            if (!damageNumber) throw new Error('no damage number spawned on hit after 3 attempts');
+
+            // Verify kill-feed element exists.
+            const killFeedExists = await ctx.page.evaluate(() => {
+                return document.getElementById('kill-feed') !== null;
+            });
+            if (!killFeedExists) throw new Error('kill-feed element missing');
+
+            // Verify screen shake infrastructure.
+            const shakeInfra = await ctx.page.evaluate(() => {
+                return typeof applyScreenShake === 'function' && typeof screenShakeTimer !== 'undefined';
+            });
+            if (!shakeInfra) throw new Error('screen shake infrastructure missing');
+
+            // Verify crosshair element exists for aim feedback.
+            const crosshairExists = await ctx.page.evaluate(() => {
+                return document.getElementById('crosshair') !== null;
+            });
+            if (!crosshairExists) throw new Error('crosshair element missing');
+
+            await snap(ctx, 'e2e-h2-combat.png');
+        },
+    },
+
     // H1: first-person weapon + movement juice (FOV sprint kick, recoil, bob)
     {
         name: 'H1 weapon + movement juice',

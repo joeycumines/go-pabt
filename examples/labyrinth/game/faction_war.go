@@ -332,6 +332,7 @@ func (g *Game) respawnDeadActors(w *world.World) {
 		}
 		id := w.Minotaurs[i].ID
 		elem := w.Minotaurs[i].Element
+		actorType := w.Minotaurs[i].Type
 		w.Minotaurs = append(w.Minotaurs[:i], w.Minotaurs[i+1:]...)
 		if i < len(g.actorStates) {
 			g.actorStates = append(g.actorStates[:i], g.actorStates[i+1:]...)
@@ -344,7 +345,11 @@ func (g *Game) respawnDeadActors(w *world.World) {
 		}
 		g.broadcastEvent(Event{
 			Type: "death",
-			Data: map[string]interface{}{"id": id, "element": elem},
+			Data: map[string]interface{}{
+				"id":      id,
+				"element": elem,
+				"type":    actorType,
+			},
 		})
 	}
 	for fails := 0; len(w.Minotaurs) < TargetActorCount && fails < TargetActorCount*4; {
