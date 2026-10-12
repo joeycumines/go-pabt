@@ -357,8 +357,6 @@ func (g *Game) separateRunnerFromActors(w *world.World) {
 		// Don't re-resolve against maze — the knockback should take precedence
 		// over wall collision when entities are overlapping. The next movement
 		// tick will handle wall collisions naturally.
-		// w.Runner.Pos = g.Maze.Resolve(w.Runner.Pos, maze.Radius)
-		// a.Pos = g.Maze.Resolve(a.Pos, maze.Radius)
 	}
 	// Sync authoritative runner position back to every active session so
 	// the reconciliation target includes the knockback displacement.
