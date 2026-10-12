@@ -562,6 +562,7 @@ function update(dt) {
         get projectileCount() { return projectiles.length; },
         get particleCount() { return particles ? particles.count : 0; },
         get playerVel() { return [playerVelX, playerVelY, playerVelZ]; },
+        get inputState() { return { forward: input.forward, strafe: input.strafe, sprint: input.sprint, jump: input.jump }; },
         get playerElement() { return playerElement; },
         get powerUps() {
             const s = net.getSnapshot();
