@@ -89,6 +89,42 @@ func actorDamage(t ActorType) int {
 	}
 }
 
+// I3: actorMass returns the relative mass of each archetype used for
+// player-actor collision knockback ratios. Player mass is 1.0; brute actors
+// are heavy (3.0), swarm actors are light (0.5), so the lighter body is
+// pushed farther by the same impulse.
+func actorMass(t ActorType) float64 {
+	switch t {
+	case ActorBrute:
+		return 3.0
+	case ActorSwarm:
+		return 0.5
+	case ActorCaster:
+		return 1.0
+	case ActorStalker:
+		return 0.8
+	default:
+		return 1.0
+	}
+}
+
+// RunnerMass is the player's mass for knockback ratios.
+const RunnerMass = 1.0
+
+// RunnerActorSeparation is the minimum distance between the runner and an
+// actor cylinder center. When closer, both bodies are pushed apart by a
+// mass-ratio impulse so the player cannot stand inside an enemy.
+const RunnerActorSeparation = 0.7
+
+// ContactKnockback is the impulse applied to both bodies on a contact
+// damage event. Scaled by mass ratio so brutes barely budge and swarm
+// actors fly away from the player.
+const ContactKnockback = 1.5
+
+// PulseKnockback is the impulse applied to a hit actor along the shot
+// direction on a successful pulse fire. Makes hits feel physical.
+const PulseKnockback = 1.2
+
 // actorSpeed returns cells-per-tick movement speed for each archetype. At
 // 30 Hz these are 3.0/4.8/2.7/4.2 cells per second: every archetype is
 // slower than the player's sprint (6.5) but several beat the walk speed
@@ -301,25 +337,11 @@ func (g *Game) tickLogic(w *world.World) {
 		if i < len(g.Histories) {
 			g.Histories[i].Record(w.Round, m.Pos)
 		}
-
-		// Contact damage: if not stunned and close enough, hurt the runner.
-		if !m.Stunned && m.AttackCooldown <= 0 {
-			dx := m.Pos.X - w.Runner.Pos.X
-			dy := m.Pos.Y - w.Runner.Pos.Y
-			if dx*dx+dy*dy < 0.7*0.7 {
-				dmg := actorDamage(ActorType(m.Type))
-				w.Runner.HP -= dmg
-				m.AttackCooldown = 30 // 1 second cooldown at 30Hz
-				g.broadcastEvent(Event{
-					Type: "hit",
-					Data: map[string]interface{}{
-						"damage": dmg,
-						"hp":     w.Runner.HP,
-					},
-				})
-			}
-		}
 	}
+
+	// I3: contact damage + mass-ratio knockback between runner and actors.
+	// Runs outside the brain loop so it fires regardless of brain state.
+	g.tickContactDamage(w)
 
 	// Broadcast tree frames every 10 ticks (~3Hz) for the debug panel.
 	if w.Round%10 == 0 {
@@ -331,6 +353,11 @@ func (g *Game) tickLogic(w *world.World) {
 
 	// Physical separation: actors are bodies, not ghosts.
 	g.separateActors(w)
+
+	// I3: separate runner from actors (mass-ratio knockback) and sync
+	// runner position back to the authoritative netcode session so the
+	// server-side reconciliation stays coherent with the knockback.
+	g.separateRunnerFromActors(w)
 
 	// Check lose condition.
 	if w.Runner.HP <= 0 {
@@ -592,6 +619,51 @@ func (g *Game) ApplyInput(id SessionID, cmd netcode.InputCmd) {
 	})
 }
 
+// tickContactDamage applies contact damage and mass-ratio knockback between
+// the runner and every non-stunned actor within 0.7u. Pulled out of the
+// brain loop so separation/damage applies to the world state regardless of
+// brain iteration state (keeps the logic testable without a live brain).
+func (g *Game) tickContactDamage(w *world.World) {
+	for _, m := range w.Minotaurs {
+		if m.HP <= 0 || m.Stunned || m.AttackCooldown > 0 {
+			continue
+		}
+		dx := m.Pos.X - w.Runner.Pos.X
+		dy := m.Pos.Y - w.Runner.Pos.Y
+		if dx*dx+dy*dy >= 0.7*0.7 {
+			continue
+		}
+		dmg := actorDamage(ActorType(m.Type))
+		w.Runner.HP -= dmg
+		m.AttackCooldown = 30 // 1 second cooldown at 30Hz
+		// I3: knockback on contact — both bodies pushed apart by the
+		// mass-ratio impulse. Runner flies away from the actor; the actor
+		// is nudged in the opposite direction.
+		d := math.Hypot(dx, dy)
+		if d < 1e-9 {
+			d = 1e-9
+			dx, dy = 1e-9, 0
+		}
+		ux, uy := dx/d, dy/d
+		aMass := actorMass(ActorType(m.Type))
+		totalMass := RunnerMass + aMass
+		runnerPush := ContactKnockback * (aMass / totalMass)
+		w.Runner.Pos.X -= ux * runnerPush
+		w.Runner.Pos.Y -= uy * runnerPush
+		actorPush := ContactKnockback * (RunnerMass / totalMass)
+		m.Pos.X += ux * actorPush
+		m.Pos.Y += uy * actorPush
+		g.broadcastEvent(Event{
+			Type: "hit",
+			Data: map[string]interface{}{
+				"damage":    dmg,
+				"hp":        w.Runner.HP,
+				"knockback": true,
+			},
+		})
+	}
+}
+
 // PulseBaseDamage is the damage a neutral pulse deals. Elemental advantage
 // (attacker beats defender in the cycle) doubles it; disadvantage halves it.
 const PulseBaseDamage = 15
@@ -635,6 +707,17 @@ func (g *Game) FirePulse(id SessionID, fireRound int, aim netcode.RayHitOrigin) 
 		m.HP -= dmg
 		m.Stunned = true
 		m.StunTicks = world.StunDuration
+		// I3: pulse knockback — hit actor pushed along the shot direction.
+		// Heavier actors resist more (mass ratio). Makes shots feel physical.
+		{
+			fx := math.Sin(aim.Yaw) * math.Cos(aim.Pitch)
+			fy := math.Cos(aim.Yaw) * math.Cos(aim.Pitch)
+			aMass := actorMass(ActorType(m.Type))
+			kick := PulseKnockback * (RunnerMass / (RunnerMass + aMass))
+			m.Pos.X += fx * kick
+			m.Pos.Y += fy * kick
+			m.Pos = g.Maze.Resolve(m.Pos, maze.Radius)
+		}
 		g.broadcastEvent(Event{
 			Type: "stunned",
 			Data: map[string]interface{}{
