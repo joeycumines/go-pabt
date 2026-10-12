@@ -19,6 +19,7 @@ export class BTHud {
         this.frames = new Map(); // actorID -> last frame
         this._lastUpdate = 0;
         this._lastFrameAt = new Map(); // actorID -> arrival time (ms)
+        this._renderedRows = []; // rows actually painted in the last render()
 
         // KeyB toggles the HUD. Works during pointer lock.
         document.addEventListener('keydown', (e) => {
@@ -155,6 +156,7 @@ export class BTHud {
         this._lastUpdate = now;
 
         const rows = Array.from(this.rows.values()).slice(0, MAX_ROWS);
+        this._renderedRows = rows;
         const parts = [];
         for (const r of rows) {
             const color = ELEMENT_COLORS[r.element] || '#ffffff';
@@ -187,10 +189,14 @@ export class BTHud {
     }
 
     // probe exposes the HUD state for verification (__ariadne.btHud).
+    // Returns only the rows that were actually painted in the last render()
+    // call, so the probe count always matches the DOM children count even
+    // when render() is throttled and new rows arrived since the last paint.
     probe() {
+        const rendered = this._renderedRows || [];
         return {
             visible: this.visible,
-            rows: Array.from(this.rows.values()).map(r => ({
+            rows: rendered.map(r => ({
                 id: r.id, element: r.element, ticks: r.ticks, delta: r.delta,
                 active: r.active, status: r.status, advantage: r.advantage,
             })),

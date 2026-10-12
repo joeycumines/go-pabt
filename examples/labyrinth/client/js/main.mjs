@@ -611,7 +611,6 @@ function worldToScreen(wx, wy, wz) {
 // H2: Floating damage number at an actor's screen-projected position.
 function spawnDamageNumber(worldX, worldZ, damage, advantage) {
     const sp = worldToScreen(worldX, 0.8, worldZ);
-    if (!sp) return;
     const el = document.createElement('div');
     el.className = 'damage-number';
     if (advantage >= 2) {
@@ -624,8 +623,16 @@ function spawnDamageNumber(worldX, worldZ, damage, advantage) {
         el.classList.add('neutral');
         el.textContent = String(damage);
     }
-    el.style.left = sp[0] + 'px';
-    el.style.top = sp[1] + 'px';
+    if (sp) {
+        el.style.left = sp[0] + 'px';
+        el.style.top = sp[1] + 'px';
+    } else {
+        // Fallback: actor is off-screen or behind camera (e.g. after
+        // knockback pushed it out of the frustum). Show at screen center
+        // so the damage feedback is never silently dropped.
+        el.style.left = '50%';
+        el.style.top = '40%';
+    }
     document.body.appendChild(el);
     setTimeout(() => el.remove(), 1200);
 }
@@ -648,6 +655,20 @@ function addKillEntry(element, type) {
 // H2: Screen shake state.
 let screenShakeTimer = 0;
 let screenShakeIntensity = 0;
+
+// H2: Trigger a screen shake of given intensity for duration seconds.
+// Applied per-frame in render() by offsetting camera.pos.
+function applyScreenShake(intensity, duration) {
+    screenShakeIntensity = intensity;
+    screenShakeTimer = duration;
+}
+// H2: Expose for E2E verification. ES module scope is not accessible from
+// page.evaluate(), so the scenario's typeof check needs these on window.
+window.applyScreenShake = applyScreenShake;
+Object.defineProperty(window, 'screenShakeTimer', {
+    get: () => screenShakeTimer,
+    configurable: true,
+});
 
 function handleEvent(evt) {
     switch (evt.type) {
