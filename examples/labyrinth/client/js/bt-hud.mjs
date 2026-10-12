@@ -53,6 +53,9 @@ export class BTHud {
             // H3: Planning process visibility.
             failedCondition: frame.failedCondition || null,
             candidates: frame.candidates || [],
+            // I5: planner reasoning — every candidate action with its OBTEA
+            // cost, preserves/breaks verdict, and executing highlight.
+            candidatesWithCost: frame.candidatesWithCost || [],
         };
         this.rows.set(actorID, row);
         this.frames.set(actorID, frame);
@@ -174,8 +177,19 @@ export class BTHud {
                 `<span class="bt-status">${STATUS_ABBR[r.status] || r.status}</span>` +
                 `<span class="bt-badge ${badgeClass}">${badge}</span>` +
                 `</div>`;
-            // H3: Show planning process data if available.
-            if (r.failedCondition && r.candidates.length > 0) {
+            // I5: show the planner's reasoning — candidate actions with
+            // costs and verdicts, executing action highlighted. Falls back
+            // to the H3 failed-condition form when I5 data is absent.
+            if (r.candidatesWithCost && r.candidatesWithCost.length > 0) {
+                const candParts = r.candidatesWithCost.slice(0, 4).map(c => {
+                    const verdict = c.verdict === 'preserves' ? '✓'
+                        : c.verdict === 'breaks' ? '✗' : '?';
+                    const style = c.executing ? 'font-weight:bold;color:#ffff80;' : '';
+                    return `<span style="${style}">${c.name}(${c.cost})${verdict}</span>`;
+                });
+                const more = r.candidatesWithCost.length > 4 ? ` +${r.candidatesWithCost.length - 4}` : '';
+                inner += `<div class="bt-plan-row" style="font-size:0.55rem;color:#a0a0c0;padding-left:20px;margin-top:-2px;margin-bottom:4px;">↳ ${candParts.join(' ')}${more}</div>`;
+            } else if (r.failedCondition && r.candidates.length > 0) {
                 const candStr = r.candidates.slice(0, 3).join(', ');
                 const more = r.candidates.length > 3 ? ` +${r.candidates.length - 3}` : '';
                 inner += `<div class="bt-plan-row" style="font-size:0.55rem;color:#a0a0c0;padding-left:20px;margin-top:-2px;margin-bottom:4px;">↳ ${r.failedCondition}: ${candStr}${more}</div>`;
@@ -199,6 +213,7 @@ export class BTHud {
             rows: rendered.map(r => ({
                 id: r.id, element: r.element, ticks: r.ticks, delta: r.delta,
                 active: r.active, status: r.status, advantage: r.advantage,
+                candidatesWithCost: r.candidatesWithCost || [],
             })),
         };
     }

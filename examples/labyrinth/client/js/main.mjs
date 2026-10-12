@@ -214,6 +214,8 @@ function init() {
                 tutorial.hidden = true;
                 sessionStorage.setItem('ariadne-tutorial', '1');
                 document.removeEventListener('keydown', dismissOnEnter);
+                // The maze may already be loaded behind the overlay.
+                if (maze) prompt.hidden = false;
             };
             const dismissOnEnter = (e) => {
                 if (e.code === 'Enter') dismissTutorial();
@@ -230,10 +232,12 @@ function init() {
         maze = mazeData;
         // Place camera at maze start.
         camera.pos = [maze.startX, PLAYER_HEIGHT, maze.startY];
-        // Hide loading, show HUD and prompt.
+        // Hide loading and show HUD. The pointer-lock prompt waits for the
+        // first-run tutorial overlay to dismiss so the two never stack.
         loading.hidden = true;
         hudEl.hidden = false;
-        prompt.hidden = false;
+        const tutorialEl = document.getElementById('tutorial-overlay');
+        prompt.hidden = tutorialEl ? !tutorialEl.hidden : false;
         overlay.hidden = true;
         // Start the render loop.
         requestAnimationFrame(frame);
