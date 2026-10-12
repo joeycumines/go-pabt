@@ -27,6 +27,15 @@ type BTFrame struct {
 	// H6: Closed-set sizes.
 	ClosedSetExpanded   int `json:"closedSetExpanded,omitempty"`
 	ClosedSetUnexpanded int `json:"closedSetUnexpanded,omitempty"`
+	// I5: Candidates with cost and verdict for planner reasoning overlay.
+	CandidatesWithCost []CandidateInfo `json:"candidatesWithCost,omitempty"`
+}
+
+// CandidateInfo is one candidate action with its cost and verdict.
+type CandidateInfo struct {
+	ActionName string `json:"name"`
+	Cost       int    `json:"cost"`
+	Verdict    string `json:"verdict"`
 }
 
 // BTWorldView is the actor's elemental and detection state at frame time. It

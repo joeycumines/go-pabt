@@ -666,9 +666,14 @@ function handleEvent(evt) {
         case 'stunned': {
             audio.playStun();
             const sb = evt.data && evt.data.minotaur ? minotaurBuffers.get(evt.data.minotaur) : null;
+            // Show the elemental outcome of the pulse.
+            const adv = evt.data && evt.data.advantage;
             if (sb) {
                 sb.hurtUntil = performance.now() / 1000 + 0.6;
                 audio.playHitReaction(actorDist(sb.pos[0], sb.pos[2]));
+                // H2: floating damage number at the hit actor's position.
+                const dmgVal = (evt.data && typeof evt.data.damage === 'number') ? evt.data.damage : 0;
+                if (dmgVal > 0) spawnDamageNumber(sb.pos[0], sb.pos[2], dmgVal, adv);
                 // I1: impact sparks at the hit actor's position.
                 if (particles) {
                     const elemIdx = (evt.data && evt.data.element !== undefined) ? (evt.data.element|0) : playerElement;
@@ -677,8 +682,6 @@ function handleEvent(evt) {
                 }
             }
             hitFlashTimer = 8;
-            // Show the elemental outcome of the pulse.
-            const adv = evt.data && evt.data.advantage;
             const marker = document.getElementById('hit-marker');
             if (marker) {
                 if (adv >= 2) {

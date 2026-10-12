@@ -163,7 +163,7 @@ export class BTHud {
                 : r.advantage === 'DIS' ? 'dis' : 'neu';
             const badgeClass = r.advantage === 'ADV' ? 'bt-badge-adv'
                 : r.advantage === 'DIS' ? 'bt-badge-dis' : 'bt-badge-neu';
-            let rowHtml = `<div class="bt-row">` +
+            let inner = `<div class="bt-row">` +
                 `<span class="bt-elem" style="border-color:${color};color:${color}">${abbr}</span>` +
                 `<span class="bt-id">${r.id}</span>` +
                 `<span class="bt-ticks">t${r.ticks}</span>` +
@@ -176,9 +176,12 @@ export class BTHud {
             if (r.failedCondition && r.candidates.length > 0) {
                 const candStr = r.candidates.slice(0, 3).join(', ');
                 const more = r.candidates.length > 3 ? ` +${r.candidates.length - 3}` : '';
-                rowHtml += `<div class="bt-plan-row" style="font-size:0.55rem;color:#a0a0c0;padding-left:20px;margin-top:-2px;margin-bottom:4px;">↳ ${r.failedCondition}: ${candStr}${more}</div>`;
+                inner += `<div class="bt-plan-row" style="font-size:0.55rem;color:#a0a0c0;padding-left:20px;margin-top:-2px;margin-bottom:4px;">↳ ${r.failedCondition}: ${candStr}${more}</div>`;
             }
-            parts.push(rowHtml);
+            // Wrap in a single container div so DOM children count equals
+            // rows.length (the plan-row sub-div would otherwise inflate
+            // the count and break the probe<->DOM assertion).
+            parts.push(`<div class="bt-actor">${inner}</div>`);
         }
         this.rowsEl.innerHTML = parts.join('');
     }
