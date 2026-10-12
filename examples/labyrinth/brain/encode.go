@@ -245,7 +245,7 @@ func EncodeFrame(snap pabt.TickSnapshot, path pabt.Path[Condition]) *BTFrame {
 	// even during successful execution, not just during replanning.
 	
 	// First, find the currently executing action (if any).
-	var executingActionID ActionID
+	var executingActionID pabt.OccurrenceID
 	if len(snap.Executions) > 0 {
 		lastExec := snap.Executions[len(snap.Executions)-1]
 		executingActionID = lastExec.Execution.ActionID
