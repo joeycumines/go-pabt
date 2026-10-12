@@ -25,11 +25,18 @@ let gameState = 'playing'; // 'playing' | 'caught' | 'won'
 // Player physics state
 let playerVelY = 0;
 let grounded = true;
+// I2: velocity-based XZ movement for momentum + friction + gun blowback.
+let playerVelX = 0;
+let playerVelZ = 0;
 const GRAVITY = -15;
 const JUMP_VEL = 6;
 const PLAYER_HEIGHT = 0.5;
 const PLAYER_RADIUS = 0.3;
 const MAX_HP = 100;
+// I2 tuning: friction decay per frame (0.85 = heavy sliding, 0.0 = instant stop).
+const FRICTION = 0.82;
+// I2: gun blowback force applied on fire (velocity impulse opposite aim).
+const BLOWBACK_FORCE = 2.8;
 
 // Minotaur interpolation state
 let minotaurBuffers = new Map(); // id -> { pos, targetPos, lastUpdate, type, stunned }
@@ -296,25 +303,54 @@ function frame(time) {
 
 function update(dt) {
     input.update();
-    const speed = input.sprint ? 6.5 : 4.0;
-    camera.updateMovement(dt, Math.hypot(input.forward, input.strafe) * speed);
+    const maxSpeed = input.sprint ? 6.5 : 4.0;
+    camera.updateMovement(dt, Math.hypot(input.forward, input.strafe) * maxSpeed);
 
-    // Movement: yaw-relative WASD.
+    // I2: velocity-based movement with momentum and friction.
+    // Movement basis: yaw-relative WASD.
     const fwd = [Math.sin(camera.yaw), 0, Math.cos(camera.yaw)];
     const right = [-Math.cos(camera.yaw), 0, Math.sin(camera.yaw)];
 
-    let dx = (fwd[0] * input.forward + right[0] * input.strafe) * speed * dt;
-    let dz = (fwd[2] * input.forward + right[2] * input.strafe) * speed * dt;
+    // Desired velocity from input.
+    const wantX = (fwd[0] * input.forward + right[0] * input.strafe) * maxSpeed;
+    const wantZ = (fwd[2] * input.forward + right[2] * input.strafe) * maxSpeed;
 
-    const len = Math.hypot(dx, dz);
-    if (len > speed * dt) {
-        dx = dx / len * speed * dt;
-        dz = dz / len * speed * dt;
+    // Acceleration: when input is present, lerp toward target velocity quickly;
+    // otherwise friction decays existing velocity (momentum / sliding).
+    const hasInput = Math.hypot(input.forward, input.strafe) > 0.01;
+    if (hasInput) {
+        // Tight response: ~95% of target within 0.1s.
+        const a = 1 - Math.pow(0.001, dt);
+        playerVelX += (wantX - playerVelX) * a;
+        playerVelZ += (wantZ - playerVelZ) * a;
+    } else {
+        const decay = Math.pow(FRICTION, dt * 60);
+        playerVelX *= decay;
+        playerVelZ *= decay;
+        // Snap to zero below threshold to avoid perpetual drift.
+        if (Math.abs(playerVelX) < 0.01) playerVelX = 0;
+        if (Math.abs(playerVelZ) < 0.01) playerVelZ = 0;
     }
 
-    let newX = camera.pos[0] + dx;
-    let newZ = camera.pos[2] + dz;
+    // Clamp total speed so impulses (blowback) can briefly exceed maxSpeed
+    // but sustained motion is capped.
+    const spd = Math.hypot(playerVelX, playerVelZ);
+    const cap = maxSpeed * 1.6; // allow blowback overshoot up to 1.6x
+    if (spd > cap) {
+        playerVelX = playerVelX / spd * cap;
+        playerVelZ = playerVelZ / spd * cap;
+    }
+
+    const prevX = camera.pos[0], prevZ = camera.pos[2];
+    let newX = prevX + playerVelX * dt;
+    let newZ = prevZ + playerVelZ * dt;
     [newX, newZ] = resolveCollision(maze, newX, newZ, PLAYER_RADIUS);
+    // If collision clamped motion, zero velocity along the blocked axis so
+    // momentum doesn't re-push the player into the wall next frame.
+    const actualDx = newX - prevX;
+    const actualDz = newZ - prevZ;
+    if (Math.abs(actualDx) < Math.abs(playerVelX * dt) * 0.5) playerVelX *= 0.2;
+    if (Math.abs(actualDz) < Math.abs(playerVelZ * dt) * 0.5) playerVelZ *= 0.2;
     camera.pos[0] = newX;
     camera.pos[2] = newZ;
 
@@ -381,6 +417,10 @@ function update(dt) {
             const muzzPos = [camera.pos[0] + rd[0] * 0.6, camera.pos[1] + rd[1] * 0.6 - 0.2, camera.pos[2] + rd[2] * 0.6];
             particles.muzzleBurst(muzzPos, rd, ec);
         }
+        // I2: gun blowback — impulse player velocity opposite to aim (XZ only;
+        // vertical aim component ignored so shots don't launch the player).
+        playerVelX -= rd[0] * BLOWBACK_FORCE;
+        playerVelZ -= rd[2] * BLOWBACK_FORCE;
         // Apply recoil AFTER firing so the shot itself is accurate
         camera.applyRecoil(0.02);
         camera.kickFov(3);
@@ -521,6 +561,7 @@ function update(dt) {
         get gate() { return maze ? [maze.gateX, maze.gateY] : null; },
         get projectileCount() { return projectiles.length; },
         get particleCount() { return particles ? particles.count : 0; },
+        get playerVel() { return [playerVelX, playerVelY, playerVelZ]; },
         get playerElement() { return playerElement; },
         get powerUps() {
             const s = net.getSnapshot();
