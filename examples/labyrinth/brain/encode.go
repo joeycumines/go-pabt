@@ -3,6 +3,7 @@
 package brain
 
 import (
+	bt "github.com/joeycumines/go-behaviortree"
 	"github.com/joeycumines/go-pabt"
 )
 
@@ -197,10 +198,10 @@ func EncodeFrame(snap pabt.TickSnapshot, path pabt.Path[Condition]) *BTFrame {
 	}
 
 	// H3: Identify the most recent failed condition and candidates considered.
-	// Heuristic: find a condition with Truth=false that has actions targeting it
+	// Heuristic: find a condition with Truth=Failure that has actions targeting it
 	// as a postcondition. This indicates recent expansion.
 	for _, c := range snap.Conditions {
-		if !c.Truth && c.TruthKnown {
+		if c.Truth == bt.Failure && c.TruthKnown {
 			var candidates []string
 			for _, a := range snap.Actions {
 				if a.PostconditionID == c.ID {
