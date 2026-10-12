@@ -36,6 +36,7 @@ type CandidateInfo struct {
 	ActionName string `json:"name"`
 	Cost       int    `json:"cost"`
 	Verdict    string `json:"verdict"`
+	Executing  bool   `json:"executing"` // true if this action is currently executing
 }
 
 // BTWorldView is the actor's elemental and detection state at frame time. It
@@ -239,29 +240,26 @@ func EncodeFrame(snap pabt.TickSnapshot, path pabt.Path[Condition]) *BTFrame {
 	f.ClosedSetUnexpanded = unexpanded
 
 	// I5: Populate CandidatesWithCost with cost and verdict per candidate.
-	// For each action targeting the failed condition, record its cost and
-	// the verdict of any prior execution of that action.
+	// Show all actions in the plan with their costs, highlighting the
+	// currently executing action. This makes the planner's reasoning visible
+	// even during successful execution, not just during replanning.
+	
+	// First, find the currently executing action (if any).
+	var executingActionID ActionID
+	if len(snap.Executions) > 0 {
+		lastExec := snap.Executions[len(snap.Executions)-1]
+		executingActionID = lastExec.Execution.ActionID
+	}
+	
+	// Show all actions with their costs.
 	for _, a := range snap.Actions {
-		if a.PostconditionID == "" {
-			continue
-		}
-		// Find the failed condition this action targets.
-		isCandidate := false
-		for _, c := range snap.Conditions {
-			if c.ID == a.PostconditionID && c.Truth == bt.Failure && c.TruthKnown {
-				isCandidate = true
-				break
-			}
-		}
-		if !isCandidate {
-			continue
-		}
 		info := CandidateInfo{
 			ActionName: a.Name,
 			Cost:       actionCost(a.Name),
 			Verdict:    "unknown",
+			Executing:  a.ID == executingActionID,
 		}
-		// Find a verdict from any prior execution of this action.
+		// Find a verdict from any execution of this action.
 		for _, ex := range snap.Executions {
 			if ex.Execution.ActionID == a.ID && len(ex.Relations) > 0 {
 				// Use the last relation's result as the verdict.
