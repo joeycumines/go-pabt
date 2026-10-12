@@ -5,7 +5,18 @@ export class Camera {
         this.canvas = canvas;
         this.pos = [1.5, 0.5, 1.5]; // x, y (height), z
         this.yaw = 0;   // radians, 0 = +Z
-        this.pitch = 0;  // radians, clamped to ~+/-89 degrees
+        this.pitch = 0;  // radians, clamped to ~+/-89 degrees (the player's raw aim)
+
+        // H1 movement juice. These fields are visual-only and never sent to
+        // the server: the authoritative aim pitch is `this.pitch` above.
+        this.baseFovDeg = 70;
+        this.currentFovDeg = 70;
+        this.targetFovDeg = 70;
+        this.recoilPitch = 0;   // radians, added to pitch for rendering only
+        this.recoilVel = 0;     // spring velocity for recoil recovery
+        this.bobPhase = 0;
+        this.bobOffsetX = 0;    // weapon lateral sway (camera-right)
+        this.bobOffsetY = 0;    // weapon vertical bounce
 
         this._locked = false;
         canvas.addEventListener('click', () => {
@@ -25,12 +36,68 @@ export class Camera {
 
     get locked() { return this._locked; }
 
-    forward() {
+    // applyRecoil kicks the view upward and arms the spring recovery. The
+    // player never sends the resulting pitch to the server, so this is purely
+    // a visual "shoot feel" effect.
+    applyRecoil(strength = 0.02) {
+        this.recoilPitch += strength;
+        this.recoilVel += strength * 40;
+    }
+
+    // kickFov briefly narrows the FOV for a snap-fire feel.
+    kickFov(delta = 3) {
+        this.currentFovDeg -= delta;
+    }
+
+    // updateMovement advances the visual juice: sprint FOV widen, recoil
+    // spring recovery, weapon bob. Call once per frame before viewMatrix().
+    updateMovement(dt, speed) {
+        const sprinting = speed > 5;
+        this.targetFovDeg = sprinting ? this.baseFovDeg + 10 : this.baseFovDeg;
+        this.currentFovDeg += (this.targetFovDeg - this.currentFovDeg) * Math.min(1, 4 * dt);
+        const k = 60, d = 12;
+        this.recoilVel += (-k * this.recoilPitch - d * this.recoilVel) * dt;
+        this.recoilPitch += this.recoilVel * dt;
+        if (Math.abs(this.recoilPitch) < 0.0001 && Math.abs(this.recoilVel) < 0.0001) {
+            this.recoilPitch = 0;
+            this.recoilVel = 0;
+        }
+        if (speed > 0.1) {
+            const bobFreq = sprinting ? 14 : 8;
+            const bobAmp = sprinting ? 0.05 : 0.03;
+            this.bobPhase += dt * bobFreq;
+            this.bobOffsetX = Math.sin(this.bobPhase) * bobAmp;
+            this.bobOffsetY = Math.abs(Math.cos(this.bobPhase)) * bobAmp * 0.8;
+        } else {
+            this.bobPhase *= 1 - Math.min(1, 6 * dt);
+            this.bobOffsetX *= 1 - Math.min(1, 6 * dt);
+            this.bobOffsetY *= 1 - Math.min(1, 6 * dt);
+        }
+    }
+
+    // aimDir is the authoritative aim direction the SERVER receives (raw
+    // pitch). renderDir is what the camera renders with (raw pitch + recoil).
+    // Use aimDir for anything that affects game logic or authoritative state.
+    aimDir() {
+        const p = this.pitch;
         return [
-            Math.sin(this.yaw) * Math.cos(this.pitch),
-            Math.sin(this.pitch),
-            Math.cos(this.yaw) * Math.cos(this.pitch),
+            Math.sin(this.yaw) * Math.cos(p),
+            Math.sin(p),
+            Math.cos(this.yaw) * Math.cos(p),
         ];
+    }
+
+    renderDir() {
+        const p = this.pitch + this.recoilPitch;
+        return [
+            Math.sin(this.yaw) * Math.cos(p),
+            Math.sin(p),
+            Math.cos(this.yaw) * Math.cos(p),
+        ];
+    }
+
+    forward() {
+        return this.renderDir();
     }
 
     right() {
@@ -44,8 +111,8 @@ export class Camera {
         return lookAt(ex,ey,ez, tx,ty,tz, 0,1,0);
     }
 
-    projMatrix(aspect, fovDeg = 70, near = 0.1, far = 100) {
-        return perspective(fovDeg * Math.PI / 180, aspect, near, far);
+    projMatrix(aspect, near = 0.1, far = 100) {
+        return perspective(this.currentFovDeg * Math.PI / 180, aspect, near, far);
     }
 }
 

@@ -198,7 +198,17 @@ export class Renderer {
         this.gl.uniform3f(this.uFogColor, color[0], color[1], color[2]);
     }
 
-    // instances: array of { pos:[x,y,z], scale:[sx,sy,sz], color:[r,g,b,a] }
+    // clearDepth wipes only the depth buffer, so a 2D/3D HUD layer can be
+    // drawn on top of the 3D world without fighting the depth test.
+    clearDepth() {
+        this.gl.clear(this.gl.DEPTH_BUFFER_BIT);
+    }
+
+    // drawInstances takes an array of instances. Each instance is
+    // { pos:[x,y,z], scale:[sx,sy,sz], color:[r,g,b,a], modelMatrix?:Float32Array(16) }.
+    // If modelMatrix is provided it overrides the default axis-aligned TRS
+    // computed from pos/scale. This is how the first-person weapon (and any
+    // camera-attached geometry) gets a full camera-relative transform.
     drawInstances(instances) {
         const gl = this.gl;
         const n = instances.length;
@@ -215,14 +225,17 @@ export class Renderer {
             colors[i*4+2] = inst.color[2];
             colors[i*4+3] = inst.color[3] ?? 1.0;
 
-            // Build TRS matrix (translation * rotation(identity) * scale)
-            const [px,py,pz] = inst.pos;
-            const [sx,sy,sz] = inst.scale || [1,1,1];
-            const m = models.subarray(i*16, i*16+16);
-            m[0]=sx; m[1]=0;  m[2]=0;  m[3]=0;
-            m[4]=0;  m[5]=sy; m[6]=0;  m[7]=0;
-            m[8]=0;  m[9]=0;  m[10]=sz;m[11]=0;
-            m[12]=px;m[13]=py;m[14]=pz;m[15]=1;
+            if (inst.modelMatrix) {
+                models.set(inst.modelMatrix, i * 16);
+            } else {
+                const [px,py,pz] = inst.pos;
+                const [sx,sy,sz] = inst.scale || [1,1,1];
+                const m = models.subarray(i*16, i*16+16);
+                m[0]=sx; m[1]=0;  m[2]=0;  m[3]=0;
+                m[4]=0;  m[5]=sy; m[6]=0;  m[7]=0;
+                m[8]=0;  m[9]=0;  m[10]=sz;m[11]=0;
+                m[12]=px;m[13]=py;m[14]=pz;m[15]=1;
+            }
         }
 
         gl.bindVertexArray(this.vao);

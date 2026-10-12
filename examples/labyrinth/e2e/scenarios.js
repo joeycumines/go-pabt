@@ -449,4 +449,59 @@ export default [
             if (tok1 === tok2) throw new Error('tokens not distinct');
         },
     },
+
+    // H1: first-person weapon + movement juice (FOV sprint kick, recoil, bob)
+    {
+        name: 'H1 weapon + movement juice',
+        async run(ctx) {
+            await gotoGame(ctx);
+            // Teleport to the gate area (usually clear of actors) so we have
+            // a safe testing area for the full scenario.
+            const gate = await ctx.page.evaluate(() => window.__ariadne.gate);
+            if (gate) await ctx.page.evaluate(([x, y]) => window.__ariadne.teleport(x - 2, y - 2), gate);
+            await ctx.page.waitForTimeout(500);
+
+            // Initial state: weapon visible, base FOV.
+            const initial = await ctx.page.evaluate(() => ({
+                fov: window.__ariadne.cameraFov,
+                recoil: window.__ariadne.cameraRecoil,
+                weaponVisible: window.__ariadne.weaponVisible,
+            }));
+            if (!initial.weaponVisible) throw new Error('weapon not visible');
+            if (initial.fov < 69 || initial.fov > 71) throw new Error(`base FOV wrong: ${initial.fov}`);
+            if (Math.abs(initial.recoil) > 0.001) throw new Error(`initial recoil not zero: ${initial.recoil}`);
+
+            // Fire FIRST (before sprint) using programmatic trigger to avoid
+            // pointer-event races with the CAUGHT overlay.
+            await ctx.page.evaluate(() => window.__ariadne.fire());
+            await ctx.page.waitForTimeout(150);
+            const afterFire = await ctx.page.evaluate(() => window.__ariadne.cameraRecoil);
+            if (afterFire < 0.005) throw new Error(`recoil did not apply: ${afterFire}`);
+            await ctx.page.waitForTimeout(700);
+            const recovered = await ctx.page.evaluate(() => window.__ariadne.cameraRecoil);
+            if (recovered > afterFire * 0.7) throw new Error(`recoil did not recover: start=${afterFire} after=${recovered}`);
+
+            // Re-teleport in case an actor closed in during fire test.
+            if (gate) await ctx.page.evaluate(([x, y]) => window.__ariadne.teleport(x - 2, y - 2), gate);
+            await ctx.page.waitForTimeout(300);
+
+            // Sprint forward for 1.5s — FOV should widen toward 80.
+            await ctx.page.keyboard.down('ShiftLeft');
+            await ctx.page.keyboard.down('KeyW');
+            await ctx.page.waitForTimeout(1500);
+            const sprinting = await ctx.page.evaluate(() => ({
+                fov: window.__ariadne.cameraFov,
+                bob: window.__ariadne.cameraBob,
+                gameState: window.__ariadne.gameState,
+            }));
+            await ctx.page.keyboard.up('KeyW');
+            await ctx.page.keyboard.up('ShiftLeft');
+            if (sprinting.gameState !== 'playing') throw new Error(`gameState not playing during sprint: ${sprinting.gameState}`);
+            if (sprinting.fov <= initial.fov + 5) throw new Error(`sprint FOV did not widen >5: ${sprinting.fov}`);
+            const bobMag = Math.hypot(sprinting.bob[0], sprinting.bob[1]);
+            if (bobMag < 0.005) throw new Error(`weapon bob not active: ${bobMag}`);
+
+            await snap(ctx, 'e2e-h1-weapon.png');
+        },
+    },
 ];

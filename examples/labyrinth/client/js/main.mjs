@@ -260,9 +260,10 @@ function frame(time) {
 
 function update(dt) {
     input.update();
+    const speed = input.sprint ? 6.5 : 4.0;
+    camera.updateMovement(dt, Math.hypot(input.forward, input.strafe) * speed);
 
     // Movement: yaw-relative WASD.
-    const speed = input.sprint ? 6.5 : 4.0;
     const fwd = [Math.sin(camera.yaw), 0, Math.cos(camera.yaw)];
     const right = [-Math.cos(camera.yaw), 0, Math.sin(camera.yaw)];
 
@@ -325,19 +326,27 @@ function update(dt) {
         lastFireTime = now;
         lastShotElement = playerElement;
         audio.playShot(playerElement);
-        net.sendInput(input.forward, input.strafe, camera.yaw, camera.pitch, input.sprint, false, true);
+        // Send authoritative aim direction (raw pitch, no recoil) to server
+        const aimYaw = camera.yaw;
+        const aimPitch = camera.pitch;
+        net.sendInput(input.forward, input.strafe, aimYaw, aimPitch, input.sprint, false, true);
+        // Visual tracer uses render direction (with recoil) for immediate feedback
+        const rd = camera.renderDir();
         const ec = ELEMENT_COLORS[playerElement];
         projectiles.push({
-            pos: [camera.pos[0] + Math.sin(camera.yaw) * 0.5, camera.pos[1] - 0.05, camera.pos[2] + Math.cos(camera.yaw) * 0.5],
-            dir: [Math.sin(camera.yaw), 0, Math.cos(camera.yaw)],
+            pos: [camera.pos[0] + rd[0] * 0.5, camera.pos[1] + rd[1] * 0.5 - 0.05, camera.pos[2] + rd[2] * 0.5],
+            dir: [rd[0], rd[1], rd[2]],
             born: now,
             color: [Math.min(1, ec[0] + 0.35), Math.min(1, ec[1] + 0.35), Math.min(1, ec[2] + 0.35), 1.0],
         });
         muzzleFlashTimer = 3;
+        // Apply recoil AFTER firing so the shot itself is accurate
+        camera.applyRecoil(0.02);
+        camera.kickFov(3);
     }
     input.fire = false;
 
-    // Send regular movement input.
+    // Send regular movement input with authoritative aim (no recoil).
     net.sendInput(input.forward, input.strafe, camera.yaw, camera.pitch, input.sprint, false, false);
 
     // Interpolate minotaur positions from server snapshots.
@@ -465,6 +474,11 @@ function update(dt) {
         // G3: BT-tick HUD state for verification (__ariadne.btHud).
         get btHud() { return btHud ? btHud.probe() : null; },
         toggleBTHud() { if (btHud) btHud.toggle(); },
+        // H1 probes for weapon + movement juice verification.
+        get cameraFov() { return camera.currentFovDeg; },
+        get cameraRecoil() { return camera.recoilPitch; },
+        get cameraBob() { return [camera.bobOffsetX, camera.bobOffsetY]; },
+        get weaponVisible() { return true; }, // weapon always renders when modelsReady
     };
 }
 
@@ -759,11 +773,12 @@ function render() {
         });
     }
 
-    // Muzzle flash in the active element color.
+    // Muzzle flash in the active element color (uses render direction with recoil).
     if (muzzleFlashTimer > 0) {
         const ec = ELEMENT_COLORS[playerElement];
+        const rd = camera.renderDir();
         instances.push({
-            pos: [camera.pos[0] + Math.sin(camera.yaw) * 0.6, camera.pos[1] - 0.2, camera.pos[2] + Math.cos(camera.yaw) * 0.6],
+            pos: [camera.pos[0] + rd[0] * 0.6, camera.pos[1] + rd[1] * 0.6 - 0.2, camera.pos[2] + rd[2] * 0.6],
             scale: [0.25, 0.25, 0.25],
             color: [Math.min(1, ec[0] + 0.4), Math.min(1, ec[1] + 0.4), Math.min(1, ec[2] + 0.4), 1.0],
         });
@@ -771,10 +786,81 @@ function render() {
 
     renderer.drawInstances(instances);
 
+    // H1: First-person weapon model. Clear depth so it renders on top of
+    // the world, then draw a procedural elemental gauntlet in camera space.
+    // The weapon bobs with movement and rotates with the camera.
+    renderer.clearDepth();
+    const weaponInstances = buildWeaponInstances(camera, playerElement);
+    renderer.drawInstances(weaponInstances);
+
     // Update minimap with actors and power-ups.
     if (maze) {
         hud.drawMinimap(maze, camera.pos, camera.yaw, minotaurBuffers, snap && snap.data ? snap.data.powerUps : null, territoryControl, hazards);
     }
+}
+
+// H1: Build the first-person weapon model instances in camera space.
+// The weapon is a procedural elemental gauntlet (4 cubes: forearm, palm,
+// two finger-guards) that bobs with movement and rotates with the camera.
+function buildWeaponInstances(cam, element) {
+    const ec = ELEMENT_COLORS[element] || ELEMENT_COLORS[0];
+    const tint = [ec[0] * 0.8, ec[1] * 0.8, ec[2] * 0.8, 1.0];
+    const accent = [Math.min(1, ec[0] + 0.3), Math.min(1, ec[1] + 0.3), Math.min(1, ec[2] + 0.3), 1.0];
+
+    // Camera basis vectors in world space.
+    const fwd = cam.renderDir();
+    const right = cam.right();
+    const up = [0, 1, 0];
+
+    // Weapon anchor: lower-right of viewport, offset from camera.
+    // right * 0.3 = right side, fwd * 0.5 = in front, down * 0.3 = below eye.
+    const bobX = cam.bobOffsetX;
+    const bobY = cam.bobOffsetY;
+    const anchor = [
+        cam.pos[0] + right[0] * (0.3 + bobX) + fwd[0] * 0.5 + up[0] * (-0.3 + bobY),
+        cam.pos[1] + right[1] * (0.3 + bobX) + fwd[1] * 0.5 + up[1] * (-0.3 + bobY),
+        cam.pos[2] + right[2] * (0.3 + bobX) + fwd[2] * 0.5 + up[2] * (-0.3 + bobY),
+    ];
+
+    // Weapon local axes: forward = camera forward, right = camera right, up = world up.
+    // Build a rotation matrix from these axes.
+    const m = new Float32Array(16);
+    m[0] = right[0]; m[1] = right[1]; m[2] = right[2]; m[3] = 0;
+    m[4] = up[0];    m[5] = up[1];    m[6] = up[2];    m[7] = 0;
+    m[8] = fwd[0];   m[9] = fwd[1];   m[10] = fwd[2];  m[11] = 0;
+    m[12] = anchor[0]; m[13] = anchor[1]; m[14] = anchor[2]; m[15] = 1;
+
+    // Weapon parts: forearm (long), palm (block), two finger-guards (small).
+    // Each part is { offset: [x,y,z] in local space, scale: [sx,sy,sz], color }.
+    const parts = [
+        { offset: [0, 0, -0.15], scale: [0.08, 0.08, 0.3], color: tint },      // forearm
+        { offset: [0, 0, 0.05], scale: [0.12, 0.10, 0.12], color: accent },    // palm
+        { offset: [-0.06, 0.04, 0.12], scale: [0.04, 0.04, 0.08], color: tint }, // left finger-guard
+        { offset: [0.06, 0.04, 0.12], scale: [0.04, 0.04, 0.08], color: tint }, // right finger-guard
+    ];
+
+    const instances = [];
+    for (const part of parts) {
+        // Transform local offset to world space using the rotation matrix.
+        const wx = m[0] * part.offset[0] + m[4] * part.offset[1] + m[8] * part.offset[2] + m[12];
+        const wy = m[1] * part.offset[0] + m[5] * part.offset[1] + m[9] * part.offset[2] + m[13];
+        const wz = m[2] * part.offset[0] + m[6] * part.offset[1] + m[10] * part.offset[2] + m[14];
+
+        // Build a per-instance model matrix that includes the weapon rotation.
+        const mm = new Float32Array(16);
+        mm[0] = m[0] * part.scale[0]; mm[1] = m[1] * part.scale[0]; mm[2] = m[2] * part.scale[0]; mm[3] = 0;
+        mm[4] = m[4] * part.scale[1]; mm[5] = m[5] * part.scale[1]; mm[6] = m[6] * part.scale[1]; mm[7] = 0;
+        mm[8] = m[8] * part.scale[2]; mm[9] = m[9] * part.scale[2]; mm[10] = m[10] * part.scale[2]; mm[11] = 0;
+        mm[12] = wx; mm[13] = wy; mm[14] = wz; mm[15] = 1;
+
+        instances.push({
+            pos: [wx, wy, wz],
+            scale: part.scale,
+            color: part.color,
+            modelMatrix: mm,
+        });
+    }
+    return instances;
 }
 
 // Territory quadrant for floor tinting; mirrors game.TerritoryOf.
