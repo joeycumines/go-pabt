@@ -29,6 +29,18 @@ type BTFrame struct {
 	ClosedSetUnexpanded int `json:"closedSetUnexpanded,omitempty"`
 	// I5: Candidates with cost and verdict for planner reasoning overlay.
 	CandidatesWithCost []CandidateInfo `json:"candidatesWithCost,omitempty"`
+	// I5: Recent plan-modification events (repair vs full replan), most
+	// recent last. Set by the brain from its replan log; empty when nothing
+	// changed since the last frame.
+	ReplanEvents []ReplanEvent `json:"replanEvents,omitempty"`
+}
+
+// ReplanEvent records one plan modification: a local subtree insertion or
+// conflict relocation (repair) or a full tree rebuild (replan).
+type ReplanEvent struct {
+	Type     string `json:"type"` // "repair" | "replan"
+	Reason   string `json:"reason"`
+	Revision uint64 `json:"revision"`
 }
 
 // CandidateInfo is one candidate action with its cost and verdict.
@@ -207,6 +219,25 @@ func EncodeFrame(snap pabt.TickSnapshot, path pabt.Path[Condition]) *BTFrame {
 		f.Executions = append(f.Executions, exec)
 	}
 
+	// Semantic action names come from the action's effect key and
+	// precondition key set: the library names actions by their effect keys
+	// (e.g. "caught"), which carry no behavior meaning, and Retreat and
+	// Reinforce share the same effect key (atDisadvantage) — only their
+	// precondition sets differ. Built once here, used by both the H3
+	// failed-condition candidates and the I5 CandidatesWithCost.
+	effectKeys := make(map[pabt.OccurrenceID]VarKey, len(snap.Effects))
+	for _, e := range snap.Effects {
+		if k, ok := e.Key.(VarKey); ok {
+			effectKeys[e.ActionID] = k
+		}
+	}
+	condKeys := make(map[pabt.OccurrenceID]VarKey, len(snap.Conditions))
+	for _, c := range snap.Conditions {
+		if k, ok := c.Key.(VarKey); ok {
+			condKeys[c.ID] = k
+		}
+	}
+
 	// H3: Identify the most recent failed condition and candidates considered.
 	// Heuristic: find a condition with Truth=Failure that has actions targeting it
 	// as a postcondition. This indicates recent expansion.
@@ -215,7 +246,17 @@ func EncodeFrame(snap pabt.TickSnapshot, path pabt.Path[Condition]) *BTFrame {
 			var candidates []string
 			for _, a := range snap.Actions {
 				if a.PostconditionID == c.ID {
-					candidates = append(candidates, a.Name)
+					var effectKey VarKey = -1
+					if k, ok := effectKeys[a.ID]; ok {
+						effectKey = k
+					}
+					pre := make(map[VarKey]bool, len(a.ConditionIDs))
+					for _, id := range a.ConditionIDs {
+						if k, ok := condKeys[id]; ok {
+							pre[k] = true
+						}
+					}
+					candidates = append(candidates, actionName(effectKey, pre))
 				}
 			}
 			if len(candidates) > 0 {
@@ -253,9 +294,20 @@ func EncodeFrame(snap pabt.TickSnapshot, path pabt.Path[Condition]) *BTFrame {
 
 	// Show all actions with their costs.
 	for _, a := range snap.Actions {
+		var effectKey VarKey = -1
+		if k, ok := effectKeys[a.ID]; ok {
+			effectKey = k
+		}
+		pre := make(map[VarKey]bool, len(a.ConditionIDs))
+		for _, id := range a.ConditionIDs {
+			if k, ok := condKeys[id]; ok {
+				pre[k] = true
+			}
+		}
+		name := actionName(effectKey, pre)
 		info := CandidateInfo{
-			ActionName: a.Name,
-			Cost:       actionCost(a.Name),
+			ActionName: name,
+			Cost:       actionCost(name),
 			Verdict:    "unknown",
 			Executing:  a.ID == executingActionID,
 		}
@@ -272,6 +324,30 @@ func EncodeFrame(snap pabt.TickSnapshot, path pabt.Path[Condition]) *BTFrame {
 	}
 
 	return f
+}
+
+// actionName derives the semantic action name from the action's effect key
+// and precondition key set. The library's own action names are the effect
+// keys ("caught", "atDisadvantage", ...), which carry no behavior meaning
+// and cannot distinguish Retreat from Reinforce — both set atDisadvantage
+// false. The precondition sets do distinguish them: Retreat requires the
+// player to be detected, Reinforce does not.
+func actionName(effectKey VarKey, pre map[VarKey]bool) string {
+	switch effectKey {
+	case KeyCaught:
+		return "Pursue"
+	case KeySearchExhausted:
+		return "Search"
+	case KeyStunned:
+		return "Recover"
+	case KeyAtDisadvantage:
+		if pre[KeyPlayerDetected] {
+			return "Retreat"
+		}
+		return "Reinforce"
+	default:
+		return "Action"
+	}
 }
 
 func actionCost(name string) int {

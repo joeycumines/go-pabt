@@ -200,6 +200,15 @@ export class DebugPanel {
             html += `<div class="debug-path">Path: ${frame.path}</div>`;
         }
 
+        // I5: Replan log — plan modifications, repair vs full replan.
+        if (frame.replanEvents && frame.replanEvents.length) {
+            html += '<div class="debug-section">Replan Log</div>';
+            for (const evt of frame.replanEvents) {
+                const color = evt.type === 'replan' ? '#ff8080' : '#80ff80';
+                html += `<div class="debug-replan"><span style="color:${color}">${evt.type}</span> ${evt.reason} (rev ${evt.revision})</div>`;
+            }
+        }
+
         this.treeEl.innerHTML = html;
     }
 

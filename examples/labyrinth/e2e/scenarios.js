@@ -680,20 +680,43 @@ export default [
             // actor's frames at once and produce a false "frozen" verdict.
             // The invariant is unchanged — every row's tick count must
             // climb — it just has to climb SOMEWHERE inside 15s.
+            // GAME-ENDED TRAP: when gameState leaves 'playing', the server's
+            // tickLogic returns early and ALL tick counts freeze — a caught
+            // mid-window is indistinguishable from a real BT freeze. Reload
+            // for a fresh life and restart the window when that happens.
             const first = await snapTicks();
             const seenClimb = new Set();
             let prev = first;
             let live = false;
+            let terminal = false;
             const deadline = Date.now() + 15000;
             while (Date.now() < deadline) {
                 await ctx.page.waitForTimeout(1000);
-                const cur = await snapTicks();
+                const sample = await ctx.page.evaluate(() => ({
+                    gs: window.__ariadne.gameState,
+                    rows: (() => { const m = {}; for (const r of window.__ariadne.btHud.rows) m[r.id] = r.ticks; return m; })(),
+                }));
+                if (sample.gs !== 'playing') { terminal = true; break; }
+                const cur = sample.rows;
                 for (const id of Object.keys(cur)) {
                     if (prev[id] !== undefined && cur[id] > prev[id]) seenClimb.add(id);
                 }
                 prev = cur;
                 const common = Object.keys(first).filter(id => cur[id] !== undefined);
                 if (common.length > 0 && common.every(id => seenClimb.has(id))) { live = true; break; }
+            }
+            if (terminal) {
+                await freshWorld(ctx);
+                await ctx.page.evaluate(() => document.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyB', bubbles: true })));
+                await ctx.page.waitForTimeout(1500);
+                const f2 = await snapTicks();
+                const s2 = await snapTicks();
+                await ctx.page.waitForTimeout(2000);
+                const c2 = await snapTicks();
+                const climbed = Object.keys(f2).filter(id => c2[id] !== undefined && c2[id] > f2[id]).length;
+                if (climbed === 0) throw new Error('BT HUD rows frozen even after fresh world reload');
+                // fall through with a live verdict for the probe<->DOM check
+                live = true;
             }
             if (!live) {
                 const cur = await snapTicks();

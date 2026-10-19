@@ -44,6 +44,15 @@ type Brain struct {
 	// lastFrame is the most recent encoded BT frame, for the explorer.
 	lastFrame *BTFrame
 
+	// replanLog records recent plan modifications for the I5 reasoning
+	// overlay: subtree expansions and conflict relocations (repair) and
+	// full rebuilds (replan). Capped; most recent last.
+	replanLog []ReplanEvent
+
+	// lastPlanRevision is the plan revision seen by the previous Tick, used
+	// to detect revision bumps (subtree expansion / conflict resolution).
+	lastPlanRevision uint64
+
 	// selfPos points to the actor's live position in the world.
 	selfPos *maze.Vec2
 }
@@ -80,7 +89,28 @@ func (b *Brain) buildPlan() error {
 		return err
 	}
 	b.plan = plan
+	b.lastPlanRevision = plan.PlannerRevision()
+	b.logReplanEvent(ReplanEvent{Type: "replan", Reason: "full rebuild", Revision: plan.PlannerRevision()})
 	return nil
+}
+
+// logReplanEvent appends an event to the replan log, keeping the most recent
+// five. The brain is driven by the single-writer loop, so no lock is needed.
+func (b *Brain) logReplanEvent(evt ReplanEvent) {
+	b.replanLog = append(b.replanLog, evt)
+	if len(b.replanLog) > 5 {
+		b.replanLog = b.replanLog[len(b.replanLog)-5:]
+	}
+}
+
+// detectPlanChange compares the plan revision before and after a tick. A
+// bump means the planner inserted a subtree (condition expansion) or
+// relocated a conflicting one — a local repair, not a full rebuild.
+func (b *Brain) detectPlanChange(rev uint64) {
+	if rev > b.lastPlanRevision {
+		b.logReplanEvent(ReplanEvent{Type: "repair", Reason: "subtree expanded", Revision: rev})
+	}
+	b.lastPlanRevision = rev
 }
 
 // WorldRevision returns the current world view revision.
@@ -194,9 +224,11 @@ func (b *Brain) Tick(attemptID string) *BTFrame {
 	result := b.plan.TickCaptured(pabt.TickEnvironment{AttemptID: attemptID})
 	b.movedLastTick = b.state.movedThisTick
 	b.state.movedThisTick = false
+	b.detectPlanChange(result.Snapshot.PlanRevision)
 	path := pabt.GetPath(b.plan)
 	frame := EncodeFrame(result.Snapshot, path)
 	frame.WorldView = b.worldViewFrame()
+	frame.ReplanEvents = append(frame.ReplanEvents, b.replanLog...)
 	b.lastFrame = frame
 	return frame
 }
@@ -211,9 +243,11 @@ func (b *Brain) TickDebug(attemptID string) (*BTFrame, string) {
 	result := b.plan.TickCaptured(pabt.TickEnvironment{AttemptID: attemptID})
 	b.movedLastTick = b.state.movedThisTick
 	b.state.movedThisTick = false
+	b.detectPlanChange(result.Snapshot.PlanRevision)
 	path := pabt.GetPath(b.plan)
 	frame := EncodeFrame(result.Snapshot, path)
 	frame.WorldView = b.worldViewFrame()
+	frame.ReplanEvents = append(frame.ReplanEvents, b.replanLog...)
 	b.lastFrame = frame
 
 	diag := fmt.Sprintf("status=%v statusKnown=%v", result.Status, result.StatusKnown)

@@ -361,3 +361,117 @@ func TestPauseSkipsTick(t *testing.T) {
 		t.Fatalf("no frame after resume")
 	}
 }
+
+// TestI5SemanticActionNamesAndCosts pins the I5 reasoning overlay's data
+// quality: CandidatesWithCost must carry semantic action names (Pursue,
+// Search, Recover, Retreat, Reinforce) with real costs — not the library's
+// effect-key names ("caught", cost 99) that the first I5 implementation
+// shipped. The names are derived from the effect key plus the precondition
+// key set (Retreat and Reinforce share the atDisadvantage effect key).
+func TestI5SemanticActionNamesAndCosts(t *testing.T) {
+	m, w, minotaur := newTestWorld(t)
+	w.Runner.Pos = maze.Vec2{X: minotaur.Pos.X + 2, Y: minotaur.Pos.Y}
+
+	b, err := NewBrain("M-1", m, &minotaur.Pos)
+	if err != nil {
+		t.Fatalf("NewBrain: %v", err)
+	}
+
+	snap := w.Copy()
+	b.UpdateWorldView(snap, minotaur)
+	frame := b.Tick("attempt")
+	if frame == nil {
+		t.Fatalf("no frame")
+	}
+	if len(frame.CandidatesWithCost) == 0 {
+		t.Fatalf("no candidatesWithCost in frame")
+	}
+
+	valid := map[string]int{
+		"Pursue":    1,
+		"Search":    2,
+		"Recover":   1,
+		"Retreat":   3,
+		"Reinforce": 2,
+	}
+	for _, c := range frame.CandidatesWithCost {
+		want, ok := valid[c.ActionName]
+		if !ok {
+			t.Errorf("candidate name %q is not a semantic action name (effect-key leak)", c.ActionName)
+			continue
+		}
+		if c.Cost != want {
+			t.Errorf("candidate %q cost = %d, want %d", c.ActionName, c.Cost, want)
+		}
+		if c.Cost == 99 {
+			t.Errorf("candidate %q has fallback cost 99", c.ActionName)
+		}
+	}
+}
+
+// TestI5ReplanLogDistinguishesRepairFromReplan pins the replan-event log:
+// a full rebuild logs type "replan", and the log is carried on the frame.
+func TestI5ReplanLogDistinguishesRepairFromReplan(t *testing.T) {
+	m, w, minotaur := newTestWorld(t)
+	w.Runner.Pos = maze.Vec2{X: minotaur.Pos.X + 2, Y: minotaur.Pos.Y}
+
+	b, err := NewBrain("M-1", m, &minotaur.Pos)
+	if err != nil {
+		t.Fatalf("NewBrain: %v", err)
+	}
+
+	snap := w.Copy()
+	b.UpdateWorldView(snap, minotaur)
+	frame := b.Tick("attempt")
+	if frame == nil {
+		t.Fatalf("no frame")
+	}
+	// The initial build logs a full replan.
+	var sawReplan bool
+	for _, evt := range frame.ReplanEvents {
+		if evt.Type == "replan" {
+			sawReplan = true
+		}
+		if evt.Type != "replan" && evt.Type != "repair" {
+			t.Errorf("unexpected replan event type %q", evt.Type)
+		}
+	}
+	if !sawReplan {
+		t.Fatalf("initial build did not log a replan event: %+v", frame.ReplanEvents)
+	}
+
+	// Force a full rebuild; the new frame's log must record it. The first
+	// tick after the rebuild may also expand a subtree (a repair on top of
+	// the replan), so the replan event is asserted present, not last.
+	if err := b.Replan(); err != nil {
+		t.Fatalf("Replan: %v", err)
+	}
+	snap = w.Copy()
+	b.UpdateWorldView(snap, minotaur)
+	frame = b.Tick("attempt")
+	if frame == nil {
+		t.Fatalf("no frame after replan")
+	}
+	var sawForcedReplan bool
+	for _, evt := range frame.ReplanEvents {
+		if evt.Type == "replan" && evt.Revision <= frame.PlanRevision {
+			sawForcedReplan = true
+		}
+		if evt.Type != "replan" && evt.Type != "repair" {
+			t.Errorf("unexpected replan event type %q", evt.Type)
+		}
+	}
+	if !sawForcedReplan {
+		t.Fatalf("forced rebuild not logged: %+v", frame.ReplanEvents)
+	}
+
+	// A quiet tick with no structural change appends no new events: the
+	// carried log is the same length as before.
+	before := len(frame.ReplanEvents)
+	snap = w.Copy()
+	b.UpdateWorldView(snap, minotaur)
+	frame = b.Tick("attempt")
+	if len(frame.ReplanEvents) != before {
+		t.Fatalf("quiet tick changed replan log: %d -> %d", before, len(frame.ReplanEvents))
+	}
+}
