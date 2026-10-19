@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/joeycumines/go-pabt/examples/labyrinth/maze"
+	"github.com/joeycumines/go-pabt/examples/labyrinth/netcode"
 	"github.com/joeycumines/go-pabt/examples/labyrinth/world"
 )
 
@@ -76,9 +77,9 @@ func TestContactKnockbackDisplacesBoth(t *testing.T) {
 	}
 }
 
-// TestPulseKnockbackPushesActorAway verifies that a successful pulse fire
-// displaces the hit actor along the shot direction. We drive the pulse
-// directly via FirePulse's inner loop closure by simulating the setup.
+// TestPulseKnockbackPushesActorAway verifies that FirePulse displaces a hit
+// actor along the shot direction via the mass-ratio knockback. This test
+// exercises the actual FirePulse code path (not a duplicated formula).
 func TestPulseKnockbackPushesActorAway(t *testing.T) {
 	m := &maze.Maze{W: 21, H: 21, Grid: make([]maze.Cell, 21*21)}
 	w := world.New(m)
@@ -93,16 +94,18 @@ func TestPulseKnockbackPushesActorAway(t *testing.T) {
 	}
 	w.Minotaurs = append(w.Minotaurs, swarm)
 
+	g := NewGame(m, 0, 42)
+	g.World = w
+
 	beforeActor := swarm.Pos
-	// Simulate the knockback calculation the same way FirePulse does it.
-	aimYaw := math.Pi / 2 // +X direction in server convention (sin=yaw, cos=yaw)
-	aimPitch := 0.0
-	fx := math.Sin(aimYaw) * math.Cos(aimPitch)
-	fy := math.Cos(aimYaw) * math.Cos(aimPitch)
-	aMass := actorMass(ActorType(swarm.Type))
-	kick := PulseKnockback * (RunnerMass / (RunnerMass + aMass))
-	swarm.Pos.X += fx * kick
-	swarm.Pos.Y += fy * kick
+
+	// Exercise the actual knockback code path extracted from FirePulse.
+	aim := netcode.RayHitOrigin{
+		Pos:   w.Runner.Pos,
+		Yaw:   math.Pi / 2,
+		Pitch: 0,
+	}
+	g.applyPulseKnockback(swarm, aim)
 
 	afterActor := swarm.Pos
 	delta := math.Hypot(afterActor.X-beforeActor.X, afterActor.Y-beforeActor.Y)

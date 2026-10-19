@@ -167,6 +167,19 @@ func (b *Brain) UpdateWorldView(snap *world.Snapshot, self *world.Minotaur) {
 		}
 	}
 
+	// I4: Allied yielding — same-element actors path around the player.
+	// Yield when: same element as runner AND runner detected AND within 3u.
+	// The yieldOffset in PursueAction/SearchAction shifts the target laterally
+	// so the actor paths around instead of blocking.
+	b.world.AllyYielding = false
+	if detected && b.world.SelfElement == b.world.PlayerElement {
+		rdx := snap.Runner.Pos.X - self.Pos.X
+		rdy := snap.Runner.Pos.Y - self.Pos.Y
+		if rdx*rdx+rdy*rdy < 3.0*3.0 {
+			b.world.AllyYielding = true
+		}
+	}
+
 	b.worldRevision.Add(1)
 }
 

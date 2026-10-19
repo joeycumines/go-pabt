@@ -149,9 +149,15 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request, g *game.Game) {
 	// Create or rejoin a player session. A reconnecting client presents its
 	// prior token as a query parameter; if it matches a retained session the
 	// prediction state is preserved instead of resetting to maze start.
+	// AddSession returns this connection's generation atomically (no
+	// separate lookup that a concurrent rejoin could slip between).
 	rejoinToken := r.URL.Query().Get("token")
-	sess, token := g.AddSession(rejoinToken)
-	defer g.RemoveSession(sess.ID)
+	sess, token, gen := g.AddSession(rejoinToken)
+	// Teardown is deferred until after the channels exist (below).
+	var snapCh chan []byte
+	var eventCh chan game.Event
+	var treeCh chan map[string][]byte
+	defer func() { g.ReleaseConnection(sess.ID, gen, snapCh, eventCh, treeCh) }()
 
 	// If the world was in a terminal phase, AddSession queued a reset; wait
 	// for it to land so this connection's first snapshot is the fresh game,
@@ -173,13 +179,15 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request, g *game.Game) {
 	}
 	conn.WriteMessage(ws.OpText, mazeMsg)
 
-	// Subscribe to snapshots and events.
-	snapCh := make(chan []byte, 32)
-	eventCh := make(chan game.Event, 64)
-	treeCh := make(chan map[string][]byte, 4)
-	g.Subscribe(sess.ID, snapCh)
-	g.SubscribeEvents(sess.ID, eventCh)
-	g.SubscribeTrees(sess.ID, treeCh)
+	// Subscribe to snapshots and events. The generation stamps each
+	// registration so a dying connection's late Subscribe can never
+	// displace this one (double-reload inversion).
+	snapCh = make(chan []byte, 32)
+	eventCh = make(chan game.Event, 64)
+	treeCh = make(chan map[string][]byte, 4)
+	g.Subscribe(sess.ID, gen, snapCh)
+	g.SubscribeEvents(sess.ID, gen, eventCh)
+	g.SubscribeTrees(sess.ID, gen, treeCh)
 
 	// Writer goroutine: send snapshots, events, and tree frames.
 	done := make(chan struct{})

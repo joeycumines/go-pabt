@@ -22,7 +22,7 @@ func TestWorldResetOnAddSessionAfterWin(t *testing.T) {
 	g.World.Runner.Pos = maze.Vec2{X: 5.5, Y: 5.5}
 
 	// AddSession must queue a reset.
-	_, _ = g.AddSession("")
+	_, _, _ = g.AddSession("")
 
 	// Run one tick to apply the queued command.
 	g.Loop.TickOnce()
@@ -58,14 +58,14 @@ func TestWorldResetOnRejoinAfterLoss(t *testing.T) {
 	g := NewGame(m, 8, 42)
 
 	// Create a session, then disconnect it.
-	sess, token := g.AddSession("")
+	sess, token, _ := g.AddSession("")
 	g.RemoveSession(sess.ID)
 
 	// Drive the world to lost.
 	g.World.Phase = world.PhaseLost
 
 	// Rejoin with the same token.
-	_, gotToken := g.AddSession(token)
+	_, gotToken, _ := g.AddSession(token)
 	if gotToken != token {
 		t.Fatalf("rejoin token = %q, want %q", gotToken, token)
 	}
@@ -89,10 +89,10 @@ func TestRejoinSameTokenWhileStillConnected(t *testing.T) {
 	m := maze.Generate(42, 21, 21)
 	g := NewGame(m, 8, 42)
 
-	sess, token := g.AddSession("")
+	sess, token, _ := g.AddSession("")
 	// Do NOT call RemoveSession - simulate the browser closing the old WS
 	// and opening the new one faster than the server's read pump notices.
-	got, gotToken := g.AddSession(token)
+	got, gotToken, _ := g.AddSession(token)
 	if gotToken != token {
 		t.Fatalf("rejoin token = %q, want %q (same session must be reused)", gotToken, token)
 	}
@@ -111,7 +111,7 @@ func TestNoResetWhenPhaseRunning(t *testing.T) {
 	g.World.Runner.HP = 42
 	g.World.Round = 123
 
-	_, _ = g.AddSession("")
+	_, _, _ = g.AddSession("")
 	g.Loop.TickOnce()
 
 	if g.World.Runner.HP != 42 {

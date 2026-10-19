@@ -25,6 +25,14 @@ const seed = 444004;
 function log(msg) { process.stdout.write(`[e2e] ${msg}\n`); }
 
 function buildBinary() {
+    // E2E_BIN: skip the build and use a prebuilt server binary. This lets
+    // the suite exercise a `-race` build (the reconnect/session code is
+    // concurrent and deserves detector coverage under real multi-connection
+    // load) or any other custom build without editing the runner.
+    if (process.env.E2E_BIN) {
+        log(`using prebuilt binary from E2E_BIN: ${process.env.E2E_BIN}`);
+        return process.env.E2E_BIN;
+    }
     log('building -tags example binary ...');
     const bin = path.join(tmpdir(), 'labyrinth-e2e-bin');
     execSync(`go build -tags example -o ${JSON.stringify(bin)} ./examples/labyrinth`, {

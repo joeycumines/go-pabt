@@ -147,9 +147,14 @@ func (a *PursueAction) Node() bt.Node {
 			// I4: allied yielding — offset target laterally so same-element
 			// actors step aside instead of blocking the player's path.
 			if a.state.world.AllyYielding {
-				target = yieldOffset(target, *a.state.selfPos)
+				shifted := yieldOffset(target, *a.state.selfPos)
+				a.path = a.state.maze.Path(*a.state.selfPos, shifted)
 			}
-			a.path = a.state.maze.Path(*a.state.selfPos, target)
+			// Fall back to the unshifted target if the offset path is nil
+			// (wall blocks the offset) or if yielding is off.
+			if a.path == nil {
+				a.path = a.state.maze.Path(*a.state.selfPos, target)
+			}
 			if a.path == nil {
 				return bt.Failure, nil
 			}
@@ -197,9 +202,13 @@ func (a *SearchAction) Node() bt.Node {
 			target := a.state.world.LastKnownPos
 			// I4: allied yielding — offset search target laterally.
 			if a.state.world.AllyYielding {
-				target = yieldOffset(target, *a.state.selfPos)
+				shifted := yieldOffset(target, *a.state.selfPos)
+				a.path = a.state.maze.Path(*a.state.selfPos, shifted)
 			}
-			a.path = a.state.maze.Path(*a.state.selfPos, target)
+			// Fall back to the unshifted target if the offset path is nil.
+			if a.path == nil {
+				a.path = a.state.maze.Path(*a.state.selfPos, target)
+			}
 			if a.path == nil {
 				// Cannot reach last-known: the search is exhausted.
 				a.done = true

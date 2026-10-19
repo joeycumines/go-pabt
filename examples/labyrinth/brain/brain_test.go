@@ -10,13 +10,18 @@ import (
 	"github.com/joeycumines/go-pabt/examples/labyrinth/world"
 )
 
-// newTestWorld builds a small maze with a runner and one minotaur.
+// newTestWorld builds a small maze with a runner and one minotaur. The
+// minotaur is set to element 3 (void) while the runner defaults to element 0
+// (fire). Void beats fire in the elemental cycle, so the minotaur is at
+// advantage (not disadvantage, which would trigger retreat instead of pursue)
+// and not same-element (which would trigger allied yielding instead of catch).
 func newTestWorld(t *testing.T) (*maze.Maze, *world.World, *world.Minotaur) {
 	t.Helper()
 	m := maze.Generate(42, 11, 11)
 	w := world.New(m)
-	// Place the minotaur at a known floor cell.
-	minotaur := &world.Minotaur{ID: "M-1", Pos: m.Start}
+	// Element 3 (void) beats element 0 (fire): actor has advantage and
+	// pursues aggressively; different element means no allied yielding.
+	minotaur := &world.Minotaur{ID: "M-1", Pos: m.Start, Element: 3}
 	w.Minotaurs = append(w.Minotaurs, minotaur)
 	return m, w, minotaur
 }

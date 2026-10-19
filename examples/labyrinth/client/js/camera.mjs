@@ -13,7 +13,6 @@ export class Camera {
         this.currentFovDeg = 70;
         this.targetFovDeg = 70;
         this.recoilPitch = 0;   // radians, added to pitch for rendering only
-        this.recoilVel = 0;     // spring velocity for recoil recovery
         this.bobPhase = 0;
         this.bobOffsetX = 0;    // weapon lateral sway (camera-right)
         this.bobOffsetY = 0;    // weapon vertical bounce
@@ -36,12 +35,24 @@ export class Camera {
 
     get locked() { return this._locked; }
 
-    // applyRecoil kicks the view upward and arms the spring recovery. The
+    // applyRecoil kicks the view upward for a "shoot feel" effect. The
     // player never sends the resulting pitch to the server, so this is purely
-    // a visual "shoot feel" effect.
+    // visual. Uses a pure displacement (no velocity kick) so the recovery
+    // spring never overshoots past the initial kick value.
     applyRecoil(strength = 0.02) {
-        this.recoilPitch += strength;
-        this.recoilVel += strength * 40;
+        this.recoilPitch += strength * 2.5;
+    }
+
+    // updateRecoil decays the recoil spring. Called from frame() regardless
+    // of gameState so the visual effect always completes, even on the
+    // death/win overlay. Separated from updateMovement (which is gated on
+    // gameState==='playing') to prevent the spring from freezing mid-decay.
+    updateRecoil(dt) {
+        // Fast exponential decay: ~99% gone within 1 second.
+        this.recoilPitch *= Math.pow(0.01, dt);
+        if (Math.abs(this.recoilPitch) < 0.0001) {
+            this.recoilPitch = 0;
+        }
     }
 
     // kickFov briefly narrows the FOV for a snap-fire feel.
@@ -51,17 +62,20 @@ export class Camera {
 
     // updateMovement advances the visual juice: sprint FOV widen, recoil
     // spring recovery, weapon bob. Call once per frame before viewMatrix().
-    updateMovement(dt, speed) {
-        const sprinting = speed > 5;
+    //
+    // sprinting: the player's sprint INTENT (input.sprint). FOV widens when
+    // the player holds sprint, regardless of whether they are wall-blocked —
+    // this matches FPS game-feel convention (FOV signals "you are in sprint
+    // mode", not "you are currently displacing at sprint speed"). It also
+    // avoids the review-03 diagonal-walking bug where inputMag*walkSpeed
+    // exceeded the sprint threshold.
+    //
+    // speed: the player's ACTUAL velocity magnitude (post-collision). Bob
+    // responds to real motion so the weapon doesn't swing while the player
+    // is wedged against a wall (review-04 "bobbing while blocked by a wall").
+    updateMovement(dt, sprinting, speed) {
         this.targetFovDeg = sprinting ? this.baseFovDeg + 10 : this.baseFovDeg;
         this.currentFovDeg += (this.targetFovDeg - this.currentFovDeg) * Math.min(1, 4 * dt);
-        const k = 60, d = 12;
-        this.recoilVel += (-k * this.recoilPitch - d * this.recoilVel) * dt;
-        this.recoilPitch += this.recoilVel * dt;
-        if (Math.abs(this.recoilPitch) < 0.0001 && Math.abs(this.recoilVel) < 0.0001) {
-            this.recoilPitch = 0;
-            this.recoilVel = 0;
-        }
         if (speed > 0.1) {
             const bobFreq = sprinting ? 14 : 8;
             const bobAmp = sprinting ? 0.05 : 0.03;

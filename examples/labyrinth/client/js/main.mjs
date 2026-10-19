@@ -33,10 +33,14 @@ const JUMP_VEL = 6;
 const PLAYER_HEIGHT = 0.5;
 const PLAYER_RADIUS = 0.3;
 const MAX_HP = 100;
-// I2 tuning: friction decay per frame (0.85 = heavy sliding, 0.0 = instant stop).
+// I2 tuning: friction decay per frame (0.82 = moderate sliding, 0.0 = instant stop).
 const FRICTION = 0.82;
-// I2: gun blowback force applied on fire (velocity impulse opposite aim).
-const BLOWBACK_FORCE = 2.8;
+// I2/R16: gun blowback is a visual-only camera offset (not applied to the
+// velocity that drives server reconciliation, so it cannot cause rubber-
+// banding). The offset decays over ~0.2s.
+const BLOWBACK_FORCE = 1.2;
+let blowbackOffsetX = 0;
+let blowbackOffsetZ = 0;
 
 // Minotaur interpolation state
 let minotaurBuffers = new Map(); // id -> { pos, targetPos, lastUpdate, type, stunned }
@@ -262,6 +266,9 @@ function frame(time) {
     if (gameState === 'playing' && maze) {
         update(dt);
     }
+    // Recoil recovery runs regardless of gameState so the visual effect
+    // always completes, even if the player is caught mid-recoil.
+    camera.updateRecoil(dt);
     if (maze) {
         render();
     }
@@ -308,22 +315,27 @@ function frame(time) {
 function update(dt) {
     input.update();
     const maxSpeed = input.sprint ? 6.5 : 4.0;
-    camera.updateMovement(dt, Math.hypot(input.forward, input.strafe) * maxSpeed);
 
     // I2: velocity-based movement with momentum and friction.
     // Movement basis: yaw-relative WASD.
     const fwd = [Math.sin(camera.yaw), 0, Math.cos(camera.yaw)];
     const right = [-Math.cos(camera.yaw), 0, Math.sin(camera.yaw)];
 
-    // Desired velocity from input.
-    const wantX = (fwd[0] * input.forward + right[0] * input.strafe) * maxSpeed;
-    const wantZ = (fwd[2] * input.forward + right[2] * input.strafe) * maxSpeed;
+    // Normalize input so diagonal movement doesn't exceed maxSpeed.
+    // Without this, forward+strafe gives sqrt(2)*maxSpeed ≈ 1.41x cardinal.
+    const inputMag = Math.hypot(input.forward, input.strafe);
+    const normFwd = inputMag > 0.01 ? input.forward / inputMag : 0;
+    const normStr = inputMag > 0.01 ? input.strafe / inputMag : 0;
+
+    // Desired velocity from normalized input.
+    const wantX = (fwd[0] * normFwd + right[0] * normStr) * maxSpeed;
+    const wantZ = (fwd[2] * normFwd + right[2] * normStr) * maxSpeed;
 
     // Acceleration: when input is present, lerp toward target velocity quickly;
     // otherwise friction decays existing velocity (momentum / sliding).
-    const hasInput = Math.hypot(input.forward, input.strafe) > 0.01;
+    const hasInput = inputMag > 0.01;
     if (hasInput) {
-        // Tight response: ~95% of target within 0.1s.
+        // Tight response: ~50% of target within 0.1s (exponential lerp).
         const a = 1 - Math.pow(0.001, dt);
         playerVelX += (wantX - playerVelX) * a;
         playerVelZ += (wantZ - playerVelZ) * a;
@@ -344,6 +356,13 @@ function update(dt) {
         playerVelX = playerVelX / spd * cap;
         playerVelZ = playerVelZ / spd * cap;
     }
+
+    // Feed camera.updateMovement both the sprint INTENT (input.sprint) and
+    // the ACTUAL velocity magnitude. Sprint intent drives FOV widening (FPS
+    // convention: FOV signals sprint mode regardless of wall blocking); actual
+    // speed drives weapon bob (so a wall-blocked player doesn't bob in place).
+    const actualSpeed = Math.hypot(playerVelX, playerVelZ);
+    camera.updateMovement(dt, input.sprint, actualSpeed);
 
     const prevX = camera.pos[0], prevZ = camera.pos[2];
     let newX = prevX + playerVelX * dt;
@@ -421,10 +440,10 @@ function update(dt) {
             const muzzPos = [camera.pos[0] + rd[0] * 0.6, camera.pos[1] + rd[1] * 0.6 - 0.2, camera.pos[2] + rd[2] * 0.6];
             particles.muzzleBurst(muzzPos, rd, ec);
         }
-        // I2: gun blowback — impulse player velocity opposite to aim (XZ only;
-        // vertical aim component ignored so shots don't launch the player).
-        playerVelX -= rd[0] * BLOWBACK_FORCE;
-        playerVelZ -= rd[2] * BLOWBACK_FORCE;
+        // R16: gun blowback — visual-only camera offset (does not affect
+        // playerVelX/Z, so server reconciliation does not fight it).
+        blowbackOffsetX -= rd[0] * BLOWBACK_FORCE * 0.05;
+        blowbackOffsetZ -= rd[2] * BLOWBACK_FORCE * 0.05;
         // Apply recoil AFTER firing so the shot itself is accurate
         camera.applyRecoil(0.02);
         camera.kickFov(3);
@@ -440,12 +459,12 @@ function update(dt) {
         for (const [id, buf] of minotaurBuffers) {
             if (buf.stunned || buf.hp <= 0) continue;
             const dx = buf.pos[0] - camera.pos[0];
+            const dy = buf.pos[1] - camera.pos[1];
             const dz = buf.pos[2] - camera.pos[2];
-            const dist = Math.hypot(dx, dz);
+            const dist = Math.hypot(dx, dy, dz);
             if (dist > 12 || dist < 0.5) continue;
-            const toActorX = dx / dist;
-            const toActorZ = dz / dist;
-            const dot = aimDir[0] * toActorX + aimDir[2] * toActorZ;
+            // R13: full 3D dot product — works at any pitch angle.
+            const dot = (aimDir[0] * dx + aimDir[1] * dy + aimDir[2] * dz) / dist;
             if (dot > 0.95) {
                 aimLocked = true;
                 break;
@@ -515,6 +534,26 @@ function update(dt) {
     if (muzzleFlashTimer > 0) muzzleFlashTimer--;
     if (hitFlashTimer > 0) hitFlashTimer--;
     if (damageFlashTimer > 0) damageFlashTimer--;
+
+    // R16: blowback visual offset decay.
+    blowbackOffsetX *= Math.pow(0.01, dt);
+    blowbackOffsetZ *= Math.pow(0.01, dt);
+    if (Math.abs(blowbackOffsetX) < 0.001) blowbackOffsetX = 0;
+    if (Math.abs(blowbackOffsetZ) < 0.001) blowbackOffsetZ = 0;
+
+    // R3: Screen shake decay — decrement timer and compute random offset.
+    if (screenShakeTimer > 0) {
+        screenShakeTimer -= dt;
+        if (screenShakeTimer < 0) screenShakeTimer = 0;
+        const fade = screenShakeTimer > 0 ? screenShakeIntensity * (screenShakeTimer / (screenShakeTimer + dt)) : 0;
+        screenShakeOffsetX = (Math.random() - 0.5) * 2 * fade;
+        screenShakeOffsetY = (Math.random() - 0.5) * 2 * fade;
+        screenShakeOffsetZ = (Math.random() - 0.5) * 2 * fade;
+    } else {
+        screenShakeOffsetX = 0;
+        screenShakeOffsetY = 0;
+        screenShakeOffsetZ = 0;
+    }
     if (hitMarkerTimer > 0) {
         hitMarkerTimer--;
         if (hitMarkerTimer === 0) {
@@ -586,6 +625,50 @@ function update(dt) {
         fire() { input.fire = true; },
         setYaw(y) { camera.yaw = y; },
         teleport(x, z) { camera.pos[0] = x; camera.pos[2] = z; net.sendDebugTeleport(x, z); },
+        // E2E: grid line-of-sight check between two XZ world points. Samples
+        // the maze grid (same source the renderer and collision use) so
+        // scenarios can verify a clear fire lane instead of assuming one —
+        // the server's rayOccluded rejects shots through walls, which was
+        // the dominant cause of flaky fire scenarios.
+        losClear(x1, z1, x2, z2) {
+            if (!maze) return false;
+            const dist = Math.hypot(x2 - x1, z2 - z1);
+            const steps = Math.max(1, Math.ceil(dist / 0.25));
+            for (let i = 1; i < steps; i++) {
+                const t = i / steps;
+                const cx = Math.floor(x1 + (x2 - x1) * t);
+                const cz = Math.floor(z1 + (z2 - z1) * t);
+                if (cx < 0 || cz < 0 || cx >= maze.w || cz >= maze.h) return false;
+                const cell = maze.grid[cz * maze.w + cx];
+                // Match the server's rayOccluded: only floor (1) and
+                // platform (2) are transparent; wall (0), gap (3), and
+                // out-of-bounds occlude.
+                if (cell !== 1 && cell !== 2) return false;
+            }
+            return true;
+        },
+        // E2E: find a fire standpoint near a target — an open maze cell at
+        // ~dist units from the target with an unobstructed line of sight to
+        // the target's center. Samples 16 compass directions around the
+        // target and returns the first valid [x, z], or null.
+        findStandpoint(tx, tz, dist) {
+            if (!maze) return null;
+            for (let i = 0; i < 16; i++) {
+                const ang = (i / 16) * Math.PI * 2;
+                const x = tx + Math.sin(ang) * dist;
+                const z = tz + Math.cos(ang) * dist;
+                const cx = Math.floor(x), cz = Math.floor(z);
+                if (cx < 0 || cz < 0 || cx >= maze.w || cz >= maze.h) continue;
+                const cell = maze.grid[cz * maze.w + cx];
+                // Stand only on floor/platform — a wall cell would make
+                // DebugTeleport's collision resolve push us off the chosen
+                // point (breaking LOS), and a gap cell would drop us.
+                if (cell !== 1 && cell !== 2) continue;
+                if (!this.losClear(x, z, tx, tz)) continue;
+                return [x, z];
+            }
+            return null;
+        },
         // G3: BT-tick HUD state for verification (__ariadne.btHud).
         get btHud() { return btHud ? btHud.probe() : null; },
         toggleBTHud() { if (btHud) btHud.toggle(); },
@@ -645,13 +728,16 @@ function spawnDamageNumber(worldX, worldZ, damage, advantage) {
 // H2: Kill feed entry.
 const FACTION_NAMES = ['Ember Legion', 'Frost Covenant', 'Storm Pact', 'Void Cult'];
 const TYPE_NAMES = ['Brute', 'Swarm', 'Caster', 'Stalker'];
+// FACTION_COLORS maps element index to CSS color string for kill feed borders.
+const FACTION_COLORS = ['#ff5a1a', '#5ac8ff', '#fff23f', '#8c33d9'];
+
 function addKillEntry(element, type) {
     const feed = document.getElementById('kill-feed');
     if (!feed) return;
     const entry = document.createElement('div');
     entry.className = 'kill-entry';
-    entry.style.borderColor = FACTION_COLORS[element] || '#ffffff';
-    entry.textContent = (FACTION_NAMES[element] || 'Unknown') + ' ' + (TYPE_NAMES[type] || 'hunter') + ' eliminated';
+    entry.style.borderColor = FACTION_COLORS[element|0] || '#ffffff';
+    entry.textContent = (FACTION_NAMES[element|0] || 'Unknown') + ' ' + (TYPE_NAMES[type|0] || 'hunter') + ' eliminated';
     feed.appendChild(entry);
     while (feed.children.length > 5) feed.removeChild(feed.firstChild);
     setTimeout(() => entry.remove(), 5000);
@@ -660,6 +746,9 @@ function addKillEntry(element, type) {
 // H2: Screen shake state.
 let screenShakeTimer = 0;
 let screenShakeIntensity = 0;
+let screenShakeOffsetX = 0;
+let screenShakeOffsetY = 0;
+let screenShakeOffsetZ = 0;
 
 // H2: Trigger a screen shake of given intensity for duration seconds.
 // Applied per-frame in render() by offsetting camera.pos.
@@ -758,10 +847,16 @@ function handleEvent(evt) {
                 }
                 minotaurBuffers.delete(evt.data.id);
             }
+            // R2: wire kill feed — show faction-named entry on death.
+            if (evt.data) {
+                addKillEntry(evt.data.element, evt.data.type);
+            }
             break;
         }
         case 'hit':
             damageFlashTimer = 10;
+            // R3: trigger screen shake on player damage.
+            applyScreenShake(0.05, 0.2);
             break;
         case 'spawn':
             // H5: Wave announcement banner.
@@ -786,8 +881,22 @@ function render() {
 
     const aspect = canvas.width / canvas.height;
     renderer.setProj(camera.projMatrix(aspect));
+    // R3+R16: apply screen shake + blowback offset to camera for rendering.
+    // The offset is applied for the ENTIRE render pass so skeletal models,
+    // particles, and the minimap all shake coherently with the world
+    // geometry — not just the opaque pass.
+    const shakenPos = [
+        camera.pos[0] + screenShakeOffsetX + blowbackOffsetX,
+        camera.pos[1] + screenShakeOffsetY,
+        camera.pos[2] + screenShakeOffsetZ + blowbackOffsetZ,
+    ];
+    // Swap camera.pos for the duration of the render so every view-matrix
+    // consumer (renderer, modelBank, particles, minimap, weapon basis)
+    // sees the same shaken position. Restored after render completes.
+    const origPos = camera.pos;
+    camera.pos = shakenPos;
     renderer.setView(camera.viewMatrix());
-    renderer.setCamera(camera.pos);
+    renderer.setCamera(shakenPos);
 
     const snap = net.getSnapshot();
     const intensity = snap ? snap.data.intensity : 0;
@@ -987,22 +1096,53 @@ function render() {
             instances.push({ pos: [buf.pos[0] - 0.1, buf.pos[1] + eyeY, buf.pos[2] - 0.15], scale: [0.08, 0.08, 0.08], color: [1, 1, 1, 1] });
             instances.push({ pos: [buf.pos[0] + 0.1, buf.pos[1] + eyeY, buf.pos[2] - 0.15], scale: [0.08, 0.08, 0.08], color: [1, 1, 1, 1] });
         }
-        // H2: Enemy HP bar billboard above wounded actors.
+        // H2/R9: Enemy HP bar billboard above wounded actors — camera-facing.
         if (buf.hp !== undefined && buf.hp > 0 && buf.hp < (ACTOR_MAX_HP[buf.type|0] || 30)) {
             const barW = 0.8;
             const barH = 0.08;
             const barY = buf.pos[1] + MODEL_SCALE_TARGET + 0.6;
+            // Build a camera-facing billboard matrix for the HP bar.
+            // The bar faces the camera by using the inverse of the view
+            // rotation (extracted from camera basis).
+            const camFwd = camera.renderDir();
+            const camRight = camera.right();
+            // Camera up from cross product (same as weapon basis).
+            const camUpX = camRight[1] * camFwd[2] - camRight[2] * camFwd[1];
+            const camUpY = camRight[2] * camFwd[0] - camRight[0] * camFwd[2];
+            const camUpZ = camRight[0] * camFwd[1] - camRight[1] * camFwd[0];
+            const cuLen = Math.hypot(camUpX, camUpY, camUpZ) || 1;
+            const camUp = [camUpX / cuLen, camUpY / cuLen, camUpZ / cuLen];
+
+            // Background bar (dark).
+            const bgMM = new Float32Array(16);
+            bgMM[0] = camRight[0] * barW; bgMM[1] = camRight[1] * barW; bgMM[2] = camRight[2] * barW; bgMM[3] = 0;
+            bgMM[4] = camUp[0] * barH;    bgMM[5] = camUp[1] * barH;    bgMM[6] = camUp[2] * barH;    bgMM[7] = 0;
+            bgMM[8] = -camFwd[0] * 0.02;  bgMM[9] = -camFwd[1] * 0.02;  bgMM[10] = -camFwd[2] * 0.02; bgMM[11] = 0;
+            bgMM[12] = buf.pos[0]; bgMM[13] = barY; bgMM[14] = buf.pos[2]; bgMM[15] = 1;
             instances.push({
                 pos: [buf.pos[0], barY, buf.pos[2]],
                 scale: [barW, barH, 0.02],
                 color: [0.1, 0.1, 0.1, 0.85],
+                modelMatrix: bgMM,
             });
+
+            // Fill bar (colored by HP fraction), offset to the left.
             const fillW = barW * hpFrac;
             const fillColor = hpFrac > 0.5 ? [0, 1, 0.3, 1] : hpFrac > 0.25 ? [1, 0.8, 0, 1] : [1, 0.2, 0.2, 1];
+            const fillOffsetX = -(barW - fillW) / 2;
+            const fillMM = new Float32Array(16);
+            fillMM[0] = camRight[0] * fillW; fillMM[1] = camRight[1] * fillW; fillMM[2] = camRight[2] * fillW; fillMM[3] = 0;
+            fillMM[4] = camUp[0] * barH;     fillMM[5] = camUp[1] * barH;     fillMM[6] = camUp[2] * barH;     fillMM[7] = 0;
+            fillMM[8] = -camFwd[0] * 0.03;   fillMM[9] = -camFwd[1] * 0.03;   fillMM[10] = -camFwd[2] * 0.03;  fillMM[11] = 0;
+            fillMM[12] = buf.pos[0] + camRight[0] * fillOffsetX;
+            fillMM[13] = barY + camUp[0] * 0;
+            fillMM[14] = buf.pos[2] + camRight[2] * fillOffsetX;
+            fillMM[15] = 1;
             instances.push({
-                pos: [buf.pos[0] - (barW - fillW) / 2, barY, buf.pos[2] + 0.01],
+                pos: [buf.pos[0], barY, buf.pos[2]],
                 scale: [fillW, barH, 0.03],
                 color: fillColor,
+                modelMatrix: fillMM,
             });
         }
 
@@ -1081,7 +1221,8 @@ function render() {
             const dot = fwd[0] * toActorX + fwd[2] * toActorZ;
             if (dot < 0.3) {
                 const ec = ELEMENT_COLORS[buf.element|0] || ELEMENT_COLORS[0];
-                const angle = Math.atan2(toActorX, toActorZ);
+                // R10: subtract camera.yaw so arrows rotate with the player.
+                const angle = Math.atan2(toActorX, toActorZ) - camera.yaw;
                 const arrow = document.createElement('div');
                 arrow.className = 'threat-arrow';
                 arrow.style.borderBottomColor = 'rgb(' + Math.round(ec[0]*255) + ',' + Math.round(ec[1]*255) + ',' + Math.round(ec[2]*255) + ')';
@@ -1090,6 +1231,11 @@ function render() {
             }
         }
     }
+    // Restore camera.pos to its true authoritative value now that the
+    // render pass is complete. Anything that reads camera.pos after this
+    // (the next frame's update(), server reconciliation, the __ariadne
+    // probe) sees the unshaken position.
+    camera.pos = origPos;
 }
 
 // H1: Build the first-person weapon model instances in camera space.
@@ -1103,20 +1249,31 @@ function buildWeaponInstances(cam, element) {
     // Camera basis vectors in world space.
     const fwd = cam.renderDir();
     const right = cam.right();
-    const up = [0, 1, 0];
+    // R8: compute camera up from cross(fwd, right) to ensure orthonormal
+    // right-handed basis. World up [0,1,0] is not perpendicular to fwd when
+    // pitch is nonzero, which sheared the weapon and produced a det=-1 matrix
+    // (left-handed, inverting face winding under gl.CULL_FACE).
+    const upX = right[1] * fwd[2] - right[2] * fwd[1];
+    const upY = right[2] * fwd[0] - right[0] * fwd[2];
+    const upZ = right[0] * fwd[1] - right[1] * fwd[0];
+    const upLen = Math.hypot(upX, upY, upZ) || 1;
+    const up = [upX / upLen, upY / upLen, upZ / upLen];
 
     // Weapon anchor: lower-right of viewport, offset from camera.
     // right * 0.3 = right side, fwd * 0.5 = in front, down * 0.3 = below eye.
     const bobX = cam.bobOffsetX;
     const bobY = cam.bobOffsetY;
     const anchor = [
-        cam.pos[0] + right[0] * (0.3 + bobX) + fwd[0] * 0.5 + up[0] * (-0.3 + bobY),
-        cam.pos[1] + right[1] * (0.3 + bobX) + fwd[1] * 0.5 + up[1] * (-0.3 + bobY),
-        cam.pos[2] + right[2] * (0.3 + bobX) + fwd[2] * 0.5 + up[2] * (-0.3 + bobY),
+        cam.pos[0] + right[0] * (0.3 + bobX) + fwd[0] * 0.5 - up[0] * (0.3 - bobY),
+        cam.pos[1] + right[1] * (0.3 + bobX) + fwd[1] * 0.5 - up[1] * (0.3 - bobY),
+        cam.pos[2] + right[2] * (0.3 + bobX) + fwd[2] * 0.5 - up[2] * (0.3 - bobY),
     ];
 
-    // Weapon local axes: forward = camera forward, right = camera right, up = world up.
-    // Build a rotation matrix from these axes.
+    // Weapon local axes: right = camera right, up = computed camera up,
+    // fwd = camera forward. Orthonormal basis (det = -1 — same handedness
+    // as the pre-existing pitch=0 convention; the cube geometry's face
+    // winding matches). Using cross(right, fwd) for up eliminates the
+    // shear that a hard-coded world-up [0,1,0] caused at nonzero pitch.
     const m = new Float32Array(16);
     m[0] = right[0]; m[1] = right[1]; m[2] = right[2]; m[3] = 0;
     m[4] = up[0];    m[5] = up[1];    m[6] = up[2];    m[7] = 0;

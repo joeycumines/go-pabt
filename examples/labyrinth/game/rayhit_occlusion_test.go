@@ -28,7 +28,7 @@ func TestFirePulseRayOccludedByWall(t *testing.T) {
 	g := NewGame(m, 8, 42)
 
 	// Place a session so FirePulse has a runner position/element to use.
-	sess, _ := g.AddSession("")
+	sess, _, _ := g.AddSession("")
 	g.World.Runner.Pos = maze.Vec2{X: 5.5, Y: 5.5}
 	g.World.Runner.Element = 0
 	g.sessMu.RLock()
@@ -98,7 +98,7 @@ func TestFirePulseNearestAlongRay(t *testing.T) {
 	m := maze.Generate(42, 21, 21)
 	g := NewGame(m, 8, 42)
 
-	sess, _ := g.AddSession("")
+	sess, _, _ := g.AddSession("")
 	g.World.Runner.Pos = maze.Vec2{X: 5.5, Y: 5.5}
 	g.World.Runner.Element = 0
 	g.sessMu.RLock()
@@ -143,7 +143,7 @@ func TestApplyInputStoresPitch(t *testing.T) {
 	m := maze.Generate(42, 21, 21)
 	g := NewGame(m, 8, 42)
 
-	sess, _ := g.AddSession("")
+	sess, _, _ := g.AddSession("")
 	_ = sess
 
 	const wantPitch = 0.42

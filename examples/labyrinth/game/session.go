@@ -39,12 +39,39 @@ type PlayerSession struct {
 	// currently connected. Sessions are retained for a grace period after
 	// disconnect so the same token can rejoin without losing prediction state.
 	disconnectedAt time.Time
+
+	// connGen counts (re)connections for this session. A connection handler
+	// captures the generation after AddSession and passes it to
+	// ReleaseConnection on exit, so a slow-dying old socket can never tear
+	// down the subscriber channels or disconnect-mark of a newer connection
+	// that has already rejoined the same session (the reload race).
+	connGen uint64
 }
 
 // Event is a typed game event sent to clients.
 type Event struct {
 	Type string      `json:"type"`
 	Data interface{} `json:"data,omitempty"`
+}
+
+// Subscriber entries carry the connection generation that registered them.
+// Subscribe keeps the highest-generation registration per session, so an
+// older connection's late Subscribe (the double-reload inversion, where the
+// old handler is delayed in WaitForRunningPhase and subscribes after the
+// new one) can never overwrite the live connection's channels.
+type snapSubEntry struct {
+	ch  chan []byte
+	gen uint64
+}
+
+type eventSubEntry struct {
+	ch  chan Event
+	gen uint64
+}
+
+type treeSubEntry struct {
+	ch  chan map[string][]byte
+	gen uint64
 }
 
 // ActorType defines distinct actor archetypes.
@@ -162,11 +189,11 @@ type Game struct {
 
 	sessions    map[SessionID]*PlayerSession
 	sessMu      sync.RWMutex
-	subscribers map[SessionID]chan []byte
+	subscribers map[SessionID]snapSubEntry
 	subMu       sync.RWMutex
-	eventSubs   map[SessionID]chan Event
+	eventSubs   map[SessionID]eventSubEntry
 	eventMu     sync.RWMutex
-	treeSubs    map[SessionID]chan map[string][]byte
+	treeSubs    map[SessionID]treeSubEntry
 	treeMu      sync.RWMutex
 
 	escalationRounds []int
@@ -199,9 +226,9 @@ func NewGame(m *maze.Maze, initialActors int, seed uint64) *Game {
 		World:            w,
 		Loop:             l,
 		sessions:         make(map[SessionID]*PlayerSession),
-		subscribers:      make(map[SessionID]chan []byte),
-		eventSubs:        make(map[SessionID]chan Event),
-		treeSubs:         make(map[SessionID]chan map[string][]byte),
+		subscribers:      make(map[SessionID]snapSubEntry),
+		eventSubs:        make(map[SessionID]eventSubEntry),
+		treeSubs:         make(map[SessionID]treeSubEntry),
 		escalationRounds: []int{300, 600, 900},
 		rng:              mrand.New(mrand.NewSource(int64(seed))),
 	}
@@ -392,7 +419,10 @@ func (g *Game) tickLogic(w *world.World) {
 			g.spawnActor(ActorType(w.Round / 300 % 4))
 			g.broadcastEvent(Event{
 				Type: "spawn",
-				Data: map[string]interface{}{"count": len(w.Minotaurs)},
+				Data: map[string]interface{}{
+					"count":     len(w.Minotaurs),
+					"intensity": w.Intensity,
+				},
 			})
 		}
 	}
@@ -439,7 +469,7 @@ func (g *Game) tickTimers(w *world.World) {
 // reset command so the rejoined or fresh session starts a new game. Without
 // this, a page reload after win/lose rejoins the terminal world and the
 // client's terminal-phase fallback instantly re-fires the win/lose overlay.
-func (g *Game) AddSession(token string) (*PlayerSession, string) {
+func (g *Game) AddSession(token string) (*PlayerSession, string, uint64) {
 	g.sessMu.Lock()
 	defer g.sessMu.Unlock()
 
@@ -450,9 +480,10 @@ func (g *Game) AddSession(token string) (*PlayerSession, string) {
 	if token != "" {
 		if sess, ok := g.sessions[SessionID(token)]; ok {
 			sess.disconnectedAt = time.Time{} // mark (re)connected
+			sess.connGen++                    // supersede any dying connection
 			sess.Net.ResetAckSeq()            // client restarts at seq 1
 			g.submitWorldResetIfTerminal(sess)
-			return sess, sess.Token
+			return sess, sess.Token, sess.connGen
 		}
 	}
 
@@ -462,13 +493,51 @@ func (g *Game) AddSession(token string) (*PlayerSession, string) {
 	id := generateSessionID()
 	tok := string(id)
 	sess := &PlayerSession{
-		ID:    id,
-		Net:   netcode.NewSession(tok, g.Maze.Start, 0),
-		Token: tok,
+		ID:      id,
+		Net:     netcode.NewSession(tok, g.Maze.Start, 0),
+		Token:   tok,
+		connGen: 1,
 	}
 	g.sessions[id] = sess
 	g.submitWorldResetIfTerminal(sess)
-	return sess, tok
+	return sess, tok, sess.connGen
+}
+
+// ReleaseConnection tears down the per-connection state owned by a handler
+// that is exiting. It is safe under the reload race: the browser closes the
+// old WebSocket and opens a new one (rejoining the same session by token),
+// and the old socket's close can be observed AFTER the new socket has
+// already subscribed. In that case the old handler must not delete the new
+// connection's subscriber channels (which would silently stop all
+// snapshots for the live client) nor mark the reconnected session
+// disconnected (which would let CleanupSessions garbage-collect it).
+//
+// gen must be the value AddSession returned to THIS handler; the channels
+// must be the ones THIS handler created and subscribed.
+func (g *Game) ReleaseConnection(id SessionID, gen uint64, snapCh chan []byte, eventCh chan Event, treeCh chan map[string][]byte) {
+	g.sessMu.Lock()
+	if sess, ok := g.sessions[id]; ok && sess.connGen == gen {
+		sess.disconnectedAt = time.Now()
+	}
+	g.sessMu.Unlock()
+	// Channel identity scopes the deletes: a rejoin replaces the map
+	// entries with the new connection's channels, so the old connection's
+	// compare fails and the live subscription survives.
+	g.subMu.Lock()
+	if cur, ok := g.subscribers[id]; ok && cur.ch == snapCh {
+		delete(g.subscribers, id)
+	}
+	g.subMu.Unlock()
+	g.eventMu.Lock()
+	if cur, ok := g.eventSubs[id]; ok && cur.ch == eventCh {
+		delete(g.eventSubs, id)
+	}
+	g.eventMu.Unlock()
+	g.treeMu.Lock()
+	if cur, ok := g.treeSubs[id]; ok && cur.ch == treeCh {
+		delete(g.treeSubs, id)
+	}
+	g.treeMu.Unlock()
 }
 
 // submitWorldResetIfTerminal queues a loop command that resets the world to
@@ -531,9 +600,13 @@ func (g *Game) WaitForRunningPhase(timeout time.Duration) bool {
 	}
 }
 
-// RemoveSession marks a player session as disconnected. The session is
-// retained for a grace period so the same token can rejoin. Subscriptions
-// are removed immediately (the socket is gone).
+// RemoveSession marks a player session as disconnected and drops ALL of its
+// subscriber registrations unconditionally. It is TEST-ONLY: production
+// connection handlers must use ReleaseConnection, which scopes both the
+// disconnect-mark and the subscription deletes to their own connection
+// generation and channels. RemoveSession is unsafe when a session may have
+// a newer live connection (the reload race), because it would delete that
+// connection's subscriptions.
 func (g *Game) RemoveSession(id SessionID) {
 	g.sessMu.Lock()
 	if sess, ok := g.sessions[id]; ok {
@@ -568,10 +641,17 @@ func (g *Game) CleanupSessions() {
 	g.sessMu.Unlock()
 }
 
-// SubscribeTrees registers a channel to receive tree frames.
-func (g *Game) SubscribeTrees(id SessionID, ch chan map[string][]byte) {
+// SubscribeTrees registers a channel to receive tree frames. gen is the
+// connection generation from AddSession; a registration from an older
+// generation than the current entry is rejected so a dying connection can
+// never displace the live one (double-reload inversion).
+func (g *Game) SubscribeTrees(id SessionID, gen uint64, ch chan map[string][]byte) {
 	g.treeMu.Lock()
-	g.treeSubs[id] = ch
+	if cur, ok := g.treeSubs[id]; ok && cur.gen > gen {
+		g.treeMu.Unlock()
+		return
+	}
+	g.treeSubs[id] = treeSubEntry{ch: ch, gen: gen}
 	g.treeMu.Unlock()
 }
 
@@ -580,25 +660,39 @@ func (g *Game) SubscribeTrees(id SessionID, ch chan map[string][]byte) {
 func (g *Game) BroadcastTrees(frames map[string][]byte) {
 	g.treeMu.RLock()
 	defer g.treeMu.RUnlock()
-	for _, ch := range g.treeSubs {
+	for _, e := range g.treeSubs {
 		select {
-		case ch <- frames:
+		case e.ch <- frames:
 		default:
 		}
 	}
 }
 
-// Subscribe registers a channel to receive encoded snapshots.
-func (g *Game) Subscribe(id SessionID, ch chan []byte) {
+// Subscribe registers a channel to receive encoded snapshots. gen is the
+// connection generation from AddSession; a registration from an older
+// generation than the current entry is rejected so a dying connection can
+// never displace the live one (double-reload inversion).
+func (g *Game) Subscribe(id SessionID, gen uint64, ch chan []byte) {
 	g.subMu.Lock()
-	g.subscribers[id] = ch
+	if cur, ok := g.subscribers[id]; ok && cur.gen > gen {
+		g.subMu.Unlock()
+		return
+	}
+	g.subscribers[id] = snapSubEntry{ch: ch, gen: gen}
 	g.subMu.Unlock()
 }
 
-// SubscribeEvents registers a channel to receive game events.
-func (g *Game) SubscribeEvents(id SessionID, ch chan Event) {
+// SubscribeEvents registers a channel to receive game events. gen is the
+// connection generation from AddSession; a registration from an older
+// generation than the current entry is rejected so a dying connection can
+// never displace the live one (double-reload inversion).
+func (g *Game) SubscribeEvents(id SessionID, gen uint64, ch chan Event) {
 	g.eventMu.Lock()
-	g.eventSubs[id] = ch
+	if cur, ok := g.eventSubs[id]; ok && cur.gen > gen {
+		g.eventMu.Unlock()
+		return
+	}
+	g.eventSubs[id] = eventSubEntry{ch: ch, gen: gen}
 	g.eventMu.Unlock()
 }
 
@@ -653,6 +747,11 @@ func (g *Game) tickContactDamage(w *world.World) {
 		actorPush := ContactKnockback * (RunnerMass / totalMass)
 		m.Pos.X += ux * actorPush
 		m.Pos.Y += uy * actorPush
+		// Resolve both against the maze so knockback never pushes either
+		// body into a wall. Without this, contact near a corridor edge
+		// shoves entities through solid geometry.
+		w.Runner.Pos = g.Maze.Resolve(w.Runner.Pos, maze.Radius)
+		m.Pos = g.Maze.Resolve(m.Pos, maze.Radius)
 		g.broadcastEvent(Event{
 			Type: "hit",
 			Data: map[string]interface{}{
@@ -709,15 +808,7 @@ func (g *Game) FirePulse(id SessionID, fireRound int, aim netcode.RayHitOrigin) 
 		m.StunTicks = world.StunDuration
 		// I3: pulse knockback — hit actor pushed along the shot direction.
 		// Heavier actors resist more (mass ratio). Makes shots feel physical.
-		{
-			fx := math.Sin(aim.Yaw) * math.Cos(aim.Pitch)
-			fy := math.Cos(aim.Yaw) * math.Cos(aim.Pitch)
-			aMass := actorMass(ActorType(m.Type))
-			kick := PulseKnockback * (RunnerMass / (RunnerMass + aMass))
-			m.Pos.X += fx * kick
-			m.Pos.Y += fy * kick
-			m.Pos = g.Maze.Resolve(m.Pos, maze.Radius)
-		}
+		g.applyPulseKnockback(m, aim)
 		g.broadcastEvent(Event{
 			Type: "stunned",
 			Data: map[string]interface{}{
@@ -730,6 +821,19 @@ func (g *Game) FirePulse(id SessionID, fireRound int, aim netcode.RayHitOrigin) 
 			},
 		})
 	})
+}
+
+// applyPulseKnockback pushes a hit actor along the shot direction by a
+// mass-ratio impulse. Extracted from FirePulse so unit tests can exercise
+// the knockback math without a live loop.
+func (g *Game) applyPulseKnockback(m *world.Minotaur, aim netcode.RayHitOrigin) {
+	fx := math.Sin(aim.Yaw) * math.Cos(aim.Pitch)
+	fy := math.Cos(aim.Yaw) * math.Cos(aim.Pitch)
+	aMass := actorMass(ActorType(m.Type))
+	kick := PulseKnockback * (RunnerMass / (RunnerMass + aMass))
+	m.Pos.X += fx * kick
+	m.Pos.Y += fy * kick
+	m.Pos = g.Maze.Resolve(m.Pos, maze.Radius)
 }
 
 // rayOccluded samples the maze grid along a ray from origin toward
@@ -780,9 +884,9 @@ func (g *Game) DebugTeleport(id SessionID, pos maze.Vec2) {
 func (g *Game) broadcastEvent(evt Event) {
 	g.eventMu.RLock()
 	defer g.eventMu.RUnlock()
-	for _, ch := range g.eventSubs {
+	for _, e := range g.eventSubs {
 		select {
-		case ch <- evt:
+		case e.ch <- evt:
 		default:
 		}
 	}
@@ -866,7 +970,7 @@ func (g *Game) SnapshotFanOut(encode func(snap *world.Snapshot, ackSeq uint64) (
 		}
 
 		g.subMu.RLock()
-		for id, ch := range g.subscribers {
+		for id, e := range g.subscribers {
 			g.sessMu.RLock()
 			sess, ok := g.sessions[id]
 			g.sessMu.RUnlock()
@@ -879,7 +983,7 @@ func (g *Game) SnapshotFanOut(encode func(snap *world.Snapshot, ackSeq uint64) (
 				continue
 			}
 			select {
-			case ch <- data:
+			case e.ch <- data:
 			default:
 			}
 		}

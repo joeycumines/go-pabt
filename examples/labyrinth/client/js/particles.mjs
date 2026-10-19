@@ -222,10 +222,12 @@ export class ParticleEngine {
             p.px += p.vx * dt;
             p.py += p.vy * dt;
             p.pz += p.vz * dt;
-            // Light drag.
-            p.vx *= 0.98;
-            p.vy *= 0.98;
-            p.vz *= 0.98;
+            // R12: dt-based exponential drag (frame-rate independent).
+            // At 60fps the per-frame factor was 0.98; at 30fps it's 0.98^2.
+            const dragFactor = Math.pow(0.98, dt * 60);
+            p.vx *= dragFactor;
+            p.vy *= dragFactor;
+            p.vz *= dragFactor;
         }
         this.count = this.particles.length;
     }
@@ -259,9 +261,11 @@ export class ParticleEngine {
         // uScale: rough viewport-height proxy so point sizes feel consistent.
         gl.uniform1f(this.uScale, gl.drawingBufferHeight * 0.35);
 
-        // Additive blending, no depth write.
+        // R11: premultiplied additive blending. The fragment shader outputs
+        // vec4(vColor.rgb * a, a) which is already premultiplied, so use
+        // ONE, ONE to avoid multiplying alpha twice.
         gl.enable(gl.BLEND);
-        gl.blendFunc(gl.SRC_ALPHA, gl.ONE);
+        gl.blendFunc(gl.ONE, gl.ONE);
         gl.depthMask(false);
 
         gl.bindVertexArray(this.vao);
