@@ -10,6 +10,7 @@ import { ModelBank, actorModelMatrix } from './models.mjs';
 import { DebugPanel } from './debug.mjs';
 import { BTHud } from './bt-hud.mjs';
 import { ParticleEngine } from './particles.mjs';
+import { PlaytestBot } from './playtest-bot.mjs';
 
 const canvas = document.getElementById('glcanvas');
 const loading = document.getElementById('loading');
@@ -18,6 +19,7 @@ const prompt = document.getElementById('pointer-lock-prompt');
 const overlay = document.getElementById('overlay');
 
 let renderer, camera, input, hud, net, audio, debugPanel, btHud, particles;
+const playtestBot = new PlaytestBot();
 let maze = null; // authoritative maze from server
 let lastTime = 0;
 let gameState = 'playing'; // 'playing' | 'caught' | 'won'
@@ -314,6 +316,24 @@ function frame(time) {
 
 function update(dt) {
     input.update();
+    if (playtestBot.active) {
+        const snap = net.getSnapshot();
+        const activePUs = snap && snap.data && snap.data.powerUps
+            ? snap.data.powerUps.filter(p => p.active)
+            : [];
+        playtestBot.applyFrame({
+            dt,
+            input,
+            camera,
+            maze,
+            serverPos,
+            minotaurBuffers,
+            powerUps: activePUs,
+            playerElement,
+            hp: lastHP,
+            losClear: (x1, z1, x2, z2) => window.__ariadne ? window.__ariadne.losClear(x1, z1, x2, z2) : false,
+        });
+    }
     const maxSpeed = input.sprint ? 6.5 : 4.0;
 
     // I2: velocity-based movement with momentum and friction.
@@ -601,6 +621,7 @@ function update(dt) {
         get intensity() { const s = net.getSnapshot(); return s ? s.data.intensity : -1; },
         get wsOpen() { return net.ws && net.ws.readyState === WebSocket.OPEN; },
         get mazeSize() { return maze ? [maze.w, maze.h] : null; },
+        get mazeGrid() { return maze && maze.grid ? Array.from(maze.grid) : null; },
         get gate() { return maze ? [maze.gateX, maze.gateY] : null; },
         get projectileCount() { return projectiles.length; },
         get particleCount() { return particles ? particles.count : 0; },
@@ -672,11 +693,26 @@ function update(dt) {
         // G3: BT-tick HUD state for verification (__ariadne.btHud).
         get btHud() { return btHud ? btHud.probe() : null; },
         toggleBTHud() { if (btHud) btHud.toggle(); },
+        setOverlays({ btHud: enableBtHud, territory: enableTerritory } = {}) {
+            if (enableBtHud !== undefined && btHud) {
+                btHud.visible = !!enableBtHud;
+                if (btHud.el) btHud.el.hidden = !btHud.visible;
+                if (btHud.visible) btHud.render(true);
+            }
+            if (enableTerritory !== undefined) {
+                territoryOverlayOn = !!enableTerritory;
+            }
+        },
         // H1 probes for weapon + movement juice verification.
         get cameraFov() { return camera.currentFovDeg; },
         get cameraRecoil() { return camera.recoilPitch; },
         get cameraBob() { return [camera.bobOffsetX, camera.bobOffsetY]; },
         get weaponVisible() { return true; }, // weapon always renders when modelsReady
+        playtest: {
+            start: (persona) => playtestBot.start(persona),
+            stop: () => playtestBot.stop(),
+            report: () => playtestBot.getReport(),
+        },
     };
 }
 
@@ -818,6 +854,32 @@ function handleEvent(evt) {
             audio.playStun();
             hitFlashTimer = 6;
             break;
+        case 'bolt': {
+            if (evt.data) {
+                const elemIdx = evt.data.element !== undefined ? (evt.data.element | 0) : 2;
+                const ec = ELEMENT_COLORS[elemIdx] || ELEMENT_COLORS[2];
+                const startX = evt.data.x;
+                const startZ = evt.data.y;
+                const dx = camera.pos[0] - startX;
+                const dz = camera.pos[2] - startZ;
+                const len = Math.hypot(dx, dz);
+                const dirX = len > 0.01 ? dx / len : 0;
+                const dirZ = len > 0.01 ? dz / len : 0;
+                projectiles.push({
+                    pos: [startX, PLAYER_HEIGHT * 0.8, startZ],
+                    dir: [dirX, 0, dirZ],
+                    color: ec,
+                    life: 0.8,
+                    maxLife: 0.8,
+                    speed: 12.0,
+                });
+                if (particles) {
+                    particles.impactSparks([startX, PLAYER_HEIGHT * 0.8, startZ], ec);
+                }
+                audio.playShot(elemIdx);
+            }
+            break;
+        }
         case 'clash':
             clashCount++;
             if (evt.data) {

@@ -26,6 +26,38 @@ func newTestWorld(t *testing.T) (*maze.Maze, *world.World, *world.Minotaur) {
 	return m, w, minotaur
 }
 
+func TestDisadvantagedMinotaurRetreats(t *testing.T) {
+	m, w, minotaur := newTestWorld(t)
+	minotaur.Element = 1 // Ice: Fire beats Ice, minotaur at disadvantage
+	w.Runner.Pos = maze.Vec2{X: m.Start.X + 2, Y: m.Start.Y}
+	b, err := NewBrain("M-1", m, &minotaur.Pos)
+	if err != nil {
+		t.Fatalf("NewBrain: %v", err)
+	}
+	snap := w.Copy()
+	b.UpdateWorldView(snap, minotaur)
+	var sawRetreat bool
+	for i := 0; i < 10; i++ {
+		snap = w.Copy()
+		b.UpdateWorldView(snap, minotaur)
+		frame := b.Tick("attempt")
+		if frame != nil {
+			for _, cand := range frame.CandidatesWithCost {
+				if cand.ActionName == "Retreat" && cand.Executing {
+					sawRetreat = true
+					break
+				}
+			}
+		}
+		if sawRetreat {
+			break
+		}
+	}
+	if !sawRetreat {
+		t.Fatalf("disadvantaged actor never executed Retreat action")
+	}
+}
+
 func TestStationaryRunnerDetectedPursuedCaught(t *testing.T) {
 	m, w, minotaur := newTestWorld(t)
 

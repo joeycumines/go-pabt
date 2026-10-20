@@ -20,17 +20,25 @@ type WorldView struct {
 	// PlayerPos is the player's position, meaningful when PlayerDetected.
 	PlayerPos maze.Vec2
 
-	// LastKnownPos is the last position where the player was seen.
+	// LastKnownPos is the last position where the player was seen (or current patrol waypoint).
 	LastKnownPos maze.Vec2
 
-	// HasLastKnown is true once the player has been seen at least once.
+	// HasLastKnown is true once the player has been seen or a patrol clue is active.
 	HasLastKnown bool
+
+	// HasPatrolTarget is true when the strategy layer supplies a patrol/raid waypoint
+	// for the PA-BT brain to search when the player is not in sight.
+	HasPatrolTarget bool
+	PatrolTarget    maze.Vec2
 
 	// DistanceBand: 0=adjacent, 1=near, 2=far, 3=unknown.
 	DistanceBand int
 
 	// Stunned is true while the actor is recovering from a pulse.
 	Stunned bool
+
+	// StunTicks mirrors world.Minotaur.StunTicks when driven by the game loop.
+	StunTicks int
 
 	// SearchExhausted is true after searching last-known yielded nothing.
 	SearchExhausted bool
@@ -44,6 +52,9 @@ type WorldView struct {
 	// SelfElement is this actor's innate element.
 	SelfElement int
 
+	// SelfArchetype is this actor's archetype (0=Brute, 1=Swarm, 2=Caster, 3=Stalker).
+	SelfArchetype int
+
 	// ReinforceTarget is the position of the nearest friendly same-element
 	// ally, set by UpdateWorldView when one exists within sight range.
 	// Zero-value means no ally found.
@@ -53,6 +64,10 @@ type WorldView struct {
 	// AtDisadvantage is true when the player's element beats ours in the cycle.
 	AtDisadvantage bool
 
+	// DisadvantageResolvedTicks holds a brief cooldown after Retreat/Reinforce
+	// succeeds so UpdateWorldView does not immediately re-latch AtDisadvantage.
+	DisadvantageResolvedTicks int
+
 	// AtAdvantage is true when our element beats the player's in the cycle.
 	AtAdvantage bool
 
@@ -60,6 +75,10 @@ type WorldView struct {
 	// Move actions offset their target laterally so the actor steps aside
 	// rather than blocking the player's path (I4).
 	AllyYielding bool
+
+	// CastBoltThisTick and ArchetypeAction record archetype-specific PA-BT behavior.
+	CastBoltThisTick bool
+	ArchetypeAction  string
 }
 
 // State is the pabt.State implementation over the world view. It reads variables
@@ -135,10 +154,11 @@ func (s *State) Actions(failed Condition) ([]pabt.Action[Condition], error) {
 			NewPursueAction(s),
 		}, nil
 	case KeyPlayerDetected:
-		// To detect the player we search the last-known position.
-		return []pabt.Action[Condition]{
-			NewSearchAction(s),
-		}, nil
+		// KeyPlayerDetected is a pure world-view sensor condition; when false,
+		// the root goal Fallback transitions to the second branch
+		// (KeySearchExhausted -> SearchAction). Returning an action with a
+		// non-matching effect key here would be rejected by pabt.
+		return nil, nil
 	case KeyStunned:
 		// To un-stun we recover.
 		return []pabt.Action[Condition]{
@@ -151,10 +171,13 @@ func (s *State) Actions(failed Condition) ([]pabt.Action[Condition], error) {
 		}, nil
 	case KeyAtDisadvantage:
 		// To resolve elemental disadvantage, retreat or reinforce.
-		return []pabt.Action[Condition]{
+		acts := []pabt.Action[Condition]{
 			NewRetreatAction(s),
-			NewReinforceAction(s),
-		}, nil
+		}
+		if s.world.HasReinforceTarget {
+			acts = append(acts, NewReinforceAction(s))
+		}
+		return acts, nil
 	default:
 		return nil, nil
 	}

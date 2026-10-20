@@ -4,6 +4,7 @@ package brain
 
 import (
 	"fmt"
+	"math"
 	"sync/atomic"
 
 	"github.com/joeycumines/go-pabt"
@@ -55,6 +56,9 @@ type Brain struct {
 
 	// selfPos points to the actor's live position in the world.
 	selfPos *maze.Vec2
+
+	// lastTelemetry stores the causal diagnostics from the most recent Tick.
+	lastTelemetry TickTelemetry
 }
 
 // NewBrain builds a brain for an actor at the given position.
@@ -131,28 +135,46 @@ func (b *Brain) GetMoveSpeed() float64 {
 	return b.state.MoveSpeed
 }
 
+// SetArchetype records the actor's archetype (0=Brute, 1=Swarm, 2=Caster, 3=Stalker)
+// so PA-BT actions can express archetype-specific pursuit and ranged behavior.
+func (b *Brain) SetArchetype(typ int) {
+	b.world.SelfArchetype = typ
+}
+
+// SetPatrolTarget provides the PA-BT brain with a patrol/strategy waypoint to
+// search when the player is not currently detected or tracked.
+func (b *Brain) SetPatrolTarget(pos maze.Vec2) {
+	b.world.PatrolTarget = pos
+	b.world.HasPatrolTarget = true
+}
+
 // UpdateWorldView refreshes the brain's world view from the world snapshot
 // and the actor's own position. It is called by the loop before Tick.
 func (b *Brain) UpdateWorldView(snap *world.Snapshot, self *world.Minotaur) {
 	b.world.Stunned = self.Stunned
+	b.world.StunTicks = self.StunTicks
+	if self.Stunned {
+		b.world.SearchExhausted = false
+		b.world.Caught = false
+	}
 	b.world.SelfElement = self.Element
+	b.world.SelfArchetype = self.Type
 	b.world.PlayerElement = snap.Runner.Element
+	b.world.CastBoltThisTick = false
+	b.world.ArchetypeAction = ""
 
-	// Elemental advantage: fire > ice > lightning > void > fire.
-	// advantage(attacker, defender) = 2x if (attacker+1)%4 == defender.
-	playerBeatsSelf := (b.world.PlayerElement+1)%4 == b.world.SelfElement
-	selfBeatsPlayer := (b.world.SelfElement+1)%4 == b.world.PlayerElement
-	b.world.AtDisadvantage = playerBeatsSelf
-	b.world.AtAdvantage = selfBeatsPlayer
+	if b.world.DisadvantageResolvedTicks > 0 {
+		b.world.DisadvantageResolvedTicks--
+	}
 
-	// Line of sight: the player is detected if within sight range and not
-	// blocked. For the brain's purposes we use a simple distance heuristic;
-	// the authoritative LOS check lands with the netcode task.
 	dx := snap.Runner.Pos.X - self.Pos.X
 	dy := snap.Runner.Pos.Y - self.Pos.Y
 	dist2 := dx*dx + dy*dy
-	const sightRange2 = 6.0 * 6.0
-	detected := dist2 <= sightRange2 && !self.Stunned
+	const sightRange2 = 8.0 * 8.0
+
+	runnerCellWalkable := b.maze == nil || b.maze.At(int(math.Floor(snap.Runner.Pos.X)), int(math.Floor(snap.Runner.Pos.Y))).Walkable()
+	hasLOS := b.maze == nil || HasClearLOS(b.maze, self.Pos, snap.Runner.Pos)
+	detected := dist2 <= sightRange2 && !self.Stunned && hasLOS
 
 	b.world.PlayerDetected = detected
 	if detected {
@@ -160,7 +182,9 @@ func (b *Brain) UpdateWorldView(snap *world.Snapshot, self *world.Minotaur) {
 		b.world.LastKnownPos = snap.Runner.Pos
 		b.world.HasLastKnown = true
 		b.world.SearchExhausted = false
-		// Distance band.
+		if dist2 >= 0.65*0.65 {
+			b.world.Caught = false
+		}
 		switch {
 		case dist2 < 1.5*1.5:
 			b.world.DistanceBand = 0
@@ -171,17 +195,33 @@ func (b *Brain) UpdateWorldView(snap *world.Snapshot, self *world.Minotaur) {
 		}
 	} else {
 		b.world.DistanceBand = 3
-		// Caught is an edge, not a level: once line of sight is lost the
-		// catch is over. Leaving it latched true satisfies the planner's
-		// goal forever, idling the brain while strategy movement yields.
 		b.world.Caught = false
+		// Acoustic proximity clue: nearby footsteps within 3.5u behind a wall
+		// update LastKnownPos so SearchAction investigates around corners
+		// without falsely claiming line-of-sight PlayerDetected.
+		if !self.Stunned && dist2 <= 3.5*3.5 && runnerCellWalkable {
+			b.world.LastKnownPos = snap.Runner.Pos
+			b.world.HasLastKnown = true
+			b.world.SearchExhausted = false
+		} else if !self.Stunned && !b.world.HasLastKnown && b.world.HasPatrolTarget {
+			if math.Hypot(b.world.PatrolTarget.X-self.Pos.X, b.world.PatrolTarget.Y-self.Pos.Y) >= 0.5 {
+				b.world.LastKnownPos = b.world.PatrolTarget
+				b.world.SearchExhausted = false
+			}
+		}
 	}
 
+	// Elemental advantage: fire > ice > lightning > void > fire.
+	// advantage(attacker, defender) = 2x if (attacker+1)%4 == defender.
+	playerBeatsSelf := (b.world.PlayerElement+1)%4 == b.world.SelfElement
+	selfBeatsPlayer := (b.world.SelfElement+1)%4 == b.world.PlayerElement
+	dist := math.Sqrt(dist2)
+	b.world.AtDisadvantage = detected && playerBeatsSelf && b.world.DisadvantageResolvedTicks == 0 && dist >= 0.6
+	b.world.AtAdvantage = selfBeatsPlayer
+
 	// Find the nearest friendly same-element ally for ReinforceAction.
-	// Only set when an ally is within sight range (same heuristic as
-	// player detection), so the brain doesn't chase allies across the map.
 	b.world.HasReinforceTarget = false
-	const allySightRange2 = 6.0 * 6.0
+	const allySightRange2 = 8.0 * 8.0
 	bestDist2 := allySightRange2
 	for _, other := range snap.Minotaurs {
 		if other.Element != self.Element || other.HP <= 0 || other.Stunned {
@@ -198,11 +238,8 @@ func (b *Brain) UpdateWorldView(snap *world.Snapshot, self *world.Minotaur) {
 	}
 
 	// I4: Allied yielding — same-element actors path around the player.
-	// Yield when: same element as runner AND runner detected AND within 3u.
-	// The yieldOffset in PursueAction/SearchAction shifts the target laterally
-	// so the actor paths around instead of blocking.
 	b.world.AllyYielding = false
-	if detected && b.world.SelfElement == b.world.PlayerElement {
+	if b.world.PlayerDetected && b.world.SelfElement == b.world.PlayerElement {
 		rdx := snap.Runner.Pos.X - self.Pos.X
 		rdy := snap.Runner.Pos.Y - self.Pos.Y
 		if rdx*rdx+rdy*rdy < 3.0*3.0 {
@@ -221,7 +258,15 @@ func (b *Brain) Tick(attemptID string) *BTFrame {
 		b.movedLastTick = false
 		return nil
 	}
+	var prePos maze.Vec2
+	if b.selfPos != nil {
+		prePos = *b.selfPos
+	}
 	result := b.plan.TickCaptured(pabt.TickEnvironment{AttemptID: attemptID})
+	var postPos maze.Vec2
+	if b.selfPos != nil {
+		postPos = *b.selfPos
+	}
 	b.movedLastTick = b.state.movedThisTick
 	b.state.movedThisTick = false
 	b.detectPlanChange(result.Snapshot.PlanRevision)
@@ -230,6 +275,7 @@ func (b *Brain) Tick(attemptID string) *BTFrame {
 	frame.WorldView = b.worldViewFrame()
 	frame.ReplanEvents = append(frame.ReplanEvents, b.replanLog...)
 	b.lastFrame = frame
+	b.lastTelemetry = b.buildTickTelemetry(prePos, postPos, b.movedLastTick, frame)
 	return frame
 }
 

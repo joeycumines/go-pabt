@@ -26,6 +26,7 @@ import (
 	"github.com/joeycumines/go-pabt/examples/labyrinth/net/proto"
 	"github.com/joeycumines/go-pabt/examples/labyrinth/net/ws"
 	"github.com/joeycumines/go-pabt/examples/labyrinth/netcode"
+	"github.com/joeycumines/go-pabt/examples/labyrinth/playtest"
 	"github.com/joeycumines/go-pabt/examples/labyrinth/world"
 )
 
@@ -97,6 +98,40 @@ func main() {
 	mux.Handle("/", http.FileServer(http.FS(client)))
 	mux.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
 		handleWebSocket(w, r, g)
+	})
+	mux.HandleFunc("/api/playtest/telemetry", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && r.URL.Query().Get("reset") == "1" {
+			g.ResetTelemetry()
+		}
+		recs := g.TelemetryRecords()
+		snap := g.Loop.Snapshot()
+		ep := playtest.EpisodeResult{
+			Config: playtest.Config{
+				Seed:    *seed,
+				Persona: playtest.PersonaName(r.URL.Query().Get("persona")),
+				Ticks:   len(recs),
+				Actors:  game.TargetActorCount,
+			},
+			Maze:          g.Maze,
+			Records:       recs,
+			Causality:     playtest.SummarizeCausality(recs),
+			PulsesFired:   g.PulsesFired(),
+			TeleportsUsed: g.TeleportsUsed(),
+		}
+		if snap != nil {
+			ep.FinalPhase = snap.Phase
+			ep.FinalRound = snap.Round
+			ep.FinalRunnerHP = snap.Runner.HP
+		}
+		ep.Oracles = playtest.EvaluateOracles(&ep)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"causality": ep.Causality,
+			"oracles":   ep.Oracles,
+			"markdown":  playtest.RenderMarkdownReport([]playtest.EpisodeResult{ep}),
+			"svg":       playtest.RenderSVGMap(&ep),
+			"ticks":     len(recs),
+		})
 	})
 
 	srv := &http.Server{Handler: mux}

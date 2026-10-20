@@ -5,11 +5,11 @@ package game
 import (
 	"crypto/rand"
 	"encoding/hex"
-	"encoding/json"
 	"math"
 	mrand "math/rand"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/joeycumines/go-pabt/examples/labyrinth/brain"
@@ -90,11 +90,11 @@ func actorHP(t ActorType) int {
 	case ActorBrute:
 		return 40
 	case ActorSwarm:
-		return 15
+		return 20
 	case ActorCaster:
 		return 25
 	case ActorStalker:
-		return 20
+		return 25
 	default:
 		return 30
 	}
@@ -212,6 +212,13 @@ type Game struct {
 	// actorStates is parallel to World.Minotaurs (faction combat cooldowns
 	// and strategy state). Only touched on the writer goroutine.
 	actorStates []*ActorState
+
+	// telemetry records per-tick causal movement and PA-BT diagnostics.
+	telemetry       telemetryLog
+	knownActors     map[string]bool
+	spawnKillSource map[string]string
+	pulsesFired     atomic.Int64
+	teleportsUsed   atomic.Int64
 }
 
 // NewGame creates a game with the given maze and initial actor count. The
@@ -283,7 +290,7 @@ func (g *Game) spawnActor(typ ActorType) {
 				continue
 			}
 			p := maze.Vec2{X: float64(cx) + 0.5, Y: float64(cy) + 0.5}
-			if distSq(p, g.Maze.Start) < 81 || distSq(p, g.Maze.Gate) < 81 {
+			if distSq(p, g.Maze.Start) < 25 || distSq(p, g.Maze.Gate) < 25 {
 				continue
 			}
 			pos, found = p, true
@@ -312,9 +319,18 @@ func (g *Game) spawnActor(typ ActorType) {
 	}
 	g.World.Minotaurs = append(g.World.Minotaurs, minotaur)
 	b.SetMoveSpeed(actorSpeed(typ, g.World.Intensity))
+	b.SetArchetype(int(typ))
 	g.Brains = append(g.Brains, b)
 	g.Histories = append(g.Histories, netcode.NewMinotaurHistory())
-	g.actorStates = append(g.actorStates, &ActorState{StrategyTimer: StrategyReevalTicks})
+	st := &ActorState{
+		Strategy:      StrategyPatrol,
+		StrategyTimer: StrategyReevalTicks,
+	}
+	if p, ok := g.homeTerritoryPos(elem); ok {
+		st.TargetPos = p
+		st.HasTarget = true
+	}
+	g.actorStates = append(g.actorStates, st)
 }
 
 func actorID(typ ActorType, n int) string {
@@ -341,16 +357,31 @@ func (g *Game) tickLogic(w *world.World) {
 	g.tickStrategies(w)
 	g.tickHazards(w)
 
+	if g.knownActors == nil {
+		g.knownActors = make(map[string]bool)
+	}
+	startPos := make([]maze.Vec2, len(w.Minotaurs))
+	spawnedFlag := make([]bool, len(w.Minotaurs))
+	for i, m := range w.Minotaurs {
+		startPos[i] = m.Pos
+		if !g.knownActors[m.ID] {
+			g.knownActors[m.ID] = true
+			spawnedFlag[i] = true
+		}
+	}
+
 	// Decrement stun and per-actor cooldown timers.
 	g.tickTimers(w)
 
 	// Update brains and move actors.
+	afterBrainPos := make([]maze.Vec2, len(w.Minotaurs))
 	for i, b := range g.Brains {
 		if i >= len(w.Minotaurs) {
 			break
 		}
 		m := w.Minotaurs[i]
 		if m.HP <= 0 {
+			afterBrainPos[i] = m.Pos
 			continue
 		}
 		// Refresh brain move speed from current Intensity so escalation
@@ -359,6 +390,19 @@ func (g *Game) tickLogic(w *world.World) {
 		snap := w.Copy()
 		b.UpdateWorldView(snap, m)
 		b.Tick("tick")
+		if tel := b.LastTelemetry(); tel.CastBolt && w.Round%30 == 0 {
+			w.Runner.HP -= 2
+			g.broadcastEvent(Event{
+				Type: "bolt",
+				Data: map[string]interface{}{
+					"id":      m.ID,
+					"element": m.Element,
+					"x":       m.Pos.X,
+					"y":       m.Pos.Y,
+				},
+			})
+		}
+		afterBrainPos[i] = m.Pos
 
 		// Record position for lag compensation.
 		if i < len(g.Histories) {
@@ -369,6 +413,10 @@ func (g *Game) tickLogic(w *world.World) {
 	// I3: contact damage + mass-ratio knockback between runner and actors.
 	// Runs outside the brain loop so it fires regardless of brain state.
 	g.tickContactDamage(w)
+	afterKnockbackPos := make([]maze.Vec2, len(w.Minotaurs))
+	for i, m := range w.Minotaurs {
+		afterKnockbackPos[i] = m.Pos
+	}
 
 	// Broadcast tree frames every 10 ticks (~3Hz) for the debug panel.
 	if w.Round%10 == 0 {
@@ -377,6 +425,10 @@ func (g *Game) tickLogic(w *world.World) {
 
 	// Strategy-driven movement for actors whose brain is not pursuing.
 	g.applyStrategyMovement(w)
+	afterStrategyPos := make([]maze.Vec2, len(w.Minotaurs))
+	for i, m := range w.Minotaurs {
+		afterStrategyPos[i] = m.Pos
+	}
 
 	// Physical separation: actors are bodies, not ghosts.
 	g.separateActors(w)
@@ -385,6 +437,59 @@ func (g *Game) tickLogic(w *world.World) {
 	// runner position back to the authoritative netcode session so the
 	// server-side reconciliation stays coherent with the knockback.
 	g.separateRunnerFromActors(w)
+
+	actorRecs := make([]ActorTickRecord, 0, len(w.Minotaurs))
+	for i, m := range w.Minotaurs {
+		if i >= len(startPos) {
+			break
+		}
+		var btTel brain.TickTelemetry
+		if i < len(g.Brains) {
+			btTel = g.Brains[i].LastTelemetry()
+		}
+		spawned := spawnedFlag[i]
+		killedByPlayer := false
+		killedByFaction := false
+		if spawned {
+			if src, ok := g.spawnKillSource[m.ID]; ok {
+				if src == "player" {
+					killedByPlayer = true
+				} else {
+					killedByFaction = true
+				}
+			}
+		}
+		actorRecs = append(actorRecs, ActorTickRecord{
+			Round:           w.Round,
+			ActorID:         m.ID,
+			Type:            m.Type,
+			Element:         m.Element,
+			Strategy:        m.Strategy,
+			HP:              m.HP,
+			Stunned:         m.Stunned,
+			StunTicks:       m.StunTicks,
+			StartPos:        startPos[i],
+			EndPos:          m.Pos,
+			BrainDelta:      vecDist(startPos[i], afterBrainPos[i]),
+			KnockbackDelta:  vecDist(afterBrainPos[i], afterKnockbackPos[i]),
+			StrategyDelta:   vecDist(afterKnockbackPos[i], afterStrategyPos[i]),
+			SeparationDelta: vecDist(afterStrategyPos[i], m.Pos),
+			SpawnedThisTick: spawned,
+			KilledByPlayer:  killedByPlayer,
+			KilledByFaction: killedByFaction,
+			Brain:           btTel,
+		})
+	}
+	g.telemetry.append(WorldTickRecord{
+		Round:            w.Round,
+		Phase:            int(w.Phase),
+		Intensity:        w.Intensity,
+		RunnerPos:        w.Runner.Pos,
+		RunnerHP:         w.Runner.HP,
+		RunnerElement:    w.Runner.Element,
+		TerritoryControl: w.TerritoryControl,
+		Actors:           actorRecs,
+	})
 
 	// Check lose condition.
 	if w.Runner.HP <= 0 {
@@ -760,233 +865,5 @@ func (g *Game) tickContactDamage(w *world.World) {
 				"knockback": true,
 			},
 		})
-	}
-}
-
-// PulseBaseDamage is the damage a neutral pulse deals. Elemental advantage
-// (attacker beats defender in the cycle) doubles it; disadvantage halves it.
-const PulseBaseDamage = 15
-
-// FirePulse processes a pulse fire with lag-compensated hit validation.
-// Damage scales by elemental advantage between the runner's active element
-// and the struck actor's innate element.
-func (g *Game) FirePulse(id SessionID, fireRound int, aim netcode.RayHitOrigin) {
-	g.Loop.Submit(func(w *world.World) {
-		bestIdx := -1
-		bestRange := math.MaxFloat64
-		for i, hist := range g.Histories {
-			if i >= len(w.Minotaurs) {
-				break
-			}
-			if w.Minotaurs[i].HP <= 0 {
-				continue
-			}
-			hit, ok := netcode.ValidateRayHit(hist, fireRound, aim)
-			if !ok {
-				continue
-			}
-			// Occlusion: a wall cell between the shooter and the actor
-			// along the ray blocks the pulse, matching the client's own
-			// visibility rules (walls render opaque, so the crosshair cannot
-			// legitimately rest on an occluded actor).
-			if g.rayOccluded(aim.Pos, hit.Range, aim.Yaw, aim.Pitch) {
-				continue
-			}
-			if hit.Range < bestRange {
-				bestRange = hit.Range
-				bestIdx = i
-			}
-		}
-		if bestIdx < 0 {
-			return
-		}
-		m := w.Minotaurs[bestIdx]
-		mult := advantage(Element(w.Runner.Element), Element(m.Element))
-		dmg := int(float64(PulseBaseDamage) * mult)
-		m.HP -= dmg
-		m.Stunned = true
-		m.StunTicks = world.StunDuration
-		// I3: pulse knockback — hit actor pushed along the shot direction.
-		// Heavier actors resist more (mass ratio). Makes shots feel physical.
-		g.applyPulseKnockback(m, aim)
-		g.broadcastEvent(Event{
-			Type: "stunned",
-			Data: map[string]interface{}{
-				"minotaur":  m.ID,
-				"hp":        m.HP,
-				"damage":    dmg,
-				"advantage": mult,
-				"pos":       []float64{m.Pos.X, m.Pos.Y},
-				"element":   m.Element,
-			},
-		})
-	})
-}
-
-// applyPulseKnockback pushes a hit actor along the shot direction by a
-// mass-ratio impulse. Extracted from FirePulse so unit tests can exercise
-// the knockback math without a live loop.
-func (g *Game) applyPulseKnockback(m *world.Minotaur, aim netcode.RayHitOrigin) {
-	fx := math.Sin(aim.Yaw) * math.Cos(aim.Pitch)
-	fy := math.Cos(aim.Yaw) * math.Cos(aim.Pitch)
-	aMass := actorMass(ActorType(m.Type))
-	kick := PulseKnockback * (RunnerMass / (RunnerMass + aMass))
-	m.Pos.X += fx * kick
-	m.Pos.Y += fy * kick
-	m.Pos = g.Maze.Resolve(m.Pos, maze.Radius)
-}
-
-// rayOccluded samples the maze grid along a ray from origin toward
-// (yaw, pitch) for up to range units and reports whether any solid cell
-// lies between the shooter and a target at that range. The sampling
-// resolution is sub-cell (0.25 units) so a thin wall sliver cannot slip
-// between samples. Only the horizontal (maze-plane) projection is traced,
-// matching how the maze is authored and rendered (walls are full-height
-// columns, not floating obstacles).
-func (g *Game) rayOccluded(origin maze.Vec2, rangeAlong, yaw, pitch float64) bool {
-	cp := math.Cos(pitch)
-	if cp < 1e-6 {
-		return false // degenerate near-vertical aim; nothing to occlude against in-plane
-	}
-	fx := math.Sin(yaw) * cp
-	fy := math.Cos(yaw) * cp
-	const step = 0.25
-	for d := step; d < rangeAlong; d += step {
-		x := origin.X + fx*d
-		y := origin.Y + fy*d
-		cx := int(math.Floor(x))
-		cy := int(math.Floor(y))
-		if !g.Maze.At(cx, cy).Walkable() {
-			return true
-		}
-	}
-	return false
-}
-
-// DebugTeleport relocates the runner authoritatively, for the integrated
-// debugging tooling and end-to-end verification. It runs on the writer
-// goroutine and resolves the destination against the maze so a bad
-// coordinate can never push the runner into a wall.
-func (g *Game) DebugTeleport(id SessionID, pos maze.Vec2) {
-	g.sessMu.RLock()
-	sess, ok := g.sessions[id]
-	g.sessMu.RUnlock()
-	if !ok {
-		return
-	}
-	g.Loop.Submit(func(w *world.World) {
-		p := g.Maze.Resolve(pos, maze.Radius)
-		sess.Net.Pos = p
-		w.Runner.Pos = p
-	})
-}
-
-func (g *Game) broadcastEvent(evt Event) {
-	g.eventMu.RLock()
-	defer g.eventMu.RUnlock()
-	for _, e := range g.eventSubs {
-		select {
-		case e.ch <- evt:
-		default:
-		}
-	}
-}
-
-// DebugReplan forces a specific actor's brain to rebuild its plan.
-func (g *Game) DebugReplan(actorID string) {
-	g.Loop.Submit(func(w *world.World) {
-		for i, m := range w.Minotaurs {
-			if m.ID == actorID && i < len(g.Brains) {
-				_ = g.Brains[i].Replan()
-				return
-			}
-		}
-	})
-}
-
-// DebugPause freezes a specific actor's brain decisions.
-func (g *Game) DebugPause(actorID string) {
-	g.Loop.Submit(func(w *world.World) {
-		for i, m := range w.Minotaurs {
-			if m.ID == actorID && i < len(g.Brains) {
-				g.Brains[i].Pause()
-				return
-			}
-		}
-	})
-}
-
-// DebugResume unfreezes a specific actor's brain.
-func (g *Game) DebugResume(actorID string) {
-	g.Loop.Submit(func(w *world.World) {
-		for i, m := range w.Minotaurs {
-			if m.ID == actorID && i < len(g.Brains) {
-				g.Brains[i].Resume()
-				return
-			}
-		}
-	})
-}
-
-// DebugInject redirects a specific actor's world view to a position.
-func (g *Game) DebugInject(actorID string, pos maze.Vec2) {
-	g.Loop.Submit(func(w *world.World) {
-		for i, m := range w.Minotaurs {
-			if m.ID == actorID && i < len(g.Brains) {
-				g.Brains[i].InjectWorldView(g.Maze.Resolve(pos, maze.Radius))
-				return
-			}
-		}
-	})
-}
-
-// TreeFrames returns the latest PA-BT frames for all actors. Called from
-// the writer goroutine via BroadcastTrees.
-func (g *Game) TreeFrames(w *world.World) map[string][]byte {
-	out := make(map[string][]byte)
-	for i, m := range w.Minotaurs {
-		if i < len(g.Brains) {
-			frame := g.Brains[i].LastFrame()
-			if frame != nil {
-				data, err := json.Marshal(frame)
-				if err == nil {
-					out[m.ID] = data
-				}
-			}
-		}
-	}
-	return out
-}
-
-// SnapshotFanOut sends encoded snapshots to all subscribers at 20Hz.
-func (g *Game) SnapshotFanOut(encode func(snap *world.Snapshot, ackSeq uint64) ([]byte, error)) {
-	ticker := time.NewTicker(50 * time.Millisecond)
-	defer ticker.Stop()
-
-	for range ticker.C {
-		snap := g.Loop.Snapshot()
-		if snap == nil {
-			continue
-		}
-
-		g.subMu.RLock()
-		for id, e := range g.subscribers {
-			g.sessMu.RLock()
-			sess, ok := g.sessions[id]
-			g.sessMu.RUnlock()
-			if !ok {
-				continue
-			}
-
-			data, err := encode(snap, sess.Net.AckSeq())
-			if err != nil {
-				continue
-			}
-			select {
-			case e.ch <- data:
-			default:
-			}
-		}
-		g.subMu.RUnlock()
 	}
 }

@@ -52,7 +52,7 @@ func (g *Game) homeTerritoryPos(elem Element) (maze.Vec2, bool) {
 		if TerritoryOf(g.Maze, pos) != elem {
 			continue
 		}
-		if distSq(pos, g.Maze.Start) < 81 || distSq(pos, g.Maze.Gate) < 81 {
+		if distSq(pos, g.Maze.Start) < 25 || distSq(pos, g.Maze.Gate) < 25 {
 			continue
 		}
 		return pos, true

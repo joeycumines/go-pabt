@@ -27,6 +27,20 @@ func yieldOffset(target, selfPos maze.Vec2) maze.Vec2 {
 	return maze.Vec2{X: target.X + px, Y: target.Y + py}
 }
 
+// flankOffset shifts a target laterally by 1.0 cell for Stalker ambush approaches
+// when outside strike distance.
+func flankOffset(target, selfPos maze.Vec2) maze.Vec2 {
+	dx := target.X - selfPos.X
+	dy := target.Y - selfPos.Y
+	d := math.Hypot(dx, dy)
+	if d < 2.2 {
+		return target
+	}
+	px := dy / d * 1.0
+	py := -dx / d * 1.0
+	return maze.Vec2{X: target.X + px, Y: target.Y + py}
+}
+
 // effect is the planner's effect type: a key and its new value.
 type effect struct {
 	K VarKey
@@ -40,35 +54,58 @@ func (e *effect) Value() any { return e.V }
 const moveSpeed = 0.35
 
 // stuckLimit is the number of consecutive ticks a movement action may produce
-// zero displacement before it reports bt.Failure to the planner. At 30 Hz
-// this is one second of being wall-wedged or otherwise stuck — long enough to
-// absorb momentary gridlocks, short enough to prevent an actor from freezing
-// in place for the rest of the round.
+// zero displacement before it reports bt.Failure to the planner.
 const stuckLimit = 30
 
 // moveAction is shared state for an action that moves the actor along an
-// A* path. It is stored on the action so that successive ticks of the same
-// action node continue advancing the same path.
+// A* path. It dynamically replans when its target shifts significantly.
 type moveAction struct {
-	state *State
-	path  []maze.Vec2 // remaining path (front = next waypoint)
-	done  bool
-	// stuck counts consecutive ticks where the action produced no displacement
-	// (advance consumed nothing, or every retreat heading was blocked);
-	// reaching stuckLimit fails the action so the planner re-instances it.
-	stuck int
+	state      *State
+	path       []maze.Vec2 // remaining path (front = next waypoint)
+	lastTarget maze.Vec2
+	hasTarget  bool
+	done       bool
+	stuck      int
+}
+
+// ensurePath computes or refreshes the walkable A* path toward target (or shifted
+// if non-nil and reachable) whenever the target has moved by more than 0.45u
+// or the existing path is empty.
+func (a *moveAction) ensurePath(target maze.Vec2, shifted *maze.Vec2) bool {
+	goal := target
+	if shifted != nil {
+		goal = *shifted
+	}
+	targetMoved := !a.hasTarget || math.Hypot(goal.X-a.lastTarget.X, goal.Y-a.lastTarget.Y) > 0.45
+	if !targetMoved && len(a.path) > 0 {
+		return true
+	}
+	a.done = false
+	a.lastTarget = goal
+	a.hasTarget = true
+	a.path = nil
+	if shifted != nil {
+		a.path = a.state.maze.PathWalkable(*a.state.selfPos, *shifted)
+	}
+	if len(a.path) == 0 {
+		a.path = a.state.maze.PathWalkable(*a.state.selfPos, target)
+	}
+	if len(a.path) == 0 {
+		// Same-cell sub-step when already in the target cell.
+		if a.state.maze.Pathable(int(math.Floor(target.X)), int(math.Floor(target.Y))) &&
+			math.Hypot(target.X-a.state.selfPos.X, target.Y-a.state.selfPos.Y) > 1e-3 {
+			a.path = []maze.Vec2{target}
+		}
+	}
+	return len(a.path) > 0
 }
 
 // advance moves the actor along the path by the state's per-tick speed.
 // It returns bt.Running while the path has more waypoints and bt.Success when
-// the endpoint is reached.
+// the current path's endpoint is reached.
 func (a *moveAction) advance() (bt.Status, error) {
-	if a.done {
-		return bt.Success, nil
-	}
 	if len(a.path) == 0 {
-		a.done = true
-		return bt.Success, nil
+		return bt.Failure, nil
 	}
 	startX, startY := a.state.selfPos.X, a.state.selfPos.Y
 	remaining := moveSpeed
@@ -83,9 +120,6 @@ func (a *moveAction) advance() (bt.Status, error) {
 		if dist <= remaining {
 			a.state.selfPos.X = target.X
 			a.state.selfPos.Y = target.Y
-			// A zero-distance waypoint (the path's start cell equals the
-			// actor's position) must not claim movement: it would make the
-			// strategy layer yield to a planner that stood still.
 			if dist > 1e-9 {
 				a.state.movedThisTick = true
 			}
@@ -98,22 +132,24 @@ func (a *moveAction) advance() (bt.Status, error) {
 			remaining = 0
 		}
 	}
-	if len(a.path) == 0 {
-		a.done = true
-		return bt.Success, nil
-	}
 	if a.state.selfPos.X == startX && a.state.selfPos.Y == startY {
 		a.stuck++
 		if a.stuck >= stuckLimit {
+			a.path = nil
+			a.hasTarget = false
 			return bt.Failure, nil
 		}
 	} else {
 		a.stuck = 0
 	}
+	if len(a.path) == 0 {
+		a.done = true
+		return bt.Success, nil
+	}
 	return bt.Running, nil
 }
 
-// PursueAction moves the actor toward the player's position.
+// PursueAction moves the actor toward the player's position with archetype-specific tactics.
 type PursueAction struct {
 	*moveAction
 }
@@ -138,44 +174,126 @@ func (a *PursueAction) Effects() Effects {
 
 func (a *PursueAction) Node() bt.Node {
 	return bt.New(func(children []bt.Node) (bt.Status, error) {
-		// Compute the path to the player's position on first tick.
-		if a.path == nil && !a.done {
-			target := a.state.world.LastKnownPos
-			if a.state.world.PlayerDetected {
-				target = a.state.world.PlayerPos
+		if !a.state.world.PlayerDetected || a.state.world.Stunned {
+			return bt.Failure, nil
+		}
+		target := a.state.world.PlayerPos
+		dBefore := math.Hypot(target.X-a.state.selfPos.X, target.Y-a.state.selfPos.Y)
+		if dBefore < 0.6 {
+			a.state.world.Caught = true
+			return bt.Success, nil
+		}
+
+		// Record archetype-specific tactical behavior.
+		origSpeed := a.state.MoveSpeed
+		defer func() { a.state.MoveSpeed = origSpeed }()
+
+		switch a.state.world.SelfArchetype {
+		case 1:
+			a.state.world.ArchetypeAction = "SwarmPackRush"
+			if a.state.world.HasReinforceTarget {
+				base := origSpeed
+				if base == 0 {
+					base = moveSpeed
+				}
+				a.state.MoveSpeed = base * 1.20
 			}
-			// I4: allied yielding — offset target laterally so same-element
-			// actors step aside instead of blocking the player's path.
-			if a.state.world.AllyYielding {
-				shifted := yieldOffset(target, *a.state.selfPos)
-				a.path = a.state.maze.Path(*a.state.selfPos, shifted)
+		case 2:
+			hasLOS := HasClearLOS(a.state.maze, *a.state.selfPos, target)
+			if hasLOS && dBefore <= 7.0 {
+				a.state.world.CastBoltThisTick = true
 			}
-			// Fall back to the unshifted target if the offset path is nil
-			// (wall blocks the offset) or if yielding is off.
-			if a.path == nil {
-				a.path = a.state.maze.Path(*a.state.selfPos, target)
+			if dBefore < 2.8 && hasLOS {
+				// Player is too close: kite backward to maintain standoff distance.
+				a.state.world.ArchetypeAction = "CasterKiteBack"
+				dx := a.state.selfPos.X - target.X
+				dy := a.state.selfPos.Y - target.Y
+				dist := math.Hypot(dx, dy)
+				if dist < 1e-6 {
+					dist = 1e-6
+				}
+				step := moveSpeed
+				if a.state.MoveSpeed > 0 {
+					step = a.state.MoveSpeed
+				}
+				baseX, baseY := dx/dist, dy/dist
+				best, bestDist2 := maze.Vec2{}, -1.0
+				for _, eighth := range []int{0, 1, -1, 2, -2, 3, -3} {
+					angle := float64(eighth) * math.Pi / 4
+					dirX := baseX*math.Cos(angle) - baseY*math.Sin(angle)
+					dirY := baseX*math.Sin(angle) + baseY*math.Cos(angle)
+					resolved := a.state.maze.Resolve(maze.Vec2{
+						X: a.state.selfPos.X + dirX*step,
+						Y: a.state.selfPos.Y + dirY*step,
+					}, maze.Radius)
+					if resolved.X == a.state.selfPos.X && resolved.Y == a.state.selfPos.Y {
+						continue
+					}
+					gx, gy := resolved.X-target.X, resolved.Y-target.Y
+					if d2 := gx*gx + gy*gy; d2 > bestDist2 {
+						bestDist2, best = d2, resolved
+					}
+				}
+				if bestDist2 > 0 {
+					a.state.selfPos.X = best.X
+					a.state.selfPos.Y = best.Y
+					a.state.movedThisTick = true
+				}
+				return bt.Running, nil
+			} else if dBefore >= 2.0 && dBefore <= 5.5 && hasLOS {
+				// Sweet spot: hold standoff position and cast ranged elemental bolt.
+				a.state.world.ArchetypeAction = "CasterRangedBolt"
+				a.state.world.CastBoltThisTick = true
+				a.state.movedThisTick = true
+				return bt.Running, nil
+			} else {
+				a.state.world.ArchetypeAction = "CasterReposition"
 			}
-			if a.path == nil {
-				return bt.Failure, nil
+		case 3:
+			a.state.world.ArchetypeAction = "StalkerFlank"
+		default:
+			a.state.world.ArchetypeAction = "BruteCharge"
+			if dBefore <= 4.0 && HasClearLOS(a.state.maze, *a.state.selfPos, target) {
+				base := origSpeed
+				if base == 0 {
+					base = moveSpeed
+				}
+				a.state.MoveSpeed = base * 1.15
 			}
+		}
+
+		var shifted *maze.Vec2
+		if a.state.world.AllyYielding {
+			s := yieldOffset(target, *a.state.selfPos)
+			shifted = &s
+		} else if a.state.world.SelfArchetype == 3 && dBefore > 2.2 {
+			s := flankOffset(target, *a.state.selfPos)
+			shifted = &s
+		}
+
+		if !a.ensurePath(target, shifted) {
+			return bt.Failure, nil
 		}
 		status, err := a.advance()
 		if err != nil {
 			return bt.Failure, err
 		}
-		if status == bt.Success {
-			// On arrival, check if we caught the player.
-			d := math.Hypot(a.state.world.PlayerPos.X-a.state.selfPos.X,
-				a.state.world.PlayerPos.Y-a.state.selfPos.Y)
-			if a.state.world.PlayerDetected && d < 0.6 {
-				a.state.world.Caught = true
-			}
+		if status == bt.Failure {
+			return bt.Failure, nil
 		}
-		return status, nil
+		dAfter := math.Hypot(a.state.world.PlayerPos.X-a.state.selfPos.X,
+			a.state.world.PlayerPos.Y-a.state.selfPos.Y)
+		if dAfter < 0.6 {
+			a.state.world.Caught = true
+			return bt.Success, nil
+		}
+		// Keep returning Running while actively pursuing a moving target so the
+		// planner never experiences a false Success with Caught==false.
+		return bt.Running, nil
 	})
 }
 
-// SearchAction moves the actor to the last-known position and searches.
+// SearchAction moves the actor to the last-known position (or patrol waypoint) and searches.
 type SearchAction struct {
 	*moveAction
 }
@@ -198,33 +316,49 @@ func (a *SearchAction) Effects() Effects {
 
 func (a *SearchAction) Node() bt.Node {
 	return bt.New(func(children []bt.Node) (bt.Status, error) {
-		if a.path == nil && !a.done {
-			target := a.state.world.LastKnownPos
-			// I4: allied yielding — offset search target laterally.
-			if a.state.world.AllyYielding {
-				shifted := yieldOffset(target, *a.state.selfPos)
-				a.path = a.state.maze.Path(*a.state.selfPos, shifted)
-			}
-			// Fall back to the unshifted target if the offset path is nil.
-			if a.path == nil {
-				a.path = a.state.maze.Path(*a.state.selfPos, target)
-			}
-			if a.path == nil {
-				// Cannot reach last-known: the search is exhausted.
-				a.done = true
-				a.state.world.SearchExhausted = true
-				return bt.Success, nil
-			}
+		if a.state.world.Stunned || a.state.world.PlayerDetected {
+			return bt.Failure, nil
+		}
+		target := a.state.world.LastKnownPos
+		if !a.state.world.HasLastKnown && !a.state.world.HasPatrolTarget {
+			a.state.world.SearchExhausted = true
+			a.path = nil
+			a.hasTarget = false
+			return bt.Failure, nil
+		}
+		a.state.world.ArchetypeAction = "PatrolSearch"
+		dBefore := math.Hypot(target.X-a.state.selfPos.X, target.Y-a.state.selfPos.Y)
+		if dBefore < 0.45 {
+			a.state.world.HasLastKnown = false
+			a.state.world.SearchExhausted = true
+			a.path = nil
+			a.hasTarget = false
+			return bt.Success, nil
+		}
+
+		var shifted *maze.Vec2
+		if a.state.world.AllyYielding {
+			s := yieldOffset(target, *a.state.selfPos)
+			shifted = &s
+		}
+		if !a.ensurePath(target, shifted) {
+			a.state.world.HasLastKnown = false
+			a.state.world.SearchExhausted = true
+			a.path = nil
+			a.hasTarget = false
+			return bt.Failure, nil
 		}
 		status, err := a.advance()
 		if err != nil {
 			return bt.Failure, err
 		}
-		if status == bt.Success {
-			// Arrived at last-known and the player is not here (they would
-			// have been re-detected by UpdateWorldView otherwise): the search
-			// is exhausted.
+		dAfter := math.Hypot(target.X-a.state.selfPos.X, target.Y-a.state.selfPos.Y)
+		if status == bt.Success || dAfter < 0.45 {
+			a.state.world.HasLastKnown = false
 			a.state.world.SearchExhausted = true
+			a.path = nil
+			a.hasTarget = false
+			return bt.Success, nil
 		}
 		return status, nil
 	})
@@ -254,9 +388,22 @@ func (a *RecoverAction) Effects() Effects {
 
 func (a *RecoverAction) Node() bt.Node {
 	return bt.New(func(children []bt.Node) (bt.Status, error) {
+		a.state.world.ArchetypeAction = "RecoverStun"
+		if a.state.world.StunTicks > 0 {
+			a.state.world.StunTicks--
+			if a.state.world.StunTicks <= 0 {
+				a.state.world.Stunned = false
+				return bt.Success, nil
+			}
+			return bt.Running, nil
+		}
+		if a.ticksLeft <= 0 {
+			a.ticksLeft = 3
+		}
 		a.ticksLeft--
 		if a.ticksLeft <= 0 {
 			a.state.world.Stunned = false
+			a.ticksLeft = 3
 			return bt.Success, nil
 		}
 		return bt.Running, nil
@@ -292,19 +439,18 @@ func (a *RetreatAction) Node() bt.Node {
 		if !a.state.world.PlayerDetected || a.state.world.Stunned {
 			return bt.Failure, nil
 		}
-		// Move away from the player.
+		a.state.world.ArchetypeAction = "TacticalRetreat"
 		playerPos := a.state.world.PlayerPos
 		dx := a.state.selfPos.X - playerPos.X
 		dy := a.state.selfPos.Y - playerPos.Y
 		dist2 := dx*dx + dy*dy
-		if dist2 > 8.0*8.0 {
-			// Far enough - disadvantage resolved by distance.
+		// Safe distance threshold is 5.0u (inside the 8.0u sight radius so Retreat
+		// succeeds cleanly before PlayerDetected drops).
+		if dist2 >= 5.0*5.0 {
 			a.state.world.AtDisadvantage = false
+			a.state.world.DisadvantageResolvedTicks = 60
 			return bt.Success, nil
 		}
-		// Retreat: step away from the player. If the direct away heading is
-		// blocked, fan out through alternate headings and take the passable
-		// one that gains the most distance from the player.
 		step := moveSpeed
 		if a.state.MoveSpeed > 0 {
 			step = a.state.MoveSpeed
@@ -336,8 +482,12 @@ func (a *RetreatAction) Node() bt.Node {
 			a.state.selfPos.Y = best.Y
 			a.state.movedThisTick = true
 			a.stuck = 0
+			if bestDist2 >= 5.0*5.0 {
+				a.state.world.AtDisadvantage = false
+				a.state.world.DisadvantageResolvedTicks = 60
+				return bt.Success, nil
+			}
 		} else {
-			// Wall-wedged in every heading: fail so the planner re-instances.
 			a.stuck++
 			if a.stuck >= stuckLimit {
 				return bt.Failure, nil
@@ -348,8 +498,6 @@ func (a *RetreatAction) Node() bt.Node {
 }
 
 // ReinforceAction seeks a same-element ally when at elemental disadvantage.
-// This is the second PA-BT elemental planning behavior: instead of fleeing,
-// the actor groups up with allies to overcome the disadvantage.
 type ReinforceAction struct {
 	*moveAction
 }
@@ -359,7 +507,6 @@ func NewReinforceAction(s *State) *ReinforceAction {
 }
 
 func (a *ReinforceAction) Conditions() []Conditions {
-	// Reinforce requires: at disadvantage AND not stunned.
 	return []Conditions{
 		{&BoolCond{K: KeyAtDisadvantage, Want: true}, &BoolCond{K: KeyStunned, Want: false}},
 	}
@@ -373,31 +520,28 @@ func (a *ReinforceAction) Effects() Effects {
 
 func (a *ReinforceAction) Node() bt.Node {
 	return bt.New(func(children []bt.Node) (bt.Status, error) {
-		if a.state.world.Stunned {
+		if a.state.world.Stunned || !a.state.world.HasReinforceTarget {
 			return bt.Failure, nil
 		}
-		// If we have a reinforce target (nearest friendly ally), move
-		// toward it. This makes a disadvantaged actor visibly fall back
-		// to reinforce rather than idling. Uses maze.Path so walls are
-		// respected, matching PursueAction/SearchAction.
-		if a.state.world.HasReinforceTarget {
-			// Compute path once (or when stale), then follow it across
-			// ticks. Recomputing every tick causes the actor to oscillate
-			// between cell centers without ever advancing.
-			if a.path == nil && !a.done {
-				a.path = a.state.maze.Path(*a.state.selfPos, a.state.world.ReinforceTarget)
-			}
-			status, err := a.advance()
-			if err != nil {
-				return bt.Failure, nil
-			}
-			if status == bt.Running {
-				return bt.Running, nil
-			}
-			// Reached the ally: mark reinforce satisfied.
+		a.state.world.ArchetypeAction = "RallyReinforce"
+		target := a.state.world.ReinforceTarget
+		if math.Hypot(target.X-a.state.selfPos.X, target.Y-a.state.selfPos.Y) < 0.65 {
+			a.state.world.AtDisadvantage = false
+			a.state.world.DisadvantageResolvedTicks = 60
 			return bt.Success, nil
 		}
-		// No ally nearby: succeed without moving (matches old behavior).
+		if !a.ensurePath(target, nil) {
+			return bt.Failure, nil
+		}
+		status, err := a.advance()
+		if err != nil {
+			return bt.Failure, nil
+		}
+		if status == bt.Running {
+			return bt.Running, nil
+		}
+		a.state.world.AtDisadvantage = false
+		a.state.world.DisadvantageResolvedTicks = 60
 		return bt.Success, nil
 	})
 }

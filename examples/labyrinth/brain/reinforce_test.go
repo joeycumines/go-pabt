@@ -56,9 +56,9 @@ func TestReinforceActionMovesTowardAlly(t *testing.T) {
 	}
 }
 
-// TestReinforceActionNoAllySucceedsWithoutMove: when no reinforce target
-// exists, the action succeeds immediately without moving.
-func TestReinforceActionNoAllySucceedsWithoutMove(t *testing.T) {
+// TestReinforceActionNoAllyFailsWithoutMove: when no reinforce target
+// exists, the action fails without moving.
+func TestReinforceActionNoAllyFailsWithoutMove(t *testing.T) {
 	m := maze.Generate(42, 11, 11)
 	selfPos := m.Start
 	w := &WorldView{
@@ -76,8 +76,8 @@ func TestReinforceActionNoAllySucceedsWithoutMove(t *testing.T) {
 	if err != nil {
 		t.Fatalf("tick: %v", err)
 	}
-	if status != bt.Success {
-		t.Fatalf("status = %v, want Success", status)
+	if status != bt.Failure {
+		t.Fatalf("status = %v, want Failure", status)
 	}
 	if selfPos != m.Start {
 		t.Fatalf("selfPos moved with no ally: %v -> %v", m.Start, selfPos)

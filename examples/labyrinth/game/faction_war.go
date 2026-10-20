@@ -46,6 +46,8 @@ type ActorState struct {
 	StrategyTimer         int
 	TargetPos             maze.Vec2
 	HasTarget             bool
+	LastDamageSource      string
+	PlayerDamageRound     int
 	// Path is the remaining A* waypoint list toward TargetPos (front =
 	// next waypoint). Empty means replan on the next movement tick.
 	Path []maze.Vec2
@@ -76,10 +78,29 @@ func (g *Game) factionCombat(w *world.World) {
 			dmgB := int(float64(FactionBaseDamage) * advantage(Element(b.Element), Element(a.Element)))
 			b.HP -= dmgA
 			a.HP -= dmgB
+			if w.Round-states[i].PlayerDamageRound > 90 {
+				states[i].LastDamageSource = "faction"
+			}
+			if j < len(states) && w.Round-states[j].PlayerDamageRound > 90 {
+				states[j].LastDamageSource = "faction"
+			}
 			states[i].FactionAttackCooldown = FactionCombatCooldown
 			if j < len(states) {
 				states[j].FactionAttackCooldown = FactionCombatCooldown
 			}
+			states[i].HasTarget = false
+			states[i].StrategyTimer = 0
+			if j < len(states) {
+				states[j].HasTarget = false
+				states[j].StrategyTimer = 0
+			}
+			dist := math.Hypot(dx, dy)
+			if dist < 1e-6 {
+				dx, dy, dist = 1.0, 0.0, 1.0
+			}
+			ux, uy := dx/dist, dy/dist
+			a.Pos = g.Maze.Resolve(maze.Vec2{X: a.Pos.X + ux*1.05, Y: a.Pos.Y + uy*1.05}, maze.Radius)
+			b.Pos = g.Maze.Resolve(maze.Vec2{X: b.Pos.X - ux*1.05, Y: b.Pos.Y - uy*1.05}, maze.Radius)
 			spawnClashHazard(w, a, b)
 			g.broadcastEvent(Event{
 				Type: "clash",
@@ -105,8 +126,15 @@ func spawnClashHazard(w *world.World, a, b *world.Minotaur) {
 	if len(w.Hazards) >= MaxHazards {
 		return
 	}
+	mid := maze.Vec2{X: (a.Pos.X + b.Pos.X) / 2, Y: (a.Pos.Y + b.Pos.Y) / 2}
+	for _, h := range w.Hazards {
+		if distSq(h.Pos, mid) < HazardRadius*HazardRadius {
+			h.TTL = HazardTTL
+			return
+		}
+	}
 	w.Hazards = append(w.Hazards, &world.Hazard{
-		Pos:            maze.Vec2{X: (a.Pos.X + b.Pos.X) / 2, Y: (a.Pos.Y + b.Pos.Y) / 2},
+		Pos:            mid,
 		Element:        a.Element,
 		TTL:            HazardTTL,
 		DamageCooldown: HazardDamageInterval,
@@ -151,37 +179,73 @@ func (g *Game) tickStrategies(w *world.World) {
 			continue
 		}
 		st := states[i]
-		st.StrategyTimer--
-		if st.StrategyTimer > 0 && st.HasTarget {
-			continue
+		if st.HasTarget && math.Hypot(st.TargetPos.X-m.Pos.X, st.TargetPos.Y-m.Pos.Y) < 0.6 {
+			st.HasTarget = false
+			st.StrategyTimer = 0
 		}
-		st.StrategyTimer = StrategyReevalTicks
-		home := Element(m.Element)
 		hpFrac := float64(m.HP) / float64(actorHP(ActorType(m.Type)))
-
-		switch {
-		case hpFrac < 0.35:
+		if hpFrac < 0.50 && st.Strategy != StrategyRetreat {
 			st.Strategy = StrategyRetreat
-			if p, ok := g.homeTerritoryPos(home); ok {
+			st.StrategyTimer = StrategyReevalTicks
+			if p, ok := g.homeTerritoryPos(Element(m.Element)); ok {
 				setStrategyTarget(st, p)
 			}
-		case hpFrac > 0.6:
-			if target, ok := nearestRival(w, i, m.Element); ok {
-				st.Strategy = StrategyRaid
-				setStrategyTarget(st, target)
-			} else {
+			m.Strategy = st.Strategy
+		}
+		st.StrategyTimer--
+		if st.StrategyTimer <= 0 || !st.HasTarget {
+			st.StrategyTimer = StrategyReevalTicks
+			home := Element(m.Element)
+
+			switch {
+			case hpFrac < 0.50:
+				st.Strategy = StrategyRetreat
+				if p, ok := g.homeTerritoryPos(home); ok {
+					setStrategyTarget(st, p)
+				}
+			case st.FactionAttackCooldown > 0:
+				st.Strategy = StrategyPatrol
+				if p, ok := g.homeTerritoryPos(home); ok {
+					setStrategyTarget(st, p)
+				}
+			case hpFrac >= 0.50:
+				// Healthy actors raid rival territory, alternating with home patrol between raid cycles.
+				if st.Strategy != StrategyRaid {
+					if target, ok := nearestRival(w, i, m.Element); ok {
+						st.Strategy = StrategyRaid
+						setStrategyTarget(st, target)
+					} else {
+						st.Strategy = StrategyPatrol
+						if p, ok := g.homeTerritoryPos(home); ok {
+							setStrategyTarget(st, p)
+						}
+					}
+				} else {
+					st.Strategy = StrategyPatrol
+					if p, ok := g.homeTerritoryPos(home); ok {
+						setStrategyTarget(st, p)
+					}
+				}
+			default:
 				st.Strategy = StrategyPatrol
 				if p, ok := g.homeTerritoryPos(home); ok {
 					setStrategyTarget(st, p)
 				}
 			}
-		default:
-			st.Strategy = StrategyPatrol
-			if p, ok := g.homeTerritoryPos(home); ok {
-				setStrategyTarget(st, p)
+			m.Strategy = st.Strategy
+		}
+		if st.Strategy == StrategyRetreat && TerritoryOf(g.Maze, m.Pos) == Element(m.Element) {
+			maxHP := actorHP(ActorType(m.Type))
+			if m.HP < maxHP && w.Round%10 == 0 {
+				m.HP += 2
+				if m.HP > maxHP {
+					m.HP = maxHP
+				}
 			}
 		}
-		m.Strategy = st.Strategy
+		if st.HasTarget && i < len(g.Brains) {
+			g.Brains[i].SetPatrolTarget(st.TargetPos)
+		}
 	}
 }
 
@@ -198,6 +262,8 @@ func setStrategyTarget(st *ActorState, p maze.Vec2) {
 func nearestRival(w *world.World, i, elem int) (maze.Vec2, bool) {
 	var best maze.Vec2
 	bestD := -1.0
+	var fallback maze.Vec2
+	fallbackD := -1.0
 	m := w.Minotaurs[i]
 	for j, o := range w.Minotaurs {
 		if j == i || o.HP <= 0 || o.Element == elem {
@@ -206,12 +272,22 @@ func nearestRival(w *world.World, i, elem int) (maze.Vec2, bool) {
 		dx := o.Pos.X - m.Pos.X
 		dy := o.Pos.Y - m.Pos.Y
 		d := dx*dx + dy*dy
-		if bestD < 0 || d < bestD {
-			bestD = d
-			best = o.Pos
+		if o.Strategy != StrategyRetreat {
+			if bestD < 0 || d < bestD {
+				bestD = d
+				best = o.Pos
+			}
+		} else {
+			if fallbackD < 0 || d < fallbackD {
+				fallbackD = d
+				fallback = o.Pos
+			}
 		}
 	}
-	return best, bestD >= 0
+	if bestD >= 0 {
+		return best, true
+	}
+	return fallback, fallbackD >= 0
 }
 
 // applyStrategyMovement steers each actor along an A* path toward its
@@ -245,7 +321,7 @@ func (g *Game) applyStrategyMovement(w *world.World) {
 			continue
 		}
 		if len(st.Path) == 0 {
-			st.Path = g.Maze.Path(m.Pos, st.TargetPos)
+			st.Path = g.Maze.PathWalkable(m.Pos, st.TargetPos)
 			if len(st.Path) == 0 {
 				// Unreachable objective: drop it rather than wedge.
 				st.HasTarget = false
@@ -376,6 +452,7 @@ func (g *Game) separateRunnerFromActors(w *world.World) {
 // TargetActorCount. The failure cap bounds the loop if the maze has no room,
 // so a spawn drought can never wedge the writer goroutine.
 func (g *Game) respawnDeadActors(w *world.World) {
+	var deadSources []string
 	for i := len(w.Minotaurs) - 1; i >= 0; i-- {
 		if w.Minotaurs[i].HP > 0 {
 			continue
@@ -383,6 +460,11 @@ func (g *Game) respawnDeadActors(w *world.World) {
 		id := w.Minotaurs[i].ID
 		elem := w.Minotaurs[i].Element
 		actorType := w.Minotaurs[i].Type
+		source := "faction"
+		if i < len(g.actorStates) && g.actorStates[i].LastDamageSource != "" {
+			source = g.actorStates[i].LastDamageSource
+		}
+		deadSources = append(deadSources, source)
 		w.Minotaurs = append(w.Minotaurs[:i], w.Minotaurs[i+1:]...)
 		if i < len(g.actorStates) {
 			g.actorStates = append(g.actorStates[:i], g.actorStates[i+1:]...)
@@ -399,13 +481,24 @@ func (g *Game) respawnDeadActors(w *world.World) {
 				"id":      id,
 				"element": elem,
 				"type":    actorType,
+				"source":  source,
 			},
 		})
 	}
 	for fails := 0; len(w.Minotaurs) < TargetActorCount && fails < TargetActorCount*4; {
 		before := len(w.Minotaurs)
 		g.spawnActor(ActorType(g.leastPopulatedElement(w)))
-		if len(w.Minotaurs) == before {
+		if len(w.Minotaurs) > before {
+			if len(deadSources) > 0 {
+				src := deadSources[0]
+				deadSources = deadSources[1:]
+				if g.spawnKillSource == nil {
+					g.spawnKillSource = make(map[string]string)
+				}
+				newActor := w.Minotaurs[len(w.Minotaurs)-1]
+				g.spawnKillSource[newActor.ID] = src
+			}
+		} else {
 			fails++
 		}
 	}
