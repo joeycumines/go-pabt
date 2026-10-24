@@ -209,11 +209,17 @@ function testApiLogAndFinish() {
 // --- dual-coordinate actuation & 3D frustum perception ----------------------
 
 function testProjectToScreenFullCamera() {
-    // A camera at the origin looking down view-space -Z (the client's own
-    // perspective() convention): a point dead ahead must land at the centre
-    // of the screen, one behind must be culled.
-    const f = 1 / Math.tan(Math.PI / 4);
-    const nf = 1 / (0.1 - 100);
+    // The client's own perspective() convention (column-major, w_clip from
+    // the FOURTH row, depth row in the third): a point dead ahead lands at
+    // the centre, one behind is culled, and an off-axis point gets the
+    // perspective-correct divide (this is what distinguishes the w row from
+    // the depth row).
+    const fov = 70 * Math.PI / 180;
+    const nearP = 0.1;
+    const far = 100;
+    const f = 1 / Math.tan(fov / 2);
+    const nf = 1 / (nearP - far);
+    const aspect = 16 / 9;
     const cam = {
         pos: [0, 0, 0],
         yaw: 0,
@@ -228,10 +234,10 @@ function testProjectToScreenFullCamera() {
         },
         projMatrix() {
             return new Float32Array([
-                f, 0, 0, 0,
+                f / aspect, 0, 0, 0,
                 0, f, 0, 0,
-                0, 0, (100 + 0.1) * nf, -1,
-                0, 0, 2 * 100 * 0.1 * nf, 0,
+                0, 0, (far + nearP) * nf, -1,
+                0, 0, 2 * far * nearP * nf, 0,
             ]);
         },
     };
@@ -244,6 +250,16 @@ function testProjectToScreenFullCamera() {
     assert.equal(behind.inFrustum, false, 'a point behind the camera must be culled');
     assert.equal(behind.screenX, null);
     assert.equal(behind.screenY, null);
+
+    // Off-axis: ndcY = f * y / (-z). With f=1.428, y=0.2, z=-1: ndcY=0.286,
+    // screenY = 1 - (0.5*0.286 + 0.5) = 0.357. Dividing by the depth row
+    // instead of the w row would give 0.322 here.
+    const off = projectToScreen(cam, 0.3, 0.2, -1.0);
+    assert.equal(off.inFrustum, true);
+    const expectedScreenX = 0.5 + ((f / aspect) * 0.3 / 1.0) * 0.5;
+    const expectedScreenY = 1 - (0.5 + (f * 0.2 / 1.0) * 0.5);
+    assert.ok(Math.abs(off.screenX - expectedScreenX) < 1e-3, `expected screenX ${expectedScreenX}, got ${off.screenX}`);
+    assert.ok(Math.abs(off.screenY - expectedScreenY) < 1e-3, `expected screenY ${expectedScreenY}, got ${off.screenY}`);
 }
 
 function testProjectToScreenYawConeFallback() {

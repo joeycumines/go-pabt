@@ -117,10 +117,10 @@ export function projectToScreen(cam, wx, wy, wz) {
         const vw = V[3] * wx + V[7] * wy + V[11] * wz + V[15];
         const cx = P[0] * vx + P[4] * vy + P[8] * vz + P[12] * vw;
         const cy = P[1] * vx + P[5] * vy + P[9] * vz + P[13] * vw;
-        // The clip-space w of a perspective projection is -z_view, which
-        // lives in the THIRD row of the matrix (column-major indices 2, 6,
-        // 10, 14) — the fourth row is all zeros in perspective().
-        const cw = P[2] * vx + P[6] * vy + P[10] * vz + P[14] * vw;
+        // For the client's perspective() (column-major), the clip-space w row
+        // is the FOURTH row (indices 3, 7, 11, 15): w_clip = -z_view. The
+        // third row is the depth row and must not be used for the divide.
+        const cw = P[3] * vx + P[7] * vy + P[11] * vz + P[15] * vw;
         if (cw <= 0.05) return { inFrustum: false, screenX: null, screenY: null };
         const ndcX = cx / cw;
         const ndcY = cy / cw;
