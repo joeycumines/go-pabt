@@ -10,7 +10,13 @@ import { ModelBank, actorModelMatrix } from './models.mjs';
 import { DebugPanel } from './debug.mjs';
 import { BTHud } from './bt-hud.mjs';
 import { ParticleEngine } from './particles.mjs';
-import { PlaytestBot } from './playtest-bot.mjs';
+import { BotRuntime } from './bot-runtime.mjs';
+import { Inspector } from './inspector.mjs';
+import explorerRunner from './bots/explorer-runner.js';
+import combatHunter from './bots/combat-hunter.js';
+import stealthBaiter from './bots/stealth-baiter.js';
+import elementTactician from './bots/element-tactician.js';
+import chaosStress from './bots/chaos-stress.js';
 
 const canvas = document.getElementById('glcanvas');
 const loading = document.getElementById('loading');
@@ -19,7 +25,37 @@ const prompt = document.getElementById('pointer-lock-prompt');
 const overlay = document.getElementById('overlay');
 
 let renderer, camera, input, hud, net, audio, debugPanel, btHud, particles;
-const playtestBot = new PlaytestBot();
+// botWorld is the live state the Bot SDK reads. The runtime owns the
+// per-tick fields (frame, time, finished) and the caller keeps the rest in
+// sync with the live client and the latest server snapshot.
+const botWorld = {
+    maze: null,
+    camera: null,
+    input: null,
+    actors: new Map(),
+    powerUps: [],
+    hazards: [],
+    territory: [0, 1, 2, 3],
+    round: -1,
+    phase: 'playing',
+    intensity: 0,
+    hp: 100,
+    maxHp: 100,
+    playerElement: 0,
+    frame: 0,
+    time: 0,
+    btRows: [],
+    shotsFired: 0,
+    serverPos: null,
+    botLog: [],
+    finished: false,
+    finishReason: '',
+};
+let botRuntime = null;
+// The inspector records the playtest record: a state sample every sampling
+// tick plus the server event stream, so a finished session can be pulled
+// apart afterwards instead of being reduced to a verdict.
+let inspector = null;
 let maze = null; // authoritative maze from server
 let lastTime = 0;
 let gameState = 'playing'; // 'playing' | 'caught' | 'won'
@@ -53,7 +89,15 @@ let projectiles = []; // { pos, dir, born, color }
 // Pulse fire state
 let lastFireTime = 0;
 let lastShotElement = -1; // element of the most recent pulse (S6b probe)
+let shotsFired = 0; // shots actually sent to the server (bot or player)
 const FIRE_COOLDOWN = 0.5; // seconds
+// The server applies one input command per simulation tick (30 Hz), so the
+// client sends at the same rate. A slow frame sends catch-up commands so
+// the game speed never depends on the render rate.
+const INPUT_INTERVAL_MS = 1000 / 30;
+const MAX_INPUTS_PER_FRAME = 8;
+let lastInputAt = 0;
+let firePending = null; // {yaw, pitch} of a shot waiting for the next tick
 let muzzleFlashTimer = 0;
 let hitFlashTimer = 0;
 let damageFlashTimer = 0; // red flash when player takes damage
@@ -176,6 +220,24 @@ function init() {
     // I1: particle engine for projectile trails, muzzle bursts, impact sparks,
     // and death bursts. Renders as GL_POINTS with additive blending.
     particles = new ParticleEngine(renderer.gl);
+    // The player is driven by model-authored bot source. The runtime owns
+    // the compile/step/apply cycle; the built-in personas are registered
+    // here so the harness can start any of them by name.
+    botRuntime = new BotRuntime(botWorld);
+    botRuntime.registerPersona('explorer_runner', explorerRunner);
+    botRuntime.registerPersona('combat_hunter', combatHunter);
+    botRuntime.registerPersona('stealth_baiter', stealthBaiter);
+    botRuntime.registerPersona('element_tactician', elementTactician);
+    botRuntime.registerPersona('chaos_stress', chaosStress);
+    inspector = new Inspector({
+        world: botWorld,
+        command: () => (botRuntime ? botRuntime.lastCommand : null),
+        shotsFired: () => shotsFired,
+        motion: () => ({
+            vel: [playerVelX, playerVelZ],
+            serverPos: serverPos ? [serverPos[0], serverPos[2]] : null,
+        }),
+    });
     net.onTree = (actorID, frame) => {
         debugPanel.handleTreeFrame(actorID, frame);
         btHud.handleTreeFrame(actorID, frame);
@@ -233,7 +295,10 @@ function init() {
 
     // Connect to server.
     net.connect();
-    net.onEvent = handleEvent;
+    net.onEvent = (evt) => {
+        handleEvent(evt);
+        if (inspector) inspector.recordEvent(evt);
+    };
     net.onMaze = (mazeData) => {
         maze = mazeData;
         // Place camera at maze start.
@@ -259,11 +324,15 @@ function init() {
 
     renderer.resize();
     window.addEventListener('resize', () => renderer.resize());
+    lastInputAt = performance.now();
 }
 
 function frame(time) {
     const dt = Math.min((time - lastTime) / 1000, 0.05);
     lastTime = time;
+
+    // Refresh the SDK/inspector view of the world before anything reads it.
+    syncBotWorld();
 
     if (gameState === 'playing' && maze) {
         update(dt);
@@ -274,6 +343,9 @@ function frame(time) {
     if (maze) {
         render();
     }
+    // Record the playtest state sample for this frame. It runs after the
+    // render so the sample describes the frame that was just presented.
+    if (inspector) inspector.sample();
 
     // HUD updates that must continue on the caught/win overlay: HP, round,
     // and intensity are driven by the latest snapshot regardless of gameState.
@@ -314,25 +386,35 @@ function frame(time) {
     requestAnimationFrame(frame);
 }
 
+// syncBotWorld refreshes the SDK's view of the world from the live client
+// state and the latest server snapshot. It runs immediately before the bot
+// tick so a bot always acts on a coherent snapshot.
+function syncBotWorld() {
+    const snap = net.getSnapshot();
+    botWorld.maze = maze;
+    botWorld.camera = camera;
+    botWorld.input = input;
+    botWorld.actors = minotaurBuffers;
+    botWorld.powerUps = snap && snap.data && snap.data.powerUps
+        ? snap.data.powerUps.filter((p) => p.active)
+        : [];
+    botWorld.hazards = hazards;
+    botWorld.territory = territoryControl;
+    botWorld.round = snap && snap.data ? snap.data.round : -1;
+    botWorld.phase = gameState;
+    botWorld.intensity = snap && snap.data ? snap.data.intensity : 0;
+    botWorld.hp = lastHP;
+    botWorld.maxHp = MAX_HP;
+    botWorld.playerElement = playerElement;
+    botWorld.btRows = btHud ? btHud.probe().rows : [];
+    botWorld.shotsFired = shotsFired;
+    botWorld.serverPos = serverPos;
+}
+
 function update(dt) {
     input.update();
-    if (playtestBot.active) {
-        const snap = net.getSnapshot();
-        const activePUs = snap && snap.data && snap.data.powerUps
-            ? snap.data.powerUps.filter(p => p.active)
-            : [];
-        playtestBot.applyFrame({
-            dt,
-            input,
-            camera,
-            maze,
-            serverPos,
-            minotaurBuffers,
-            powerUps: activePUs,
-            playerElement,
-            hp: lastHP,
-            losClear: (x1, z1, x2, z2) => window.__ariadne ? window.__ariadne.losClear(x1, z1, x2, z2) : false,
-        });
+    if (botRuntime && botRuntime.active) {
+        botRuntime.step(dt);
     }
     const maxSpeed = input.sprint ? 6.5 : 4.0;
 
@@ -384,6 +466,28 @@ function update(dt) {
     const actualSpeed = Math.hypot(playerVelX, playerVelZ);
     camera.updateMovement(dt, input.sprint, actualSpeed);
 
+    // Position reconciliation: reconcile against authoritative serverPos BEFORE
+    // integrating local velocity/collision so a server knockback or corner
+    // collision never leaves camera.pos stranded on the opposite side of a wall.
+    const snap = net.getSnapshot();
+    if (snap && snap.data) {
+        const sp = snap.data.runner;
+        serverPos = [sp.x, PLAYER_HEIGHT, sp.y];
+        const drift = Math.hypot(serverPos[0] - camera.pos[0], serverPos[2] - camera.pos[2]);
+        const sameCell = Math.floor(serverPos[0]) === Math.floor(camera.pos[0]) &&
+            Math.floor(serverPos[2]) === Math.floor(camera.pos[2]);
+        if (drift > 0.35 || (!sameCell && drift > 0.2)) {
+            camera.pos[0] = serverPos[0];
+            camera.pos[2] = serverPos[2];
+            playerVelX *= 0.25;
+            playerVelZ *= 0.25;
+        } else {
+            const lerpRate = 0.2;
+            camera.pos[0] += (serverPos[0] - camera.pos[0]) * lerpRate;
+            camera.pos[2] += (serverPos[2] - camera.pos[2]) * lerpRate;
+        }
+    }
+
     const prevX = camera.pos[0], prevZ = camera.pos[2];
     let newX = prevX + playerVelX * dt;
     let newZ = prevZ + playerVelZ * dt;
@@ -411,16 +515,7 @@ function update(dt) {
         grounded = true;
     }
 
-    // Position reconciliation: lerp toward server position.
-    const snap = net.getSnapshot();
     if (snap && snap.data) {
-        const sp = snap.data.runner;
-        serverPos = [sp.x, PLAYER_HEIGHT, sp.y];
-        // Gentle correction: lerp 10% per frame toward server pos.
-        const lerpRate = 0.1;
-        camera.pos[0] += (serverPos[0] - camera.pos[0]) * lerpRate;
-        camera.pos[2] += (serverPos[2] - camera.pos[2]) * lerpRate;
-
         // Gang war state: dynamic territory control and crossfire rifts.
         if (snap.data.territoryControl) territoryControl = snap.data.territoryControl;
         hazards = snap.data.hazards || [];
@@ -435,16 +530,18 @@ function update(dt) {
         }
     }
 
-    // Pulse fire: click to fire (with cooldown).
+    // Pulse fire: click to fire (with cooldown). The shot itself rides on
+    // the next tick input so the server applies exactly one movement per
+    // simulation tick; the aim is captured here so the shot is still fired
+    // along the direction the player was pointing at the moment they pulled
+    // the trigger.
     const now = performance.now() / 1000;
     if (input.fire && now - lastFireTime > FIRE_COOLDOWN) {
         lastFireTime = now;
         lastShotElement = playerElement;
+        shotsFired++;
         audio.playShot(playerElement);
-        // Send authoritative aim direction (raw pitch, no recoil) to server
-        const aimYaw = camera.yaw;
-        const aimPitch = camera.pitch;
-        net.sendInput(input.forward, input.strafe, aimYaw, aimPitch, input.sprint, false, true);
+        firePending = { yaw: camera.yaw, pitch: camera.pitch };
         // Visual tracer uses render direction (with recoil) for immediate feedback
         const rd = camera.renderDir();
         const ec = ELEMENT_COLORS[playerElement];
@@ -493,8 +590,33 @@ function update(dt) {
         crosshairEl.classList.toggle('aim-locked', aimLocked);
     }
 
-    // Send regular movement input with authoritative aim (no recoil).
-    net.sendInput(input.forward, input.strafe, camera.yaw, camera.pitch, input.sprint, false, false);
+    // Send input commands at the server's simulation rate.
+    //
+    // The server applies one input command per 30 Hz tick, so sending one
+    // command per rendered frame made the runner move at twice the intended
+    // speed on a 60 Hz display and at a fraction of it on a slow one. The
+    // client and the server then resolved the same wall contact from
+    // different positions, and the reconciliation fought the prediction
+    // until the runner was pinned in place. Sending at the tick rate keeps
+    // both sides on the same clock; the catch-up loop keeps the game speed
+    // independent of the render rate.
+    const nowMs = performance.now();
+    let sent = 0;
+    while (nowMs - lastInputAt >= INPUT_INTERVAL_MS && sent < MAX_INPUTS_PER_FRAME) {
+        lastInputAt += INPUT_INTERVAL_MS;
+        const shot = firePending;
+        firePending = null;
+        net.sendInput(
+            input.forward,
+            input.strafe,
+            shot ? shot.yaw : camera.yaw,
+            shot ? shot.pitch : camera.pitch,
+            input.sprint,
+            false,
+            !!shot,
+        );
+        sent++;
+    }
 
     // Interpolate minotaur positions from server snapshots.
     if (snap && snap.data) {
@@ -602,6 +724,11 @@ function update(dt) {
     window.__ariadne = {
         get gameState() { return gameState; },
         get playerPos() { return [...camera.pos]; },
+        get serverPlayerPos() { return serverPos ? [...serverPos] : null; },
+        get syncDrift() {
+            if (!serverPos) return 0;
+            return Number(Math.hypot(serverPos[0] - camera.pos[0], serverPos[2] - camera.pos[2]).toFixed(3));
+        },
         get playerYaw() { return camera.yaw; },
         get hp() { return lastHP; },
         get actors() {
@@ -620,6 +747,8 @@ function update(dt) {
         get round() { const s = net.getSnapshot(); return s ? s.data.round : -1; },
         get intensity() { const s = net.getSnapshot(); return s ? s.data.intensity : -1; },
         get wsOpen() { return net.ws && net.ws.readyState === WebSocket.OPEN; },
+        get inputAck() { const s = net.getSnapshot(); return s ? s.ack : -1; },
+        get inputSeq() { return net.inputSeq; },
         get mazeSize() { return maze ? [maze.w, maze.h] : null; },
         get mazeGrid() { return maze && maze.grid ? Array.from(maze.grid) : null; },
         get gate() { return maze ? [maze.gateX, maze.gateY] : null; },
@@ -708,10 +837,37 @@ function update(dt) {
         get cameraRecoil() { return camera.recoilPitch; },
         get cameraBob() { return [camera.bobOffsetX, camera.bobOffsetY]; },
         get weaponVisible() { return true; }, // weapon always renders when modelsReady
+        // Playtest instrument surface. The inspector records state samples
+        // and the server event stream while the session runs; these
+        // accessors let a harness pull apart any window of that record
+        // afterwards instead of only reading the final verdict.
+        inspect: {
+            start: (opts) => inspector.start(opts || {}),
+            stop: () => inspector.stop(),
+            frames: (opts) => inspector.frames(opts || {}),
+            events: (opts) => inspector.events(opts || {}),
+            timeline: (opts) => inspector.timeline(opts || {}),
+            stats: () => inspector.stats(),
+            export: () => inspector.export(),
+        },
+        // Bot runtime surface. `bots.load` accepts bot source text - the
+        // model-authored path - or an already-built bot object;
+        // `bots.loadPersona` starts one of the built-in personas by name.
+        bots: {
+            load: (source, opts) => (typeof source === 'string'
+                ? botRuntime.load(source, opts || {})
+                : botRuntime.loadBot(source, opts || {})),
+            loadPersona: (persona, opts) => botRuntime.loadPersona(persona, opts || {}),
+            unload: () => botRuntime.unload(),
+            status: () => botRuntime.report(),
+            logs: () => botRuntime.logs.slice(),
+            errors: () => botRuntime.errors.slice(),
+            personas: () => Array.from(botRuntime.personas.keys()),
+        },
         playtest: {
-            start: (persona) => playtestBot.start(persona),
-            stop: () => playtestBot.stop(),
-            report: () => playtestBot.getReport(),
+            start: (persona) => botRuntime.loadPersona(persona),
+            stop: () => botRuntime.unload(),
+            report: () => botRuntime.report(),
         },
     };
 }
@@ -803,12 +959,20 @@ Object.defineProperty(window, 'screenShakeTimer', {
 function handleEvent(evt) {
     switch (evt.type) {
         case 'caught':
+            if (serverPos) {
+                camera.pos[0] = serverPos[0];
+                camera.pos[2] = serverPos[2];
+            }
             gameState = 'caught';
             overlay.hidden = false;
             overlay.textContent = 'CAUGHT\nClick to restart';
             overlay.onclick = () => location.reload();
             break;
         case 'win':
+            if (serverPos) {
+                camera.pos[0] = serverPos[0];
+                camera.pos[2] = serverPos[2];
+            }
             gameState = 'won';
             overlay.hidden = false;
             overlay.textContent = 'ESCAPED\nClick to play again';

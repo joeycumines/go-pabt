@@ -81,6 +81,10 @@ export class BTHud {
 
     _activeNode(frame) {
         if (!frame) return '';
+        if (Array.isArray(frame.candidatesWithCost)) {
+            const execCand = frame.candidatesWithCost.find((c) => c && c.executing && c.name);
+            if (execCand) return execCand.name;
+        }
         // Map action IDs to names so the active cell reads like a behavior.
         const nameById = new Map();
         if (Array.isArray(frame.actions)) {
