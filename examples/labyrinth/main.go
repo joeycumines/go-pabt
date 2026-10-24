@@ -18,6 +18,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -131,6 +132,47 @@ func main() {
 			"markdown":  playtest.RenderMarkdownReport([]playtest.EpisodeResult{ep}),
 			"svg":       playtest.RenderSVGMap(&ep),
 			"ticks":     len(recs),
+		})
+	})
+
+	mux.HandleFunc("/api/playtest/events", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && r.URL.Query().Get("reset") == "1" {
+			g.ResetEvents()
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		q := game.EventQuery{}
+		if fromStr := r.URL.Query().Get("from"); fromStr != "" {
+			from, err := strconv.Atoi(fromStr)
+			if err != nil || from < 0 {
+				http.Error(w, "invalid 'from' tick parameter", http.StatusBadRequest)
+				return
+			}
+			q.FromTick = from
+			q.HasFrom = true
+		}
+		if toStr := r.URL.Query().Get("to"); toStr != "" {
+			to, err := strconv.Atoi(toStr)
+			if err != nil || to < 0 {
+				http.Error(w, "invalid 'to' tick parameter", http.StatusBadRequest)
+				return
+			}
+			q.ToTick = to
+			q.HasTo = true
+		}
+		if q.HasFrom && q.HasTo && q.FromTick > q.ToTick {
+			http.Error(w, "'from' tick must not exceed 'to' tick", http.StatusBadRequest)
+			return
+		}
+		q.Type = r.URL.Query().Get("type")
+		recs := g.QueryEvents(q)
+		if recs == nil {
+			recs = []game.EventRecord{}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"events": recs,
+			"count":  len(recs),
 		})
 	})
 

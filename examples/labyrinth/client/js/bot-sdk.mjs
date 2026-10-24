@@ -103,6 +103,57 @@ export function pathTo(maze, sx, sz, gx, gz, allowGap = false) {
     return out;
 }
 
+// projectToScreen projects a world point into the camera's 3D frustum.
+// With a real camera (viewMatrix/projMatrix available) it runs the full
+// view-projection transform; without one (plain test doubles) it falls back
+// to a 2D yaw cone so callers see a consistent shape either way.
+export function projectToScreen(cam, wx, wy, wz) {
+    if (cam && typeof cam.viewMatrix === 'function' && typeof cam.projMatrix === 'function') {
+        const V = cam.viewMatrix();
+        const P = cam.projMatrix(16 / 9);
+        const vx = V[0] * wx + V[4] * wy + V[8] * wz + V[12];
+        const vy = V[1] * wx + V[5] * wy + V[9] * wz + V[13];
+        const vz = V[2] * wx + V[6] * wy + V[10] * wz + V[14];
+        const vw = V[3] * wx + V[7] * wy + V[11] * wz + V[15];
+        const cx = P[0] * vx + P[4] * vy + P[8] * vz + P[12] * vw;
+        const cy = P[1] * vx + P[5] * vy + P[9] * vz + P[13] * vw;
+        // The clip-space w of a perspective projection is -z_view, which
+        // lives in the THIRD row of the matrix (column-major indices 2, 6,
+        // 10, 14) — the fourth row is all zeros in perspective().
+        const cw = P[2] * vx + P[6] * vy + P[10] * vz + P[14] * vw;
+        if (cw <= 0.05) return { inFrustum: false, screenX: null, screenY: null };
+        const ndcX = cx / cw;
+        const ndcY = cy / cw;
+        const inFrustum = Math.abs(ndcX) <= 1.0 && Math.abs(ndcY) <= 1.0;
+        return {
+            inFrustum,
+            screenX: inFrustum ? round3(ndcX * 0.5 + 0.5) : null,
+            screenY: inFrustum ? round3(1 - (ndcY * 0.5 + 0.5)) : null,
+        };
+    }
+    const dx = wx - (cam ? cam.pos[0] : 0);
+    const dz = wz - (cam ? cam.pos[2] : 0);
+    const dist = Math.hypot(dx, dz);
+    if (dist < 1e-6) return { inFrustum: true, screenX: 0.5, screenY: 0.5 };
+    const yaw = cam ? (cam.yaw || 0) : 0;
+    const fwdX = Math.sin(yaw);
+    const fwdZ = Math.cos(yaw);
+    const rightX = -Math.cos(yaw);
+    const rightZ = Math.sin(yaw);
+    const dot = (dx * fwdX + dz * fwdZ) / dist;
+    const inFrustum = dot >= 0.5;
+    const side = (dx * rightX + dz * rightZ) / dist;
+    return {
+        inFrustum,
+        screenX: inFrustum ? round3(0.5 + side * 0.5) : null,
+        screenY: inFrustum ? 0.5 : null,
+    };
+}
+
+function round3(v) {
+    return Number(v.toFixed(3));
+}
+
 // losClear reports whether an unobstructed line of sight exists between two
 // XZ points. Only floor and platform cells are transparent, which matches
 // the server's rayOccluded rule and the client's own visibility test.
@@ -126,10 +177,20 @@ export function losClear(maze, x1, z1, x2, z2) {
 // a consistent world rather than a half-updated one.
 export function buildObservation(world) {
     const camera = world.camera;
+    const px = camera.pos[0];
+    const pz = camera.pos[2];
+    const srvX = Array.isArray(world.serverPos) ? world.serverPos[0] : px;
+    const srvZ = Array.isArray(world.serverPos) ? world.serverPos[2] : pz;
+    const syncDrift = Array.isArray(world.serverPos)
+        ? round3(Math.hypot(srvX - px, srvZ - pz))
+        : 0;
     const self = {
-        x: camera.pos[0],
+        x: px,
         y: camera.pos[1],
-        z: camera.pos[2],
+        z: pz,
+        serverX: round3(srvX),
+        serverZ: round3(srvZ),
+        syncDrift,
         yaw: camera.yaw,
         pitch: camera.pitch,
         hp: world.hp,
@@ -145,6 +206,8 @@ export function buildObservation(world) {
         if (buf.hp <= 0) continue;
         const x = buf.pos[0];
         const z = buf.pos[2];
+        const proj = projectToScreen(camera, x, 0.5, z);
+        const los = losClear(world.maze, px, pz, x, z);
         actors.push({
             id,
             x,
@@ -158,8 +221,12 @@ export function buildObservation(world) {
             stunned: !!buf.stunned,
             strategy: buf.strategy | 0,
             strategyName: STRATEGY_NAMES[buf.strategy | 0] || 'patrol',
-            dist: Math.hypot(x - self.x, z - self.z),
-            los: losClear(world.maze, self.x, self.z, x, z),
+            dist: Math.hypot(x - px, z - pz),
+            los,
+            inFrustum: proj.inFrustum,
+            screenX: proj.screenX,
+            screenY: proj.screenY,
+            perceivable: Boolean(los && proj.inFrustum),
         });
     }
     actors.sort((a, b) => a.dist - b.dist);
@@ -268,7 +335,16 @@ export function createBotAPI(world, cmd, obs, state = {}) {
 
         // ---- actions -----------------------------------------------------
         aimAt(x, z) {
-            cmd.yaw = Math.atan2(x - obs.self.x, z - obs.self.z);
+            // The server raycasts pulses from its own authoritative position,
+            // so when the client has drifted we aim from where the server
+            // believes we stand, not from where the camera does.
+            const ox = (obs.self.syncDrift > 0.08 && typeof obs.self.serverX === 'number')
+                ? obs.self.serverX
+                : obs.self.x;
+            const oz = (obs.self.syncDrift > 0.08 && typeof obs.self.serverZ === 'number')
+                ? obs.self.serverZ
+                : obs.self.z;
+            cmd.yaw = Math.atan2(x - ox, z - oz);
             return cmd.yaw;
         },
         look(yaw, pitch) {
@@ -431,11 +507,21 @@ export function createBotAPI(world, cmd, obs, state = {}) {
             }
             return best;
         },
+        perceivable(opts = {}) {
+            return this.nearest({
+                ...opts,
+                visibleOnly: true,
+                test: (a) => a.perceivable && (!opts.test || opts.test(a)),
+            });
+        },
         ofType(type) {
             return obs.actors.filter((a) => a.type === type);
         },
         beats(element) {
             return advantage(obs.self.element, element) === 2;
+        },
+        losesTo(element) {
+            return advantage(obs.self.element, element) === 0.5;
         },
         advantageAgainst(element) {
             return advantage(obs.self.element, element);

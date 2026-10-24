@@ -12,6 +12,8 @@
 // in stats() are computed from the same raw samples, so a reader can always
 // re-derive them and disagree.
 
+import { projectToScreen } from './bot-sdk.mjs';
+
 const MAX_SAMPLES = 8000;
 const MAX_EVENTS = 4000;
 
@@ -19,7 +21,13 @@ export class Inspector {
     constructor(provider) {
         // provider.world     - the live world state (maze, camera, actors...)
         // provider.command() - the last command the bot issued, or null
+        // provider.gl()      - the WebGL2 context, for canvas liveness probes
+        // provider.canvas()  - the game canvas
         this.provider = provider;
+        this.glFn = provider.gl || (() => null);
+        this.canvasFn = provider.canvas || (() => null);
+        this._pixelBuf = new Uint8Array(8 * 8 * 4);
+        this.blankSamples = 0;
         this.samples = [];
         this.eventLog = [];
         this.active = false;
@@ -37,6 +45,7 @@ export class Inspector {
         this.samples = [];
         this.eventLog = [];
         this.pendingEventTypes = [];
+        this.blankSamples = 0;
         this.active = true;
         this.startedAt = nowMs();
         this.lastSampleAt = -Infinity;
@@ -66,12 +75,48 @@ export class Inspector {
         this.pendingEventTypes.push(evt.type);
     }
 
+    // _probeCanvas reads an 8x8 patch at the centre of the WebGL canvas and
+    // reports whether the frame is alive. A synchronous 8x8 readPixels costs
+    // a fraction of a millisecond; a toDataURL capture would stall the whole
+    // render loop, so it must never be used here.
+    _probeCanvas() {
+        const gl = this.glFn();
+        const cvs = this.canvasFn();
+        if (!gl || !cvs || typeof gl.readPixels !== 'function' || !cvs.width || !cvs.height) {
+            return { probed: false, lumaStddev: null, nonBlackRatio: null, blank: false };
+        }
+        const x = Math.max(0, (cvs.width >> 1) - 4);
+        const y = Math.max(0, (cvs.height >> 1) - 4);
+        gl.readPixels(x, y, 8, 8, gl.RGBA, gl.UNSIGNED_BYTE, this._pixelBuf);
+        let sum = 0;
+        let sumSq = 0;
+        let nonBlack = 0;
+        for (let i = 0; i < 64; i++) {
+            const r = this._pixelBuf[i * 4];
+            const g = this._pixelBuf[i * 4 + 1];
+            const b = this._pixelBuf[i * 4 + 2];
+            const luma = 0.299 * r + 0.587 * g + 0.114 * b;
+            sum += luma;
+            sumSq += luma * luma;
+            if (r + g + b > 12) nonBlack++;
+        }
+        const mean = sum / 64;
+        const lumaStddev = Math.sqrt(Math.max(0, sumSq / 64 - mean * mean));
+        const nonBlackRatio = nonBlack / 64;
+        return {
+            probed: true,
+            lumaStddev: round2(lumaStddev),
+            nonBlackRatio: round2(nonBlackRatio),
+            blank: nonBlackRatio === 0 && lumaStddev < 0.5,
+        };
+    }
+
     // sample records one state observation. It is called from the game loop
     // every frame and records only when the sampling interval has elapsed.
-    sample() {
+    sample(force = false) {
         if (!this.active) return null;
         const t = nowMs();
-        if (t - this.lastSampleAt < this.intervalMs) return null;
+        if (!force && t - this.lastSampleAt < this.intervalMs) return null;
         this.lastSampleAt = t;
         const world = this.provider.world;
         const camera = world.camera;
@@ -79,6 +124,13 @@ export class Inspector {
 
         const cmd = this.provider.command ? this.provider.command() : null;
         const motion = this.provider.motion ? this.provider.motion() : null;
+        const canvasProbe = this._probeCanvas();
+        if (canvasProbe.probed && canvasProbe.blank && !force) {
+            // A dead readback is not a state sample: reject it rather than
+            // poison the record with a frame that shows nothing.
+            this.blankSamples++;
+            return null;
+        }
         const actors = [];
         let nearest = null;
         for (const [id, buf] of world.actors) {
@@ -106,6 +158,26 @@ export class Inspector {
 
         const types = this.pendingEventTypes.slice();
         this.pendingEventTypes.length = 0;
+
+        // Client/server divergence and frustum perception, from the same
+        // sources the Bot SDK uses. The motion provider reports the freshest
+        // serverPos (read at sample time, after this frame's reconciliation),
+        // so prefer it over the possibly frame-stale world.serverPos.
+        const srvPos = motion && motion.serverPos ? motion.serverPos : world.serverPos;
+        const srvZ = Array.isArray(srvPos)
+            ? (srvPos.length >= 3 ? srvPos[2] : srvPos[1])
+            : 0;
+        const syncDrift = Array.isArray(srvPos)
+            ? round2(Math.hypot(srvPos[0] - camera.pos[0], srvZ - camera.pos[2]))
+            : 0;
+        let perceivableCount = 0;
+        for (const a of actors) {
+            const proj = projectToScreen(camera, a.x === undefined ? 0 : a.x, 0.5, a.z);
+            a.inFrustum = proj.inFrustum;
+            a.screenX = proj.screenX;
+            a.screenY = proj.screenY;
+            if (proj.inFrustum) perceivableCount++;
+        }
 
         const sample = {
             i: this.samples.length,
@@ -147,6 +219,9 @@ export class Inspector {
                         : null,
                 }
                 : null,
+            syncDrift,
+            perceivableCount,
+            canvasProbe,
             events: types,
             notable: types.length > 0,
         };
@@ -239,12 +314,20 @@ export class Inspector {
         let gateNow = null;
         let damageTaken = 0;
         let lastHp = null;
+        let sumDrift = 0;
+        let maxDrift = 0;
+        let driftSamples = 0;
 
         for (let k = 0; k < samples.length; k++) {
             const s = samples[k];
             cells.add(`${s.cell[0]},${s.cell[1]}`);
             if (lastHp !== null && s.hp < lastHp) damageTaken += lastHp - s.hp;
             lastHp = s.hp;
+            if (typeof s.syncDrift === 'number') {
+                sumDrift += s.syncDrift;
+                driftSamples++;
+                if (s.syncDrift > maxDrift) maxDrift = s.syncDrift;
+            }
             if (s.gate) {
                 const d = Math.hypot(s.x - s.gate.x, s.z - s.gate.z);
                 if (d < gateMin) {
@@ -286,6 +369,15 @@ export class Inspector {
             gateDistanceNow: gateNow === null ? null : Number(gateNow.toFixed(2)),
             gateDistanceMin: gateMin === Infinity ? null : Number(gateMin.toFixed(2)),
             gateDistanceMinAt: gateMinAt,
+            maxSyncDrift: driftSamples > 0 ? round2(maxDrift) : 0,
+            avgSyncDrift: driftSamples > 0 ? round2(sumDrift / driftSamples) : 0,
+            // Sustained-desync counter: one-sample knockback transients
+            // (server knockback displaces serverPos by up to ~1.1u and the
+            // reconciler snaps within a frame) are physically unavoidable,
+            // so the desync verdict counts samples that stay out of sync
+            // rather than the instantaneous maximum.
+            desyncSamples: samples.filter((s) => (s.syncDrift || 0) > 0.60).length,
+            blankSamples: this.blankSamples || 0,
         };
     }
 
@@ -297,6 +389,10 @@ export class Inspector {
             stats: this.stats(),
         };
     }
+}
+
+function round2(v) {
+    return Number(v.toFixed(2));
 }
 
 function nowMs() {

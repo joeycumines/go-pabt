@@ -215,6 +215,7 @@ type Game struct {
 
 	// telemetry records per-tick causal movement and PA-BT diagnostics.
 	telemetry       telemetryLog
+	eventHistory    eventLog
 	knownActors     map[string]bool
 	spawnKillSource map[string]string
 	pulsesFired     atomic.Int64

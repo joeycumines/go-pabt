@@ -71,7 +71,7 @@ Every member below is available on the `api` object handed to `tick`.
 | `api.frame` | number | frames since the bot was loaded |
 | `api.time` | number | seconds since the bot was loaded |
 | `api.round` | number | authoritative server tick |
-| `api.self` | object | `{x, y, z, yaw, pitch, hp, maxHp, element, elementName, phase, intensity}` - you |
+| `api.self` | object | `{x, y, z, serverX, serverZ, syncDrift, yaw, pitch, hp, maxHp, element, elementName, phase, intensity}` - you. `serverX`/`serverZ` are the server's authoritative position and `syncDrift` the distance between the two (u); aim and pathing from the server position when drift is large |
 | `api.gate` | object | `{x, z}` - the goal |
 | `api.start` | object | `{x, z}` - where you began |
 | `api.actors` | array | every live actor, nearest first (see below) |
@@ -83,15 +83,19 @@ Every member below is available on the `api` object handed to `tick`.
 | `api.finished` | boolean | true once `api.finish()` was called |
 
 An actor object is
-`{id, x, y, z, hp, type, typeName, element, elementName, stunned, strategy, strategyName, dist, los, btAction, btStatus, btAdvantage}`.
+`{id, x, y, z, hp, type, typeName, element, elementName, stunned, strategy, strategyName, dist, los, inFrustum, screenX, screenY, perceivable, btAction, btStatus, btAdvantage}`.
 `dist` is the distance from you, `los` is whether you have line of sight to
-it, and `btAction` is the PA-BT action its brain is currently running.
+it, `inFrustum`/`screenX`/`screenY` are the 3D camera frustum projection
+(normalised screen coordinates, `null` when outside the view), `perceivable`
+is `los && inFrustum` - the actor is one you could actually see and hit on
+your screen - and `btAction` is the PA-BT action its brain is currently
+running.
 
 ### Actions
 
 | member | kind | meaning |
 | --- | --- | --- |
-| `api.aimAt(x, z)` | action | face the point `(x, z)`; movement keeps its world direction while you turn |
+| `api.aimAt(x, z)` | action | face the point `(x, z)`; movement keeps its world direction while you turn. When your `syncDrift` exceeds 0.08u the SDK aims from the server position (`serverX`, `serverZ`), matching where the server raycasts pulses from |
 | `api.look(yaw, pitch)` | action | set an absolute facing |
 | `api.moveTo(x, z, opts)` | action | path to `(x, z)` and steer along it; `opts.arrive` (default `0.35`), `opts.sprint`, `opts.allowGap` |
 | `api.moveWorld(dx, dz, scale)` | action | move along a world-space direction, `scale` in `[-1, 1]` |
@@ -113,8 +117,10 @@ it, and `btAction` is the PA-BT action its brain is currently running.
 | `api.path(from, to, allowGap)` | query | the walkable waypoints from one point to another |
 | `api.los(x1, z1, x2, z2)` | query | is there a clear line of sight |
 | `api.nearest(filter)` | query | the closest matching actor, or `null` |
+| `api.perceivable(opts)` | query | shorthand for `nearest({ ...opts, visibleOnly: true })` restricted to actors inside the 3D camera frustum (`a.perceivable === true`), or `null` |
 | `api.ofType(type)` | query | every actor of an archetype (`0` brute, `1` swarm, `2` caster, `3` stalker) |
 | `api.beats(element)` | query | does your element beat this one |
+| `api.losesTo(element)` | query | does this element beat yours (never fire at it) |
 | `api.advantageAgainst(element)` | query | the damage multiplier: `2`, `1` or `0.5` |
 
 `api.nearest(filter)` accepts `{type, element, maxDist, minDist, visibleOnly,

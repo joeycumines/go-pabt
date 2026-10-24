@@ -12,10 +12,13 @@
 
 const SEVERITY = { caught: 5, win: 5, death: 4, hit: 3, stunned: 2, bolt: 2, powerup: 2, spawn: 1, clash: 1 };
 
-// buildObservation assembles the bundle from a finished session.
+// buildObservation assembles the bundle from a finished session. `extra`
+// carries the authoritative server plane (telemetry, oracles, events) joined
+// onto the browser record; it is optional so plain client-only callers work.
 export function buildObservation(input) {
     const {
         run = {}, bot = {}, stats = {}, frames = [], events = [], errors = [], logs = [],
+        extra = {},
     } = input;
 
     const eventCounts = {};
@@ -24,7 +27,13 @@ export function buildObservation(input) {
     }
 
     const outcome = deriveOutcome(frames, eventCounts, run);
-    const findings = deriveFindings({ stats, outcome, errors, frames, eventCounts, run });
+    const statsWithStuck = { ...stats };
+    if (statsWithStuck.stuckRatio === undefined) {
+        statsWithStuck.stuckRatio = statsWithStuck.samples > 0
+            ? Number((statsWithStuck.stuckSamples / statsWithStuck.samples).toFixed(3))
+            : 0;
+    }
+    const findings = deriveFindings({ stats: statsWithStuck, outcome, errors, frames, eventCounts, run, extra });
 
     return {
         run: {
@@ -48,8 +57,11 @@ export function buildObservation(input) {
             logs: logs.slice(-50),
         },
         outcome,
-        stats,
+        stats: statsWithStuck,
         eventCounts,
+        serverTelemetry: extra.serverTelemetry || null,
+        serverOracles: extra.serverOracles || [],
+        serverEvents: extra.serverEvents || [],
         frames: frames.map((f) => ({
             i: f.i,
             t: f.t,
@@ -99,7 +111,7 @@ function deriveOutcome(frames, eventCounts, run) {
 
 // deriveFindings is the "what to fix" section. Each finding names a
 // concrete frame index, cell or count so a reader can go and look at it.
-function deriveFindings({ stats, outcome, errors, frames, eventCounts, run }) {
+function deriveFindings({ stats, outcome, errors, frames, eventCounts, run, extra = {} }) {
     const findings = [];
 
     for (const err of errors) {
@@ -109,6 +121,38 @@ function deriveFindings({ stats, outcome, errors, frames, eventCounts, run }) {
             message: `bot threw at frame ${err.frame} (t=${fmt(err.t)}s): ${err.message}`,
             evidence: err.stack ? err.stack.split('\n').slice(0, 3).join(' | ') : '',
         });
+    }
+
+    // Frozen gameplay and client/server desync are verdicts, not anecdotes:
+    // a run can carry hundreds of frames and still be a dead capture.
+    if ((stats.stuckRatio || 0) > 0.25) {
+        findings.push({
+            kind: 'stuck-ratio',
+            severity: 5,
+            message: `bot was stuck for ${((stats.stuckRatio || 0) * 100).toFixed(1)}% of sampled frames (threshold <= 25.0%)`,
+        });
+    }
+    // A transient (one or two samples, e.g. a knockback snap) is the
+    // reconciler doing its job; sustained desync is the defect.
+    const desync = stats.desyncSamples || 0;
+    if (desync > Math.max(1, Math.floor((stats.samples || 0) * 0.01))) {
+        findings.push({
+            kind: 'sync-drift',
+            severity: 4,
+            message: `client-server sync drift persisted across ${desync} of ${stats.samples || 0} samples ` +
+                `(max ${stats.maxSyncDrift}u, threshold: >1% of samples above 0.60u)`,
+        });
+    }
+    if (Array.isArray(extra.serverOracles)) {
+        for (const o of extra.serverOracles) {
+            if (o && o.verdict === 'FAIL') {
+                findings.push({
+                    kind: 'server-oracle-fail',
+                    severity: 5,
+                    message: `server oracle ${o.id} (${o.name || ''}) FAILED: ${o.summary || ''} [${o.metric || ''}]`,
+                });
+            }
+        }
     }
 
     if (!outcome.reachedGate) {
@@ -212,6 +256,12 @@ export function formatBundle(obs) {
         }
     } else {
         lines.push('bot errors    : none');
+    }
+    if (obs.serverOracles && obs.serverOracles.length > 0) {
+        lines.push('ORACLE SCORECARD (authoritative server plane):');
+        for (const o of obs.serverOracles) {
+            lines.push(`  - ${o.id} ${o.name || ''}: ${o.verdict || '?'}  ${o.summary || ''} [${o.metric || ''}]`);
+        }
     }
     lines.push('what to fix   :');
     for (const f of obs.findings) {

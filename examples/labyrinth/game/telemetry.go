@@ -91,6 +91,7 @@ func (g *Game) TelemetryRecords() []WorldTickRecord {
 // ResetTelemetry clears the recorded tick telemetry buffer and counters.
 func (g *Game) ResetTelemetry() {
 	g.telemetry.reset()
+	g.eventHistory.reset()
 	g.pulsesFired.Store(0)
 	g.teleportsUsed.Store(0)
 }
@@ -129,6 +130,14 @@ func (g *Game) DebugTeleport(id SessionID, pos maze.Vec2) {
 }
 
 func (g *Game) broadcastEvent(evt Event) {
+	// Record the event authoritatively before fanning out: a subscriber
+	// draining its channel must not be the only copy that ever existed.
+	tick := 0
+	if snap := g.Loop.Snapshot(); snap != nil {
+		tick = snap.Round
+	}
+	g.eventHistory.append(tick, evt)
+
 	g.eventMu.RLock()
 	defer g.eventMu.RUnlock()
 	for _, e := range g.eventSubs {
@@ -137,6 +146,21 @@ func (g *Game) broadcastEvent(evt Event) {
 		default:
 		}
 	}
+}
+
+// EventRecords returns a defensive copy of the authoritative event log.
+func (g *Game) EventRecords() []EventRecord {
+	return g.eventHistory.snapshot()
+}
+
+// QueryEvents returns the event records matching the given filter.
+func (g *Game) QueryEvents(q EventQuery) []EventRecord {
+	return g.eventHistory.query(q)
+}
+
+// ResetEvents clears the authoritative event log.
+func (g *Game) ResetEvents() {
+	g.eventHistory.reset()
 }
 
 // DebugReplan forces a specific actor's brain to rebuild its plan.

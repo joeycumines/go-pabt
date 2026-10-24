@@ -233,6 +233,8 @@ function init() {
         world: botWorld,
         command: () => (botRuntime ? botRuntime.lastCommand : null),
         shotsFired: () => shotsFired,
+        gl: () => (renderer ? renderer.gl : null),
+        canvas: () => canvas,
         motion: () => ({
             vel: [playerVelX, playerVelZ],
             serverPos: serverPos ? [serverPos[0], serverPos[2]] : null,

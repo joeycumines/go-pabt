@@ -9,7 +9,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { compileBot } from '../client/js/bot-runtime.mjs';
-import { createBotAPI, newCommand, pathTo, losClear, advantage } from '../client/js/bot-sdk.mjs';
+import { createBotAPI, newCommand, pathTo, losClear, advantage, projectToScreen, buildObservation as buildSdkObservation } from '../client/js/bot-sdk.mjs';
+import { Inspector } from '../client/js/inspector.mjs';
 import { selectStoryBeats } from './sheets.mjs';
 import { buildObservation, formatBundle } from './observation.mjs';
 import { alignShots, parseArgs, mergeEpisodeStats } from './botlab.mjs';
@@ -205,7 +206,214 @@ function testApiLogAndFinish() {
     assert.equal(world.finishReason, 'done');
 }
 
-// --- sheet beat selection --------------------------------------------------
+// --- dual-coordinate actuation & 3D frustum perception ----------------------
+
+function testProjectToScreenFullCamera() {
+    // A camera at the origin looking down view-space -Z (the client's own
+    // perspective() convention): a point dead ahead must land at the centre
+    // of the screen, one behind must be culled.
+    const f = 1 / Math.tan(Math.PI / 4);
+    const nf = 1 / (0.1 - 100);
+    const cam = {
+        pos: [0, 0, 0],
+        yaw: 0,
+        pitch: 0,
+        viewMatrix() {
+            return new Float32Array([
+                1, 0, 0, 0,
+                0, 1, 0, 0,
+                0, 0, 1, 0,
+                0, 0, 0, 1,
+            ]);
+        },
+        projMatrix() {
+            return new Float32Array([
+                f, 0, 0, 0,
+                0, f, 0, 0,
+                0, 0, (100 + 0.1) * nf, -1,
+                0, 0, 2 * 100 * 0.1 * nf, 0,
+            ]);
+        },
+    };
+    const ahead = projectToScreen(cam, 0, 0, -5);
+    assert.equal(ahead.inFrustum, true, 'a point dead ahead must be inside the frustum');
+    assert.ok(Math.abs(ahead.screenX - 0.5) < 1e-6, `expected screenX 0.5, got ${ahead.screenX}`);
+    assert.ok(Math.abs(ahead.screenY - 0.5) < 1e-6, `expected screenY 0.5, got ${ahead.screenY}`);
+
+    const behind = projectToScreen(cam, 0, 0, 5);
+    assert.equal(behind.inFrustum, false, 'a point behind the camera must be culled');
+    assert.equal(behind.screenX, null);
+    assert.equal(behind.screenY, null);
+}
+
+function testProjectToScreenYawConeFallback() {
+    // fakeWorld's camera is a plain object without viewMatrix(); the 2D
+    // yaw-cone fallback must apply.
+    const cam = { pos: [1.5, 0.5, 1.5], yaw: 0, pitch: 0 };
+    const ahead = projectToScreen(cam, 1.5, 0.5, 10.5);
+    assert.equal(ahead.inFrustum, true, 'a point straight ahead passes the yaw cone');
+    const behind = projectToScreen(cam, 1.5, 0.5, -8.5);
+    assert.equal(behind.inFrustum, false, 'a point behind fails the yaw cone');
+    const side = projectToScreen(cam, 10.5, 0.5, 1.5);
+    assert.equal(side.inFrustum, false, 'a pure sideways point (dot=0 < 0.5) fails the cone');
+    assert.equal(projectToScreen(null, 5, 0, 5).inFrustum, true, 'no camera means no culling');
+}
+
+function testBuildObservationExposesServerCoordinates() {
+    const world = fakeWorld({ serverPos: [2.0, 0.5, 1.0] });
+    const obs = buildSdkObservation(world);
+    assert.equal(obs.self.serverX, 2.0);
+    assert.equal(obs.self.serverZ, 1.0);
+    const drift = Math.hypot(2.0 - 1.5, 1.0 - 1.5);
+    assert.ok(Math.abs(obs.self.syncDrift - drift) < 0.002, `expected ~${drift}, got ${obs.self.syncDrift}`);
+
+    const noServer = buildSdkObservation(fakeWorld());
+    assert.equal(noServer.self.syncDrift, 0, 'no serverPos means zero drift');
+    assert.equal(noServer.self.serverX, 1.5);
+}
+
+function testBuildObservationProjectsActorsIntoTheFrustum() {
+    const world = fakeWorld(); // camera at (1.5, 0.5, 1.5), yaw 0 (facing +Z)
+    world.actors.set('ahead', { pos: [1.5, 0.5, 5.5], hp: 10, type: 0, element: 1, stunned: false, strategy: 0 });
+    world.actors.set('beside', { pos: [8.5, 0.5, 1.5], hp: 10, type: 1, element: 2, stunned: false, strategy: 0 });
+    const obs = buildSdkObservation(world);
+    const ahead = obs.actors.find((a) => a.id === 'ahead');
+    const beside = obs.actors.find((a) => a.id === 'beside');
+    assert.equal(ahead.inFrustum, true, 'an actor straight ahead is in the frustum');
+    assert.equal(ahead.perceivable, true, 'clear los + frustum is perceivable');
+    assert.equal(beside.inFrustum, false, 'an actor at 90 degrees is outside the yaw cone');
+    assert.equal(beside.perceivable, false, 'outside the frustum is never perceivable');
+    assert.equal(beside.screenX, null);
+    assert.equal(beside.screenY, null);
+}
+
+function testPerceivableQueryReturnsFrustumActors() {
+    const world = fakeWorld();
+    world.actors.set('a1', { pos: [1.5, 0.5, 4.5], hp: 10, type: 2, element: 0, stunned: false, strategy: 0 });
+    world.actors.set('a2', { pos: [8.5, 0.5, 1.5], hp: 10, type: 2, element: 0, stunned: false, strategy: 0 });
+    const obs = buildSdkObservation(world);
+    const { api } = apiFor(world);
+    // Rebuild the api against the real observation so perceivable is wired
+    // to projected actors rather than the empty default.
+    const cmd = newCommand();
+    const live = createBotAPI(world, cmd, obs, {});
+    assert.equal(live.perceivable({ type: 2 }).id, 'a1');
+    assert.equal(api.perceivable(), null, 'no actors means no perceivable actor');
+    // visibleOnly actors without frustum data fall back to los; the default
+    // obs has no actors at all, and nearest() must stay callable.
+    assert.equal(api.nearest(), null);
+}
+
+function testAimAtCompensatesForServerDrift() {
+    const world = fakeWorld({ serverPos: [2.0, 0.5, 1.0] }); // drift ~0.707u > 0.08
+    const obs = buildSdkObservation(world);
+    const cmd = newCommand();
+    const api = createBotAPI(world, cmd, obs, {});
+    const yaw = api.aimAt(2.0, 10.0);
+    // Aimed from the server origin (2.0, 1.0), not the camera (1.5, 1.5).
+    const expected = Math.atan2(2.0 - 2.0, 10.0 - 1.0);
+    assert.ok(Math.abs(yaw - expected) < 1e-9, `expected server-origin yaw ${expected}, got ${yaw}`);
+
+    // Small drift: aim from the client position as before.
+    const nearWorld = fakeWorld({ serverPos: [1.55, 0.5, 1.52] });
+    const nearObs = buildSdkObservation(nearWorld);
+    const nearCmd = newCommand();
+    const nearApi = createBotAPI(nearWorld, nearCmd, nearObs, {});
+    const nearYaw = nearApi.aimAt(10, 10);
+    assert.ok(Math.abs(nearYaw - Math.atan2(10 - 1.5, 10 - 1.5)) < 1e-9);
+}
+
+// --- in-page inspector ------------------------------------------------------
+
+function inspectorWorld(overrides = {}) {
+    return Object.assign({
+        camera: { pos: [1.5, 0.5, 1.5], yaw: 0, pitch: 0 },
+        actors: new Map(),
+        btRows: [],
+        maze: { gateX: 19.5, gateY: 19.5 },
+        round: 1,
+        phase: 'playing',
+        hp: 100,
+        playerElement: 0,
+        intensity: 0,
+        frame: 1,
+        serverPos: null,
+    }, overrides);
+}
+
+function testInspectorRecordsSyncDriftAndPerceivableCounts() {
+    const world = inspectorWorld({ serverPos: [2.0, 0.5, 1.0] });
+    world.actors.set('a1', { pos: [1.5, 0.5, 5.5], hp: 10, type: 0, element: 1, stunned: false, strategy: 0 });
+    world.actors.set('a2', { pos: [8.5, 0.5, 1.5], hp: 10, type: 1, element: 2, stunned: false, strategy: 0 });
+    const insp = new Inspector({ world });
+    insp.start({ hz: 1000 });
+    const s = insp.sample(true);
+    assert.ok(s, 'a forced sample must be recorded');
+    assert.ok(s.syncDrift > 0.6, `expected syncDrift ~0.707, got ${s.syncDrift}`);
+    assert.equal(s.perceivableCount, 1, 'only the in-frustum actor counts');
+    const stats = insp.stats();
+    assert.ok(stats.maxSyncDrift > 0.6);
+    assert.ok(stats.avgSyncDrift > 0.6);
+    assert.equal(stats.blankSamples, 0);
+}
+
+function testInspectorRejectsBlankCanvasProbes() {
+    const calls = [];
+    const world = inspectorWorld();
+    const gl = {
+        readPixels(x, y, w, h, fmt, type, buf) {
+            calls.push([x, y, w, h]);
+            buf.fill(0);
+        },
+        RGBA: 0x1908,
+        UNSIGNED_BYTE: 0x1401,
+    };
+    const insp = new Inspector({
+        world,
+        gl: () => gl,
+        canvas: () => ({ width: 800, height: 600 }),
+    });
+    insp.start({ hz: 1000 });
+    assert.equal(insp.sample(), null, 'an all-black canvas readback must be rejected');
+    assert.equal(insp.blankSamples, 1);
+    assert.equal(calls.length, 1);
+    assert.deepEqual(calls[0], [396, 296, 8, 8], 'the probe must read an 8x8 centre patch');
+    assert.equal(insp.frames().length, 0, 'rejected samples never reach the record');
+
+    // A live readback is recorded and carries the probe result.
+    const gl2 = {
+        readPixels(x, y, w, h, fmt, type, buf) {
+            for (let i = 0; i < 64; i++) {
+                const v = 150 + (i % 2) * 100; // alternating luminance
+                buf[i * 4] = v; buf[i * 4 + 1] = 10; buf[i * 4 + 2] = 10; buf[i * 4 + 3] = 255;
+            }
+        },
+        RGBA: 0x1908,
+        UNSIGNED_BYTE: 0x1401,
+    };
+    const insp2 = new Inspector({
+        world,
+        gl: () => gl2,
+        canvas: () => ({ width: 800, height: 600 }),
+    });
+    insp2.start({ hz: 1000 });
+    const s = insp2.sample(true);
+    assert.ok(s, 'a live canvas must produce a sample');
+    assert.equal(s.canvasProbe.blank, false);
+    assert.ok(s.canvasProbe.lumaStddev > 0, 'a coloured patch has luminance variance');
+}
+
+function testInspectorWithoutWebGlRecordsNormally() {
+    const world = inspectorWorld();
+    const insp = new Inspector({ world });
+    insp.start({ hz: 1000 });
+    const s = insp.sample(true);
+    assert.ok(s, 'no gl means samples record normally');
+    assert.equal(s.canvasProbe.probed, false);
+    assert.equal(s.canvasProbe.blank, false);
+}
+
+
 
 function testStoryBeatsAreDerivedFromTheSession() {
     const frames = [];
@@ -304,11 +512,87 @@ function testObservationAcceptsAWinEventAsReachingTheGate() {
     assert.equal(obs.outcome.reachedGate, true, 'a win event means the gate was reached');
 }
 
-// --- statistics merging ----------------------------------------------------
+// --- observation server-plane joining & diversity gates ---------------------
+
+function testObservationFlagsStuckRatioSyncDriftAndFailedOracles() {
+    const obs = buildObservation({
+        run: { name: 'r', seed: 1, durationSec: 10 },
+        bot: { name: 'b', frames: 100 },
+        stats: { samples: 100, stuckSamples: 40, stuckCells: [], cellsVisited: 20, distanceTravelled: 30, shotsFired: 2, shotsHit: 1, damageTaken: 10, maxSyncDrift: 0.91, desyncSamples: 9 },
+        frames: [{ i: 1, t: 0, round: 1, hp: 50, x: 7, z: 3, cell: [7, 3], nearest: null, events: [], gateDistance: 9 }],
+        events: [],
+        errors: [],
+        logs: [],
+        extra: {
+            serverOracles: [
+                { id: 'O2', name: 'no latch spin', verdict: 'FAIL', summary: 'spun', metric: 'zeroMoveSuccessTicks=12' },
+                { id: 'O1', name: 'movement', verdict: 'PASS', summary: 'moved', metric: 'displacement=30u' },
+            ],
+            serverTelemetry: { ticks: 400, causality: {} },
+            serverEvents: [{ seq: 1, tick: 5, type: 'stunned', data: null }],
+        },
+    });
+    assert.ok(obs.stats.stuckRatio > 0.25, 'stuckRatio must be derived from samples');
+    const kinds = obs.findings.map((f) => f.kind);
+    assert.ok(kinds.includes('stuck-ratio'), `stuckRatio finding missing: ${kinds}`);
+    assert.ok(kinds.includes('sync-drift'), 'sustained desync finding missing');
+    assert.ok(kinds.includes('server-oracle-fail'), 'failed server oracle finding missing');
+    assert.equal(obs.serverOracles.length, 2);
+    assert.equal(obs.serverTelemetry.ticks, 400);
+    assert.equal(obs.serverEvents.length, 1);
+    assert.equal(obs.findings.find((f) => f.kind === 'server-oracle-fail').message.includes('O2'), true);
+
+    const bundle = formatBundle(obs);
+    assert.match(bundle, /ORACLE SCORECARD/);
+    assert.match(bundle, /O2/);
+    assert.match(bundle, /stuck for 40\.0%/);
+    assert.match(bundle, /sync drift persisted/);
+
+    // A one-sample knockback transient is NOT a desync defect.
+    const transient = buildObservation({
+        run: { name: 'r', seed: 1, durationSec: 10 },
+        bot: { name: 'b', frames: 100 },
+        stats: { samples: 344, stuckSamples: 2, cellsVisited: 40, distanceTravelled: 40, shotsFired: 1, shotsHit: 0, damageTaken: 5, maxSyncDrift: 0.61, desyncSamples: 1 },
+        frames: [{ i: 1, t: 0, round: 1, hp: 50, x: 7, z: 3, cell: [7, 3], nearest: null, events: [], gateDistance: 9 }],
+        events: [],
+        errors: [],
+        logs: [],
+    });
+    assert.ok(!transient.findings.some((f) => f.kind === 'sync-drift'), 'a single knockback transient must not flag desync');
+}
+
+function testObservationWithoutExtraStaysBackwardCompatible() {
+    const obs = buildObservation({
+        run: { name: 'r', seed: 1, durationSec: 2 },
+        bot: { name: 'b', frames: 10 },
+        stats: { samples: 10, stuckSamples: 0, cellsVisited: 5, distanceTravelled: 5, shotsFired: 1, shotsHit: 1, damageTaken: 0 },
+        frames: [{ i: 1, t: 0, round: 1, hp: 100, x: 1, z: 1, cell: [1, 1], nearest: null, events: [], gateDistance: 20 }],
+        events: [],
+        errors: [],
+        logs: [],
+    });
+    assert.deepEqual(obs.serverOracles, []);
+    assert.equal(obs.serverTelemetry, null);
+    assert.deepEqual(obs.serverEvents, []);
+    assert.equal(obs.stats.stuckRatio, 0);
+    assert.ok(!obs.findings.some((f) => f.kind === 'stuck-ratio' || f.kind === 'sync-drift' || f.kind === 'server-oracle-fail'));
+}
+
+function testMergeEpisodeStatsMergesDriftAndDesync() {
+    const merged = mergeEpisodeStats([
+        { stats: { samples: 100, cellsVisited: 10, avgSyncDrift: 0.10, maxSyncDrift: 0.61, desyncSamples: 1, blankSamples: 2 } },
+        { stats: { samples: 300, cellsVisited: 30, avgSyncDrift: 0.02, maxSyncDrift: 0.35, desyncSamples: 0, blankSamples: 0 } },
+    ]);
+    assert.equal(merged.maxSyncDrift, 0.61, 'maxSyncDrift is the max across episodes');
+    assert.ok(Math.abs(merged.avgSyncDrift - (0.10 * 100 + 0.02 * 300) / 400) < 1e-6, 'avgSyncDrift is sample-weighted');
+    assert.equal(merged.desyncSamples, 1);
+    assert.equal(merged.blankSamples, 2);
+}
+
+
 
 function testMergeEpisodeStats() {
-    const merged = mergeEpisodeStats([
-        { stats: { samples: 10, events: 2, eventCounts: { hit: 2 }, cellsVisited: 5, distanceTravelled: 3.5, stuckSamples: 1, shotsHit: 1, damageTaken: 4, deaths: 0, gateDistanceMin: 5, gateDistanceMinAt: null, gateDistanceNow: 6 } },
+    const merged = mergeEpisodeStats([        { stats: { samples: 10, events: 2, eventCounts: { hit: 2 }, cellsVisited: 5, distanceTravelled: 3.5, stuckSamples: 1, shotsHit: 1, damageTaken: 4, deaths: 0, gateDistanceMin: 5, gateDistanceMinAt: null, gateDistanceNow: 6 } },
         { stats: { samples: 20, events: 3, eventCounts: { hit: 1, death: 1 }, cellsVisited: 7, distanceTravelled: 6.25, stuckSamples: 2, shotsHit: 2, damageTaken: 6, deaths: 1, gateDistanceMin: 2, gateDistanceMinAt: null, gateDistanceNow: 3 } },
     ]);
     assert.equal(merged.samples, 30);
@@ -343,7 +627,19 @@ const tests = [
     testMoveToSteersAndStops,
     testApiVerbsAccumulateIntoTheCommand,
     testApiLogAndFinish,
+    testProjectToScreenFullCamera,
+    testProjectToScreenYawConeFallback,
+    testBuildObservationExposesServerCoordinates,
+    testBuildObservationProjectsActorsIntoTheFrustum,
+    testPerceivableQueryReturnsFrustumActors,
+    testAimAtCompensatesForServerDrift,
+    testInspectorRecordsSyncDriftAndPerceivableCounts,
+    testInspectorRejectsBlankCanvasProbes,
+    testInspectorWithoutWebGlRecordsNormally,
     testStoryBeatsAreDerivedFromTheSession,
+    testObservationFlagsStuckRatioSyncDriftAndFailedOracles,
+    testObservationWithoutExtraStaysBackwardCompatible,
+    testMergeEpisodeStatsMergesDriftAndDesync,
     testAlignShotsJoinsFramesToSamples,
     testObservationNamesTheStuckCell,
     testObservationReportsBotErrorsWithTheFrameIndex,

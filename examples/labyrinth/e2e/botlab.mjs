@@ -53,6 +53,7 @@ export function parseArgs(argv = process.argv.slice(2)) {
         viewportHeight: 800,
         outDir: path.resolve(__dirname, '..', '..', '..', 'scratch', 'botlab'),
         assertFrames: 0,
+        assert: false,
         maxEpisodes: 8,
         gpu: true,
     };
@@ -68,6 +69,7 @@ export function parseArgs(argv = process.argv.slice(2)) {
         else if (a === '--capture-width' && argv[i + 1]) cfg.captureWidth = parseInt(argv[++i], 10);
         else if (a === '--out' && argv[i + 1]) cfg.outDir = path.resolve(process.cwd(), argv[++i]);
         else if (a === '--assert-frames' && argv[i + 1]) cfg.assertFrames = parseInt(argv[++i], 10);
+        else if (a === '--assert') cfg.assert = true;
         else if (a === '--max-episodes' && argv[i + 1]) cfg.maxEpisodes = parseInt(argv[++i], 10);
         else if (a === '--no-gpu') cfg.gpu = false;
     }
@@ -225,6 +227,7 @@ export async function run(cfg) {
         }
 
         await fetch(`http://127.0.0.1:${port}/api/playtest/telemetry?reset=1`, { method: 'POST' });
+        await fetch(`http://127.0.0.1:${port}/api/playtest/events?reset=1`, { method: 'POST' }).catch(() => {});
 
         const renderFps = await measureRenderFps(page);
         const everyNth = Math.max(1, Math.round(renderFps / cfg.fps));
@@ -282,6 +285,16 @@ export async function run(cfg) {
                 events: window.__ariadne.inspect.events(),
                 stats: window.__ariadne.inspect.stats(),
             }));
+            // The server plane is authoritative, so it is fetched per episode
+            // BEFORE any reload: a page reload keeps the world but the
+            // telemetry log would otherwise bleed across episodes.
+            const baseUrl = `http://127.0.0.1:${port}`;
+            const teleResp = await fetch(`${baseUrl}/api/playtest/telemetry?persona=${encodeURIComponent(cfg.name)}`)
+                .then((r) => (r.ok ? r.json() : null))
+                .catch(() => null);
+            const evtResp = await fetch(`${baseUrl}/api/playtest/events`)
+                .then((r) => (r.ok ? r.json() : null))
+                .catch(() => null);
             result.episodes.push({
                 index: episodeIndex,
                 durationSec: durationMs / 1000,
@@ -296,11 +309,15 @@ export async function run(cfg) {
                 stats: record.stats,
                 botStatus,
                 shots,
+                teleResp,
+                evtResp,
             });
             budgetMs -= durationMs;
             if (!terminal) break;
-            // The session ended: reload for a fresh attempt instead of
-            // capturing minutes of the end screen.
+            // The session ended: reset the server plane so the next attempt
+            // starts with clean telemetry and events, then reload.
+            await fetch(`${baseUrl}/api/playtest/telemetry?reset=1`, { method: 'POST' }).catch(() => {});
+            await fetch(`${baseUrl}/api/playtest/events?reset=1`, { method: 'POST' }).catch(() => {});
             await page.reload();
             await preparePage(page, port);
         }
@@ -426,6 +443,26 @@ export async function run(cfg) {
         await sheetPage.close();
 
         const merged = mergeEpisodeStats(result.episodes);
+
+        // Join the authoritative server plane: the telemetry of the longest
+        // episode (highest tick count) carries that attempt's oracles, and
+        // the event log is combined across episodes.
+        let bestTele = null;
+        const serverEvents = [];
+        for (const ep of result.episodes) {
+            if (ep.teleResp && (!bestTele || (ep.teleResp.ticks || 0) > (bestTele.ticks || 0))) {
+                bestTele = ep.teleResp;
+            }
+            if (ep.evtResp && Array.isArray(ep.evtResp.events)) {
+                serverEvents.push(...ep.evtResp.events);
+            }
+        }
+        const serverExtra = {
+            serverTelemetry: bestTele ? { ticks: bestTele.ticks, causality: bestTele.causality } : null,
+            serverOracles: bestTele ? (bestTele.oracles || []) : [],
+            serverEvents,
+        };
+
         const botStatus = {
             name: lastEpisode.botStatus.name,
             frames: result.episodes.reduce((a, e) => a + e.botFrames, 0),
@@ -460,6 +497,7 @@ export async function run(cfg) {
             events: allEvents,
             errors: botStatus.errors,
             logs: botStatus.logs,
+            extra: serverExtra,
         });
         obs.blankFrames = blankFrames;
         obs.minFrameBytes = minFrameBytes === Infinity ? 0 : minFrameBytes;
@@ -508,6 +546,8 @@ export function mergeEpisodeStats(episodes) {
         gateDistanceMinAt: null,
     };
     const stuckByCell = new Map();
+    let sumDrift = 0;
+    let driftSamples = 0;
     for (const ep of episodes) {
         const s = ep.stats;
         merged.samples += s.samples || 0;
@@ -519,6 +559,17 @@ export function mergeEpisodeStats(episodes) {
         merged.shotsHit += s.shotsHit || 0;
         merged.damageTaken += s.damageTaken || 0;
         merged.deaths += s.deaths || 0;
+        merged.blankSamples = (merged.blankSamples || 0) + (s.blankSamples || 0);
+        merged.desyncSamples = (merged.desyncSamples || 0) + (s.desyncSamples || 0);
+        // maxSyncDrift is a max across episodes; avgSyncDrift is weighted by
+        // each episode's sample count so short episodes do not skew the mean.
+        if (typeof s.maxSyncDrift === 'number') {
+            merged.maxSyncDrift = Math.max(merged.maxSyncDrift || 0, s.maxSyncDrift);
+        }
+        if (typeof s.avgSyncDrift === 'number' && (s.samples || 0) > 0) {
+            sumDrift += s.avgSyncDrift * s.samples;
+            driftSamples += s.samples;
+        }
         for (const sc of (s.stuckCells || [])) {
             if (!sc || ! Array.isArray(sc.cell)) continue;
             const key = `${sc.cell[0]},${sc.cell[1]}`;
@@ -540,6 +591,9 @@ export function mergeEpisodeStats(episodes) {
         .sort((a, b) => b.samples - a.samples)
         .slice(0, 5);
     merged.distanceTravelled = Number(merged.distanceTravelled.toFixed(2));
+    merged.maxSyncDrift = merged.maxSyncDrift || 0;
+    merged.avgSyncDrift = driftSamples > 0 ? Number((sumDrift / driftSamples).toFixed(3)) : 0;
+    merged.stuckRatio = merged.samples > 0 ? Number((merged.stuckSamples / merged.samples).toFixed(3)) : 0;
     return merged;
 }
 
@@ -562,6 +616,34 @@ async function main() {
             `[botlab] expected at least ${cfg.assertFrames} frames, captured ${result.frames.length}\n`,
         );
         process.exit(1);
+    }
+    if (cfg.assert) {
+        const failures = [];
+        const frameFloor = Math.min(100, Math.max(10, Math.floor(cfg.seconds * 5)));
+        if (result.frames.length < frameFloor) {
+            failures.push(`captured ${result.frames.length} frames, floor is ${frameFloor}`);
+        }
+        if (obs.bot.errors.length !== 0) {
+            failures.push(`bot threw ${obs.bot.errors.length} error(s): ${obs.bot.errors.map((e) => e.message).join('; ')}`);
+        }
+        if ((obs.stats.stuckRatio || 0) > 0.25) {
+            failures.push(`stuckRatio ${(obs.stats.stuckRatio * 100).toFixed(1)}% exceeds 25.0%`);
+        }
+        const cellFloor = Math.min(15, Math.max(4, Math.floor(cfg.seconds * 0.75)));
+        if ((obs.stats.cellsVisited || 0) < cellFloor) {
+            failures.push(`visited ${obs.stats.cellsVisited || 0} cells, floor is ${cellFloor}`);
+        }
+        const desyncFloor = Math.max(1, Math.floor((obs.stats.samples || 0) * 0.01));
+        const desync = obs.stats.desyncSamples || 0;
+        if (desync > desyncFloor) {
+            failures.push(`client-server desync persisted across ${desync} of ${obs.stats.samples || 0} samples (floor ${desyncFloor}; maxSyncDrift ${obs.stats.maxSyncDrift}u)`);
+        }
+        if (failures.length > 0) {
+            process.stderr.write(`[botlab] --assert failed:\n${failures.map((f) => `  - ${f}`).join('\n')}\n`);
+            process.exitCode = 1;
+        } else {
+            process.stdout.write('[botlab] --assert passed: frames, errors, stuckRatio, coverage and syncDrift all within gates\n');
+        }
     }
 }
 
