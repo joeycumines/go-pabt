@@ -110,7 +110,9 @@ export function pathTo(maze, sx, sz, gx, gz, allowGap = false) {
 export function projectToScreen(cam, wx, wy, wz) {
     if (cam && typeof cam.viewMatrix === 'function' && typeof cam.projMatrix === 'function') {
         const V = cam.viewMatrix();
-        const P = cam.projMatrix(16 / 9);
+        // The camera's render aspect when it exposes one (main.mjs keeps it
+        // synced to the canvas), so the projection matches what was rendered.
+        const P = cam.projMatrix(cam.aspect || 16 / 9);
         const vx = V[0] * wx + V[4] * wy + V[8] * wz + V[12];
         const vy = V[1] * wx + V[5] * wy + V[9] * wz + V[13];
         const vz = V[2] * wx + V[6] * wy + V[10] * wz + V[14];
@@ -179,8 +181,12 @@ export function buildObservation(world) {
     const camera = world.camera;
     const px = camera.pos[0];
     const pz = camera.pos[2];
+    // serverPos may be [x, height, z] (main.mjs) or [x, z] (test doubles);
+    // the z component is the last element either way.
     const srvX = Array.isArray(world.serverPos) ? world.serverPos[0] : px;
-    const srvZ = Array.isArray(world.serverPos) ? world.serverPos[2] : pz;
+    const srvZ = Array.isArray(world.serverPos)
+        ? world.serverPos[world.serverPos.length - 1]
+        : pz;
     const syncDrift = Array.isArray(world.serverPos)
         ? round3(Math.hypot(srvX - px, srvZ - pz))
         : 0;

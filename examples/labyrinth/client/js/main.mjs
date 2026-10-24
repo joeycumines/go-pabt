@@ -395,6 +395,9 @@ function syncBotWorld() {
     const snap = net.getSnapshot();
     botWorld.maze = maze;
     botWorld.camera = camera;
+    // The SDK's frustum projection must divide by the aspect the frame was
+    // actually rendered with, not a hardcoded guess.
+    camera.aspect = canvas.width / canvas.height;
     botWorld.input = input;
     botWorld.actors = minotaurBuffers;
     botWorld.powerUps = snap && snap.data && snap.data.powerUps

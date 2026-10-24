@@ -429,8 +429,6 @@ function testInspectorWithoutWebGlRecordsNormally() {
     assert.equal(s.canvasProbe.blank, false);
 }
 
-
-
 function testStoryBeatsAreDerivedFromTheSession() {
     const frames = [];
     for (let i = 0; i < 40; i++) {
@@ -605,10 +603,9 @@ function testMergeEpisodeStatsMergesDriftAndDesync() {
     assert.equal(merged.blankSamples, 2);
 }
 
-
-
 function testMergeEpisodeStats() {
-    const merged = mergeEpisodeStats([        { stats: { samples: 10, events: 2, eventCounts: { hit: 2 }, cellsVisited: 5, distanceTravelled: 3.5, stuckSamples: 1, shotsHit: 1, damageTaken: 4, deaths: 0, gateDistanceMin: 5, gateDistanceMinAt: null, gateDistanceNow: 6 } },
+    const merged = mergeEpisodeStats([
+        { stats: { samples: 10, events: 2, eventCounts: { hit: 2 }, cellsVisited: 5, distanceTravelled: 3.5, stuckSamples: 1, shotsHit: 1, damageTaken: 4, deaths: 0, gateDistanceMin: 5, gateDistanceMinAt: null, gateDistanceNow: 6 } },
         { stats: { samples: 20, events: 3, eventCounts: { hit: 1, death: 1 }, cellsVisited: 7, distanceTravelled: 6.25, stuckSamples: 2, shotsHit: 2, damageTaken: 6, deaths: 1, gateDistanceMin: 2, gateDistanceMinAt: null, gateDistanceNow: 3 } },
     ]);
     assert.equal(merged.samples, 30);
