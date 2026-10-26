@@ -10,6 +10,12 @@ real game client. It is not a script that calls a toolchain - it plays the
 game through the same input path a human player uses. There are no
 teleports, no wall-hacks, and no privileged access to game state.
 
+"Same input path" starts at the client's input state: a bot sets the values
+the keyboard and mouse handlers would set and reads game state, not pixels.
+That suits exercising AI behaviour. To verify anything a player could see or
+feel (controls, rendering, HUD, feedback, pacing), run a player-eye playtest:
+[playtesting.md](playtesting.md).
+
 ## 1. The game
 
 - **World**: a 21x21 labyrinth. Cell kinds are `0` wall, `1` floor,
