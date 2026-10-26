@@ -28,6 +28,14 @@ function latestSnapBefore(list, t) {
 export function renderTruth(tl) {
     const sn = snaps(tl);
     if (sn.length < 10) return null;
+    // The death event can reach the page before the snapshot that drops the
+    // actor (they travel on separate writes). After a death, the actor is
+    // correctly gone from the screen even though a stale snapshot still
+    // lists it, so it must not count as "missing from the screen".
+    const deadAt = new Map();
+    for (const e of tl.wire || []) {
+        if (e.kind === 'event' && e.type === 'death' && e.data && e.data.id && e.t !== null) deadAt.set(e.data.id, e.t);
+    }
     const ps = playing(tl).filter((s) => s.gs === 'playing');
     const errs = [];
     const perActor = new Map();
@@ -42,6 +50,7 @@ export function renderTruth(tl) {
         const server = new Map(snap.m.filter((m) => m[3] > 0).map((m) => [m[0], m]));
         const drawn = new Map((s.actors || []).map((a) => [a.id, a]));
         for (const [id, m] of server) {
+            if (deadAt.has(id) && deadAt.get(id) <= s.t) continue;
             const a = drawn.get(id);
             if (!a) {
                 if (Math.hypot(m[1] - s.pos[0], m[2] - s.pos[2]) < 6) notDrawnNear++;
@@ -57,7 +66,9 @@ export function renderTruth(tl) {
     errs.sort((a, b) => a - b);
     const q = (p) => errs[Math.min(errs.length - 1, Math.floor(p * errs.length))];
     // Frozen render: over any 2s window the server moved the enemy >1u but
-    // the drawn model moved <0.05u.
+    // the drawn model never moved further than 0.05u from where the window
+    // started. Excursion, not net displacement: a model that walks a loop
+    // and comes back is visibly moving, even though its endpoints coincide.
     const frozen = [];
     for (const [id, rows] of perActor) {
         for (let i = 0, j = 0; i < rows.length; i++) {
@@ -65,7 +76,11 @@ export function renderTruth(tl) {
             if (j >= rows.length) break;
             const a = rows[i], b = rows[j];
             const serverMoved = Math.hypot(b.sx - a.sx, b.sz - a.sz);
-            const drawnMoved = Math.hypot(b.dx - a.dx, b.dz - a.dz);
+            let drawnMoved = 0;
+            for (let k = i; k <= j; k++) {
+                const d = Math.hypot(rows[k].dx - a.dx, rows[k].dz - a.dz);
+                if (d > drawnMoved) drawnMoved = d;
+            }
             if (serverMoved > 1 && drawnMoved < 0.05) { frozen.push({ id, t: a.t, serverMoved, drawnMoved }); break; }
         }
     }

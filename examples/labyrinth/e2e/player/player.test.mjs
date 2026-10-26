@@ -287,6 +287,41 @@ test('D17: enemies drawn frozen while the server moves them is S1; drawn where t
     assert.deepEqual(detectRenderTruth(tl({ wire, samples: tracking })), []);
 });
 
+test('D17: a killed actor is not "missing from the screen" while a stale snapshot still lists it', () => {
+    // Live false positive: the death event arrives a few ms before the
+    // snapshot that removes the actor. The client deletes the buffer on the
+    // event, so for a few sampled moments the newest snapshot still has it
+    // (hp > 0) but the screen correctly does not.
+    const wire = [], samples = [];
+    for (let i = 0; i <= 19; i++) {
+        wire.push({ kind: 'snap', t: i * 100, round: i, runner: [1.5, 1.5, 100], m: [['B-1', 1.6, 1.6, 40, 0]] });
+        samples.push(S(i * 100, { actors: [{ id: 'B-1', x: 1.6, z: 1.6, hp: 40 }] }));
+    }
+    // The death event lands at 1.91s; no further snapshot arrives for a while.
+    wire.push({ kind: 'event', t: 1910, type: 'death', data: { id: 'B-1' } });
+    wire.sort((a, b) => a.t - b.t);
+    for (const t of [1950, 2050, 2150, 2250, 2350]) samples.push(S(t, { actors: [] }));
+    assert.deepEqual(detectRenderTruth(tl({ wire, samples })), []);
+});
+
+test('D17: a model that circles and comes back is moving, not frozen', () => {
+    // Live false positive (J1 seed 777, K-22): the server moved 1.02u over the
+    // window while the drawn model's net displacement was 0.045u but its
+    // excursion was 4.16u. Net displacement called that "frozen"; the model
+    // was in fact moving the whole time.
+    const wire = [], samples = [];
+    for (let i = 0; i <= 30; i++) {
+        const t = i * 100;
+        // Server: 3.0 -> 3.55 -> 4.02 over the 1s..3s window (net 1.02u).
+        const sx = i <= 10 ? 3 : i <= 20 ? 3 + (i - 10) * 0.055 : 3.55 + (i - 20) * 0.047;
+        wire.push({ kind: 'snap', t: t - 20, round: i, runner: [1.5, 1.5, 100], m: [['B-1', sx, 4.5, 40, 0]] });
+        // Drawn: loops out to 4.4 and back to 3.02 (net 0.02u, excursion 1.4u).
+        const dx = i <= 10 ? 3 : i <= 20 ? 3 + (i - 10) * 0.14 : 4.4 - (i - 20) * 0.138;
+        samples.push(S(t, { actors: [{ id: 'B-1', x: dx, z: 4.5, hp: 40 }] }));
+    }
+    assert.deepEqual(detectRenderTruth(tl({ wire, samples })), []);
+});
+
 test('D13/D14/D15: unseen damage, dead time, idle enemies and enemies that ignore the player are reported', () => {
     const g = new Grid(7, 7, grid().cells);
     // Player looks down +x along row 5; an enemy sits idle in view at (4.5,5.5),

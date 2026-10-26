@@ -10,6 +10,8 @@ import { ModelBank, actorModelMatrix } from './models.mjs';
 import { DebugPanel } from './debug.mjs';
 import { BTHud } from './bt-hud.mjs';
 import { ParticleEngine } from './particles.mjs';
+import { ActorStore } from './actors.mjs';
+import { VISUAL_HEIGHT } from './archetypes.mjs';
 import { BotRuntime } from './bot-runtime.mjs';
 import { Inspector } from './inspector.mjs';
 import explorerRunner from './bots/explorer-runner.js';
@@ -80,8 +82,10 @@ const BLOWBACK_FORCE = 1.2;
 let blowbackOffsetX = 0;
 let blowbackOffsetZ = 0;
 
-// Minotaur interpolation state
-let minotaurBuffers = new Map(); // id -> { pos, targetPos, lastUpdate, type, stunned }
+// Minotaur interpolation state. The store owns the Map; everything that
+// renders or inspects actors reads the same buffers.
+const actorStore = new ActorStore();
+let minotaurBuffers = actorStore.buffers; // id -> { pos, targetPos, yaw, step, ... }
 
 // Projectile state (client-side visual only)
 let projectiles = []; // { pos, dir, born, color }
@@ -147,7 +151,7 @@ let territoryControl = [0, 1, 2, 3];
 let hazards = []; // live crossfire rifts from the snapshot
 let clashSparks = []; // transient twin-color flashes at crossfire points
 let clashCount = 0;
-const ACTOR_MAX_HP = [40, 15, 25, 20]; // mirrors game.actorHP per archetype
+const ACTOR_MAX_HP = [40, 20, 25, 25]; // mirrors game.actorHP per archetype
 const StrategyRaid = 1;
 const StrategyRetreat = 2;
 
@@ -168,7 +172,6 @@ const FACTION_MODEL_OVERRIDES = [
     ['ps1_eaterplant', 'ps1_wasp','ps1_spider',     'ps1_rat'],   // void
 ];
 const corpses = []; // { id, pos, yaw, type, element, start }
-const MODEL_SCALE_TARGET = 1.5; // world units tall at full scale
 let lastRoarAt = 0;
 let nextRoarIn = 6;
 
@@ -623,48 +626,16 @@ function update(dt) {
         sent++;
     }
 
-    // Interpolate minotaur positions from server snapshots.
+    // Sync actors from the newest snapshot. Repeated seqs are ignored so they
+    // cannot reset interpolation; a new seq is authoritative about which
+    // actors exist, so removed ids drop instead of lingering as ghosts.
     if (snap && snap.data) {
-        for (const m of snap.data.minotaurs) {
-            let buf = minotaurBuffers.get(m.id);
-            if (!buf) {
-                buf = { pos: [m.x, 0.5, m.y], targetPos: [m.x, 0.5, m.y], stunned: m.stunned, type: m.type|0, element: m.element|0, hp: m.hp|0, strategy: m.strategy|0 };
-                minotaurBuffers.set(m.id, buf);
-            }
-            buf.targetPos = [m.x, 0.5, m.y];
-            buf.stunned = m.stunned;
-            buf.type = m.type|0;
-            buf.element = m.element|0;
-            buf.hp = m.hp|0;
-            buf.strategy = m.strategy|0;
-            buf.lastUpdate = now;
-        }
+        actorStore.applySnapshot(snap.seq, snap.data.minotaurs, now);
         // G3: keep the BT HUD rows synced with the live roster so a dead
         // actor drops immediately instead of lingering on its last frame.
         if (btHud) btHud.pruneToRoster(snap.data.minotaurs.map(m => m.id));
     }
-
-    // Lerp minotaur positions toward targets.
-    for (const [id, buf] of minotaurBuffers) {
-        const t = Math.min(1, (now - buf.lastUpdate) * 10);
-        buf.pos[0] += (buf.targetPos[0] - buf.pos[0]) * t;
-        buf.pos[1] += (buf.targetPos[1] - buf.pos[1]) * t;
-        buf.pos[2] += (buf.targetPos[2] - buf.pos[2]) * t;
-        // Facing and gait: derive yaw from actual displacement so creatures
-        // look where they walk.
-        const px = buf.prevPos ? buf.pos[0] - buf.prevPos[0] : 0;
-        const pz = buf.prevPos ? buf.pos[2] - buf.prevPos[2] : 0;
-        buf.step = Math.hypot(px, pz);
-        if (buf.step > 0.002) buf.yaw = Math.atan2(px, pz);
-        buf.prevPos = [buf.pos[0], buf.pos[1], buf.pos[2]];
-    }
-
-    // Prune buffers for actors the server removed (killed in the gang war).
-    // The death event prunes immediately; this backstop covers dropped
-    // events and keeps stale IDs from resurrecting ghosts.
-    for (const [id, buf] of minotaurBuffers) {
-        if (now - buf.lastUpdate > 2) minotaurBuffers.delete(id);
-    }
+    actorStore.step(dt);
 
     // Advance projectiles; cull after 0.5s. Clash sparks fade over 0.4s.
     projectiles = projectiles.filter(p => now - p.born < 0.5);
@@ -1038,6 +1009,7 @@ function handleEvent(evt) {
                     pos: [startX, PLAYER_HEIGHT * 0.8, startZ],
                     dir: [dirX, 0, dirZ],
                     color: ec,
+                    born: performance.now() / 1000,
                     life: 0.8,
                     maxLife: 0.8,
                     speed: 12.0,
@@ -1076,8 +1048,10 @@ function handleEvent(evt) {
                     const ec = ELEMENT_COLORS[buf.element|0] || ELEMENT_COLORS[0];
                     particles.deathBurst([buf.pos[0], buf.pos[1] + 0.4, buf.pos[2]], ec);
                 }
-                minotaurBuffers.delete(evt.data.id);
             }
+            // Quarantine the id before the next snapshot is applied: the
+            // death burst must be the last thing drawn for this actor.
+            if (evt.data && evt.data.id) actorStore.markDead(evt.data.id, performance.now() / 1000);
             // R2: wire kill feed — show faction-named entry on death.
             if (evt.data) {
                 addKillEntry(evt.data.element, evt.data.type);
@@ -1297,6 +1271,7 @@ function render() {
     const actNow = performance.now() / 1000;
     for (const [id, buf] of minotaurBuffers) {
         const ec = ELEMENT_COLORS[buf.element|0] || ELEMENT_COLORS[0];
+        const visualH = VISUAL_HEIGHT[buf.type|0] || VISUAL_HEIGHT[0];
         // Wounded actors dim toward black so battle damage reads at a glance.
         const hpFrac = Math.max(0, Math.min(1, (buf.hp === undefined ? 1 : buf.hp) / (ACTOR_MAX_HP[buf.type|0] || 30)));
         const dim = 0.45 + 0.55 * hpFrac;
@@ -1308,7 +1283,7 @@ function render() {
             else if ((buf.attackUntil || 0) > actNow) anim = 'attack';
             else if ((buf.step || 0) > 0.002) anim = 'move';
             const animName = ModelBank.pickAnim(model, anim) || ModelBank.pickAnim(model, 'idle');
-            const scale = MODEL_SCALE_TARGET / model.height;
+            const scale = visualH / model.height;
             const mm = new Float32Array(16);
             actorModelMatrix(buf.pos, buf.yaw || 0, scale, -buf.pos[1] - model.minY * scale, mm);
             const fae = FACTION_EMISSIVE[buf.element|0] || FACTION_EMISSIVE[0];
@@ -1331,7 +1306,7 @@ function render() {
         if (buf.hp !== undefined && buf.hp > 0 && buf.hp < (ACTOR_MAX_HP[buf.type|0] || 30)) {
             const barW = 0.8;
             const barH = 0.08;
-            const barY = buf.pos[1] + MODEL_SCALE_TARGET + 0.6;
+            const barY = buf.pos[1] + visualH + 0.6;
             // Build a camera-facing billboard matrix for the HP bar.
             // The bar faces the camera by using the inverse of the view
             // rotation (extracted from camera basis).
@@ -1379,7 +1354,7 @@ function render() {
 
         // Strategy beacon: red=raid, cyan=retreat, dim grey=patrol.
         instances.push({
-            pos: [buf.pos[0], buf.pos[1] + MODEL_SCALE_TARGET + 0.35, buf.pos[2]],
+            pos: [buf.pos[0], buf.pos[1] + visualH + 0.35, buf.pos[2]],
             scale: [0.12, 0.12, 0.12],
             color: stratColorFor(buf),
         });
@@ -1392,7 +1367,7 @@ function render() {
         const model = modelsReady ? modelBank.models.get(modelFor(c.id, c.type, c.element)) : null;
         if (age > 2.5 || !model) { corpses.splice(i, 1); continue; }
         const ec = ELEMENT_COLORS[c.element|0] || ELEMENT_COLORS[0];
-        const scale = MODEL_SCALE_TARGET / model.height;
+        const scale = (VISUAL_HEIGHT[c.type|0] || VISUAL_HEIGHT[0]) / model.height;
         const mm = new Float32Array(16);
         actorModelMatrix(c.pos, c.yaw, scale, -c.pos[1] - model.minY * scale, mm);
         modelBank.draw(model, ModelBank.pickAnim(model, 'death'), age, mm, [ec[0] * 0.35, ec[1] * 0.35, ec[2] * 0.35, 1.0], false);
