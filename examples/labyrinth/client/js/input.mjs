@@ -30,6 +30,29 @@ export class Input {
                 if (e.button === 0) this.fire = true;
             });
         }
+
+        // Losing focus or the pointer lock means the browser will never
+        // deliver the matching keyup: without this reset the player keeps
+        // walking (or sprinting) after Alt-Tab, Escape or a hidden tab.
+        window.addEventListener('blur', () => this.clearAll());
+        document.addEventListener('visibilitychange', () => {
+            if (document.hidden) this.clearAll();
+        });
+        document.addEventListener('pointerlockchange', () => {
+            if (!document.pointerLockElement) this.clearAll();
+        });
+    }
+
+    // clearAll drops every held key and the movement state derived from it.
+    // Safe to call repeatedly; pointer-lock changes and tab switches overlap.
+    clearAll() {
+        this._keys = {};
+        this.forward = 0;
+        this.strafe = 0;
+        this.sprint = false;
+        this.jump = false;
+        this._jumpConsumed = false;
+        this.fire = false;
     }
 
     update() {

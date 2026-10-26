@@ -12,6 +12,7 @@ import { BTHud } from './bt-hud.mjs';
 import { ParticleEngine } from './particles.mjs';
 import { ActorStore } from './actors.mjs';
 import { VISUAL_HEIGHT } from './archetypes.mjs';
+import { relativeBearing } from './compass.mjs';
 import { BotRuntime } from './bot-runtime.mjs';
 import { Inspector } from './inspector.mjs';
 import explorerRunner from './bots/explorer-runner.js';
@@ -1427,8 +1428,10 @@ function render() {
             const dot = fwd[0] * toActorX + fwd[2] * toActorZ;
             if (dot < 0.3) {
                 const ec = ELEMENT_COLORS[buf.element|0] || ELEMENT_COLORS[0];
-                // R10: subtract camera.yaw so arrows rotate with the player.
-                const angle = Math.atan2(toActorX, toActorZ) - camera.yaw;
+                // R10: arrows rotate with the player. Screen-right is world
+                // -X, so the bearing is yaw - atan2: an enemy on the
+                // player's right points right. See compass.mjs.
+                const angle = relativeBearing(camera.yaw, toActorX, toActorZ);
                 const arrow = document.createElement('div');
                 arrow.className = 'threat-arrow';
                 arrow.style.borderBottomColor = 'rgb(' + Math.round(ec[0]*255) + ',' + Math.round(ec[1]*255) + ',' + Math.round(ec[2]*255) + ')';

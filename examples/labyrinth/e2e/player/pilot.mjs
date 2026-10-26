@@ -35,7 +35,7 @@ export async function faceYaw(act, page, target, { tol = 0.04, passes = 4 } = {}
     for (let i = 0; i < passes && p; i++) {
         const err = wrapAngle(target - p.yaw);
         if (Math.abs(err) <= tol) return err;
-        await act.look(err / RAD_PER_PX, 0);
+        await act.look(-err / RAD_PER_PX, 0);
         await act.wait(40);
         p = await readPlayer(page);
     }
@@ -87,7 +87,7 @@ export async function walkTo(act, page, grid, gx, gz, { arrive = 0.4, timeoutMs 
             }
             const [tx, tz] = pickTarget(grid, p.pos, path);
             const err = wrapAngle(yawTo(p.pos[0], p.pos[2], tx, tz) - p.yaw);
-            if (Math.abs(err) > 0.03) await act.look(Math.max(-0.6, Math.min(0.6, err * 0.8)) / RAD_PER_PX, 0, { stepMs: 4 });
+            if (Math.abs(err) > 0.03) await act.look(-Math.max(-0.6, Math.min(0.6, err * 0.8)) / RAD_PER_PX, 0, { stepMs: 4 });
             if (Math.abs(err) < 0.45) {
                 await act.down('w');
                 if (sprint) await act.down('Shift');

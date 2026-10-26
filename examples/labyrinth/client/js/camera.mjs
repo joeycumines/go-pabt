@@ -26,7 +26,10 @@ export class Camera {
         });
         document.addEventListener('mousemove', (e) => {
             if (!this._locked) return;
-            this.yaw   += e.movementX * 0.002;
+            // Screen-right is world -X (camera.right() = [-cos yaw, 0, sin
+            // yaw]), so a rightward mouse movement must DECREASE yaw. The
+            // old '+' turned the view the opposite way to the mouse.
+            this.yaw   -= e.movementX * 0.002;
             this.pitch -= e.movementY * 0.002;
             const limit = Math.PI * 0.49;
             this.pitch = Math.max(-limit, Math.min(limit, this.pitch));

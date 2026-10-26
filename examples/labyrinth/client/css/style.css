@@ -501,7 +501,10 @@ body {
     border-left: 12px solid transparent;
     border-right: 12px solid transparent;
     border-bottom: 20px solid;
-    transform-origin: center -100px;
+    /* Orbit the screen centre, not a point far above it: with origin
+       120px below the triangle's top, rotate(0) sits at 12 o'clock and
+       rotate(+90deg) sits at 3 o'clock, both pointing outward. */
+    transform-origin: center 120px;
     top: -120px;
     left: -12px;
     opacity: 0.8;
