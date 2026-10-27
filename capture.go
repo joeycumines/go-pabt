@@ -82,7 +82,7 @@ func newPlan[T Condition](
 	if err != nil {
 		return nil, err
 	}
-	p := Plan[T]{config: config[T]{state: state, goal: goal}, ids: ids}
+	p := Plan[T]{state: state, goal: goal, ids: ids}
 	for _, opt := range opts {
 		if err := opt.applyOption(&p.config); err != nil {
 			return nil, err
