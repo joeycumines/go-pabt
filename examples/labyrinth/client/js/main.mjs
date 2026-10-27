@@ -62,6 +62,14 @@ let inspector = null;
 let maze = null; // authoritative maze from server
 let lastTime = 0;
 let gameState = 'playing'; // 'playing' | 'caught' | 'won'
+// The last play/pause state sent to the authoritative server. The world is
+// frozen until the player has actually entered: pointer locked, tutorial
+// dismissed, window focused. Automated bots count as playing too, so the
+// legacy bot harness keeps driving the game without pointer lock.
+let serverPlay = false;
+// Whether this server freezes the world until a player is present. The maze
+// payload carries the policy; legacy harnesses disable it.
+let pauseRequired = true;
 
 // Player physics state
 let playerVelY = 0;
@@ -208,6 +216,32 @@ function stratColorFor(buf) {
         : [0.35, 0.35, 0.45, 1.0];
 }
 
+function wantsPlay() {
+    if (gameState !== 'playing' || !maze) return false;
+    if (!pauseRequired) return true;
+    if (botRuntime && botRuntime.active) return true;
+    if (!document.hasFocus() || document.hidden) return false;
+    if (document.pointerLockElement !== canvas) return false;
+    const tutorial = document.getElementById('tutorial-overlay');
+    return !tutorial || tutorial.hidden;
+}
+
+function syncPlayState() {
+    const want = wantsPlay();
+    if (want === serverPlay) return;
+    serverPlay = want;
+    net.sendPlay(want);
+    if (want) {
+        // The click that captured the pointer is an entry gesture, not a shot.
+        input.fire = false;
+        firePending = null;
+    } else {
+        input.clearAll();
+        firePending = null;
+    }
+    lastInputAt = performance.now();
+}
+
 function init() {
     renderer = new Renderer(canvas);
     camera = new Camera(canvas);
@@ -290,6 +324,7 @@ function init() {
                 document.removeEventListener('keydown', dismissOnEnter);
                 // The maze may already be loaded behind the overlay.
                 if (maze) prompt.hidden = false;
+                syncPlayState();
             };
             const dismissOnEnter = (e) => {
                 if (e.code === 'Enter') dismissTutorial();
@@ -307,6 +342,7 @@ function init() {
     };
     net.onMaze = (mazeData) => {
         maze = mazeData;
+        pauseRequired = mazeData.pauseWithoutPlayer !== false;
         // Place camera at maze start.
         camera.pos = [maze.startX, PLAYER_HEIGHT, maze.startY];
         // Hide loading and show HUD. The pointer-lock prompt waits for the
@@ -316,6 +352,7 @@ function init() {
         const tutorialEl = document.getElementById('tutorial-overlay');
         prompt.hidden = tutorialEl ? !tutorialEl.hidden : false;
         overlay.hidden = true;
+        syncPlayState();
         // Start the render loop.
         requestAnimationFrame(frame);
     };
@@ -326,8 +363,13 @@ function init() {
     });
     document.addEventListener('pointerlockchange', () => {
         prompt.hidden = document.pointerLockElement === canvas;
+        syncPlayState();
     });
+    window.addEventListener('blur', syncPlayState);
+    window.addEventListener('focus', syncPlayState);
+    document.addEventListener('visibilitychange', syncPlayState);
 
+    installAriadne();
     renderer.resize();
     window.addEventListener('resize', () => renderer.resize());
     lastInputAt = performance.now();
@@ -421,7 +463,21 @@ function syncBotWorld() {
 }
 
 function update(dt) {
+    syncPlayState();
     input.update();
+    if (!serverPlay) {
+        // The server is paused; keep the local view frozen too so prediction
+        // cannot walk the camera away behind the menu and then snap back.
+        // Snapshots still arrive, so apply them: the scene (and any enemy
+        // already near the spawn) must be visible behind the menu.
+        const pausedSnap = net.getSnapshot();
+        if (pausedSnap && pausedSnap.data) {
+            actorStore.applySnapshot(pausedSnap.seq, pausedSnap.data.minotaurs, performance.now() / 1000);
+            if (btHud) btHud.pruneToRoster(pausedSnap.data.minotaurs.map(m => m.id));
+        }
+        actorStore.step(dt);
+        return;
+    }
     if (botRuntime && botRuntime.active) {
         botRuntime.step(dt);
     }
@@ -545,7 +601,7 @@ function update(dt) {
     // along the direction the player was pointing at the moment they pulled
     // the trigger.
     const now = performance.now() / 1000;
-    if (input.fire && now - lastFireTime > FIRE_COOLDOWN) {
+    if (serverPlay && input.fire && now - lastFireTime > FIRE_COOLDOWN) {
         lastFireTime = now;
         lastShotElement = playerElement;
         shotsFired++;
@@ -696,10 +752,14 @@ function update(dt) {
         if (nearestDist < 14) audio.playRoar(nearestDist);
     }
 
+}
+
+function installAriadne() {
     // Read-only debug hook for verification and the S4 debugging GUI.
     // Exposes live game state without pausing the game.
     window.__ariadne = {
         get gameState() { return gameState; },
+        get serverPlaying() { return serverPlay; },
         get playerPos() { return [...camera.pos]; },
         get serverPlayerPos() { return serverPos ? [...serverPos] : null; },
         get syncDrift() {
@@ -941,6 +1001,7 @@ function handleEvent(evt) {
                 camera.pos[2] = serverPos[2];
             }
             gameState = 'caught';
+            syncPlayState();
             overlay.hidden = false;
             overlay.textContent = 'CAUGHT\nClick to restart';
             overlay.onclick = () => location.reload();
@@ -951,6 +1012,7 @@ function handleEvent(evt) {
                 camera.pos[2] = serverPos[2];
             }
             gameState = 'won';
+            syncPlayState();
             overlay.hidden = false;
             overlay.textContent = 'ESCAPED\nClick to play again';
             overlay.onclick = () => location.reload();

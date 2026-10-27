@@ -143,6 +143,16 @@ test('D2: a dead key and a non-opposed S are reported', () => {
     assert.ok(detectControls(t, null).some((f) => f.title.startsWith('S does not move opposite')));
 });
 
+test('D2: a hit shake does not turn a correct strafe into a mirrored one', () => {
+    const t = controlsTl();
+    const dDown = t.marks.find((m) => m.kind === 'keydown' && m.key === 'd').t;
+    // Reverse the D frame pair so the raw pixel shift looks like a mirror.
+    const pair = t.frames.filter((f) => f.file.startsWith('strafe-d-'));
+    if (pair.length === 2) { const a = pair[0].file; pair[0].file = pair[1].file; pair[1].file = a; }
+    for (const s of t.samples) if (s.t >= dDown - 100 && s.t <= dDown + 700) s.shake = true;
+    assert.deepEqual(ids(detectControls(t, new FrameStore(t, FIX))).filter((x) => x.startsWith('D2:S1')), []);
+});
+
 test('D1: a sustained flat view right after entering is S1, a brief one is ignored', () => {
     // The HUD rects recorded with the fixture frames, back in page pixels.
     const hudOf = (name) => Object.fromEntries(fixMeta[name].masks.map((m, i) => [`m${i}`, { rect: [m.x0 * 1280, m.y0 * 800, (m.x1 - m.x0) * 1280, (m.y1 - m.y0) * 800], text: '' }]));
@@ -184,6 +194,26 @@ test('D6: HP loss without any cue is reported, with a flash it is not', () => {
     assert.deepEqual(detectSilentDamage(cued), []);
 });
 
+test('D6: the page default HP before the first snapshot is not silent damage', () => {
+    const reload = tl({
+        samples: [S(0, { hp: 92, round: -1 }), S(20, { hp: 100, round: -1 }), S(40, { hp: 92, round: 269 })],
+        loads: [{ t: 10 }],
+    });
+    assert.deepEqual(detectSilentDamage(reload), []);
+    const after = tl({ samples: [S(0, { hp: 92, round: 269 }), S(30, { hp: 72, round: 270 })] });
+    assert.deepEqual(ids(detectSilentDamage(after)), ['D6:S2']);
+});
+
+test('D15: a paused game with frozen enemies is not reported as still enemies', () => {
+    const actor = { id: 'B-1', x: 1.5, z: 2.5, hp: 40, type: 0, el: 0 };
+    const samples = (play) => [0, 100, 200, 300, 400, 500, 600].map((t) => S(t, { play, actors: [actor] }));
+    const g = new Grid(7, 7, grid().cells);
+    const paused = tl({ samples: samples(false) });
+    assert.deepEqual(ids(detectEngagement(paused, g)), []);
+    const playing = tl({ samples: samples(true) });
+    assert.ok(ids(detectEngagement(playing, g)).includes('D15:S2'));
+});
+
 test('D7: end screen covered by another element is S1; stacked menus are S2', () => {
     const samples = [S(0), S(100, { gs: 'caught' })];
     const covered = tl({ samples, dom: [dom(500, { modals: { overlay: { rect: [0, 0, 100, 100], text: 'CAUGHT' }, 'tutorial-overlay': { rect: [0, 0, 100, 100], text: '' } }, topOverlay: 'tutorial-overlay>li' })] });
@@ -202,6 +232,24 @@ test('D9: world advancing for minutes before the player enters is reported', () 
     assert.ok(ids(detectFlow(t)).includes('D9:S2'));
     const fresh = tl({ samples: [S(0, { round: 1 }), S(1500, { round: 46 })], marks: [{ t: 1500, kind: 'locked' }], loads: [0] });
     assert.deepEqual(detectFlow(fresh), []);
+});
+
+test('D9: the default HP of a freshly reloaded page is not damage under a menu', () => {
+    const t = tl({
+        samples: [S(0, { hp: 92, locked: false }), S(900, { hp: 92, locked: false }), S(1000, { hp: 100, round: -1, locked: false }), S(1100, { hp: 92, locked: false })],
+        dom: [dom(1050, { modals: { 'pointer-lock-prompt': { rect: [0, 0, 100, 100], text: 'Click to enter' } } })],
+        loads: [0, 950],
+    });
+    assert.deepEqual(detectFlow(t), []);
+});
+
+test('D9: a real HP drop under a menu after the reload is still reported', () => {
+    const t = tl({
+        samples: [S(0, { hp: 100, locked: false }), S(900, { hp: 100, locked: false }), S(1000, { hp: 100, locked: false }), S(1100, { hp: 92, locked: false })],
+        dom: [dom(1050, { modals: { 'pointer-lock-prompt': { rect: [0, 0, 100, 100], text: 'Click to enter' } } })],
+        loads: [0, 950],
+    });
+    assert.ok(ids(detectFlow(t)).includes('D9:S1'));
 });
 
 test('D9: an ignored end-screen click is reported', () => {

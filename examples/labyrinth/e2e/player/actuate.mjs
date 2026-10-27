@@ -48,6 +48,17 @@ export class Actuator {
     async tap(key) {
         this.s.mark('tap', { key });
         await this.page.keyboard.press(key);
+        if (key === 'Escape') {
+            // Chromium's browser-level pointer-lock exit is not reliably
+            // triggered by a CDP-synthesized Escape. Perform the same release
+            // the user's key press would, so an Escape step really unlocks.
+            const released = await this.page.evaluate(() => {
+                if (!document.pointerLockElement) return false;
+                document.exitPointerLock();
+                return true;
+            });
+            if (released) this.s.mark('escape-release');
+        }
     }
 
     // look turns the view by (dx, dy) mouse pixels, split into small steps the

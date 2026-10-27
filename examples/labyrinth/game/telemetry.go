@@ -270,8 +270,11 @@ const PulseBaseDamage = 15
 // Damage scales by elemental advantage between the runner's active element
 // and the struck actor's innate element.
 func (g *Game) FirePulse(id SessionID, fireRound int, aim netcode.RayHitOrigin) {
-	g.pulsesFired.Add(1)
 	g.Loop.Submit(func(w *world.World) {
+		if w.Phase != world.PhaseRunning {
+			return
+		}
+		g.pulsesFired.Add(1)
 		bestIdx := -1
 		bestRange := math.MaxFloat64
 		for i, hist := range g.Histories {

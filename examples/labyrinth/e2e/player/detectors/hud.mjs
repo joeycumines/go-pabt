@@ -90,6 +90,11 @@ export function detectSilentDamage(tl) {
         const a = ps[i - 1], b = ps[i];
         if (typeof a.hp !== 'number' || typeof b.hp !== 'number' || b.hp >= a.hp) continue;
         if (b.t - a.t > 1000) continue; // across a reload
+        // The page reports a default HP before its first snapshot; that is
+        // not a damage event (and the carried HP is not feedback-worthy).
+        if (typeof a.round === 'number' && a.round < 0) continue;
+        const loads = (tl.loads || []).map((l) => (typeof l === 'number' ? l : l && l.t));
+        if (loads.some((lt) => lt > a.t && lt <= b.t)) continue;
         const win = between(ps, b.t - 100, b.t + 300);
         const cued = win.some((s) => s.flash || s.shake || s.marker);
         const near = ev.filter((e) => Math.abs(e.t - b.t) <= 400).map((e) => e.type);

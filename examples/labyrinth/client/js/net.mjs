@@ -81,6 +81,13 @@ export class NetClient {
         this.ws.send(JSON.stringify(env));
     }
 
+    // sendPlay tells the authoritative server whether this session is
+    // actually in the game. The world pauses while no session is playing.
+    sendPlay(on) {
+        if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+        this.ws.send(JSON.stringify({ t: 'play', p: { on: !!on } }));
+    }
+
     // Authoritative debug teleport for the integrated debugging tooling:
     // the server resolves the position against the maze and applies it on
     // the writer goroutine.

@@ -93,6 +93,21 @@ type InputPayload struct {
 	Fire    bool    `json:"fire"`
 }
 
+// PlayPayload tells the server whether this session is actually playing
+// (pointer locked, menus dismissed). The world pauses when no session is.
+type PlayPayload struct {
+	On bool `json:"on"`
+}
+
+// DecodePlay parses a play/pause payload from an envelope.
+func DecodePlay(env *Envelope) (*PlayPayload, error) {
+	var p PlayPayload
+	if err := json.Unmarshal(env.Payload, &p); err != nil {
+		return nil, err
+	}
+	return &p, nil
+}
+
 // MazePayload is the authoritative maze sent once on connect. The client
 // uses this grid verbatim for rendering and collision, so there is never a
 // client/server maze desync.
@@ -104,6 +119,12 @@ type MazePayload struct {
 	StartY float64 `json:"startY"`
 	GateX  float64 `json:"gateX"`
 	GateY  float64 `json:"gateY"`
+
+	// PauseWithoutPlayer tells the client whether the authoritative world
+	// waits for a present player. When false (legacy harness mode), the
+	// client drives input without pointer lock, as it did before presence
+	// pause existed.
+	PauseWithoutPlayer bool `json:"pauseWithoutPlayer"`
 }
 
 // BTPayload is a BT operation request.

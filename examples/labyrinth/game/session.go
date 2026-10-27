@@ -213,6 +213,17 @@ type Game struct {
 	// and strategy state). Only touched on the writer goroutine.
 	actorStates []*ActorState
 
+	// playMu guards playing: which connected sessions have told the server
+	// they are actually in the game (pointer locked, menus dismissed). The
+	// presence gate reads it every tick.
+	playMu  sync.RWMutex
+	playing map[SessionID]bool
+
+	// pauseWithoutPlayer advertises the server's presence policy to the
+	// client in the maze payload. Legacy harnesses disable the pause, and
+	// their clients must keep driving input without pointer lock.
+	pauseWithoutPlayer bool
+
 	// telemetry records per-tick causal movement and PA-BT diagnostics.
 	telemetry       telemetryLog
 	eventHistory    eventLog
@@ -239,6 +250,7 @@ func NewGame(m *maze.Maze, initialActors int, seed uint64) *Game {
 		treeSubs:         make(map[SessionID]treeSubEntry),
 		escalationRounds: []int{300, 600, 900},
 		rng:              mrand.New(mrand.NewSource(int64(seed))),
+		playing:          make(map[SessionID]bool),
 	}
 
 	for i := 0; i < initialActors; i++ {
@@ -267,6 +279,8 @@ func (g *Game) MazePayload() proto.MazePayload {
 		StartY: g.Maze.Start.Y,
 		GateX:  g.Maze.Gate.X,
 		GateY:  g.Maze.Gate.Y,
+
+		PauseWithoutPlayer: g.pauseWithoutPlayer,
 	}
 	for i, c := range g.Maze.Grid {
 		p.Grid[i] = int(c.Kind)
@@ -519,9 +533,14 @@ func (g *Game) tickLogic(w *world.World) {
 		})
 	}
 
-	// Escalation schedule.
+	// Escalation schedule. Respawns hold the roster at TargetActorCount, so
+	// escalation must not add past the cap or a long session grows the field
+	// without bound.
 	for _, round := range g.escalationRounds {
 		if w.Round == round {
+			if len(w.Minotaurs) >= TargetActorCount+2 {
+				continue
+			}
 			g.spawnActor(ActorType(w.Round / 300 % 4))
 			g.broadcastEvent(Event{
 				Type: "spawn",
@@ -588,6 +607,7 @@ func (g *Game) AddSession(token string) (*PlayerSession, string, uint64) {
 			sess.disconnectedAt = time.Time{} // mark (re)connected
 			sess.connGen++                    // supersede any dying connection
 			sess.Net.ResetAckSeq()            // client restarts at seq 1
+			g.setPlayingLocked(sess.ID, false)
 			g.submitWorldResetIfTerminal(sess)
 			return sess, sess.Token, sess.connGen
 		}
@@ -605,6 +625,7 @@ func (g *Game) AddSession(token string) (*PlayerSession, string, uint64) {
 		connGen: 1,
 	}
 	g.sessions[id] = sess
+	g.setPlayingLocked(id, false)
 	g.submitWorldResetIfTerminal(sess)
 	return sess, tok, sess.connGen
 }
@@ -624,6 +645,7 @@ func (g *Game) ReleaseConnection(id SessionID, gen uint64, snapCh chan []byte, e
 	g.sessMu.Lock()
 	if sess, ok := g.sessions[id]; ok && sess.connGen == gen {
 		sess.disconnectedAt = time.Now()
+		g.setPlayingLocked(id, false)
 	}
 	g.sessMu.Unlock()
 	// Channel identity scopes the deletes: a rejoin replaces the map
@@ -719,6 +741,7 @@ func (g *Game) RemoveSession(id SessionID) {
 		sess.disconnectedAt = time.Now()
 	}
 	g.sessMu.Unlock()
+	g.clearPlaying(id)
 	g.subMu.Lock()
 	delete(g.subscribers, id)
 	g.subMu.Unlock()
@@ -738,13 +761,18 @@ const sessionGracePeriod = 60 * time.Second
 // the grace period. Call periodically (e.g. from a ticker goroutine).
 func (g *Game) CleanupSessions() {
 	now := time.Now()
+	var removed []SessionID
 	g.sessMu.Lock()
 	for id, sess := range g.sessions {
 		if !sess.disconnectedAt.IsZero() && now.Sub(sess.disconnectedAt) > sessionGracePeriod {
 			delete(g.sessions, id)
+			removed = append(removed, id)
 		}
 	}
 	g.sessMu.Unlock()
+	for _, id := range removed {
+		g.clearPlaying(id)
+	}
 }
 
 // SubscribeTrees registers a channel to receive tree frames. gen is the
@@ -812,6 +840,9 @@ func (g *Game) ApplyInput(id SessionID, cmd netcode.InputCmd) {
 	}
 
 	g.Loop.Submit(func(w *world.World) {
+		if w.Phase != world.PhaseRunning {
+			return
+		}
 		sess.Net.ApplyInput(g.Maze, cmd, loop.TickInterval.Seconds())
 		w.Runner.Pos = sess.Net.Pos
 		w.Runner.Yaw = sess.Net.Yaw

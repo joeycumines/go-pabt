@@ -44,7 +44,7 @@ function buildBinary() {
 
 function launchServer(bin) {
     log(`launching server seed ${seed} ...`);
-    const child = spawn(bin, ['-seed', String(seed)], {
+    const child = spawn(bin, ['-seed', String(seed), '-pause-without-player=false'], {
         stdio: ['ignore', 'pipe', 'pipe'],
     });
     let output = '';

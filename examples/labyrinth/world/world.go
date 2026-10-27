@@ -100,6 +100,12 @@ func New(m *maze.Maze) *World {
 // Step advances the authoritative simulation by dt seconds. It is called once
 // per loop tick by the single writer.
 func (w *World) Step(dt float64) {
+	// A terminal game is frozen: the winning/losing round is final, and no
+	// further ticks may move the runner or escalate the world behind the
+	// end screen.
+	if w.Phase != PhaseRunning {
+		return
+	}
 	w.Round++
 	// Integrate runner horizontal movement and resolve collision. Full
 	// input-driven physics (gravity, jump, prediction reconciliation) lands

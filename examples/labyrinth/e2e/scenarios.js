@@ -103,6 +103,7 @@ export default [
                     gate: a.gate,
                     modelsLoaded: a.modelsLoaded,
                     hp: a.hp,
+                    hudHP: document.getElementById('hp-fill').style.width,
                     gameState: a.gameState,
                     hudHidden: document.getElementById('hud').hidden,
                     loadingVisible: getComputedStyle(document.getElementById('loading')).display !== 'none',
@@ -112,7 +113,17 @@ export default [
             if (!s.mazeSize || s.mazeSize[0] !== 21 || s.mazeSize[1] !== 21) throw new Error(`bad mazeSize ${JSON.stringify(s.mazeSize)}`);
             if (!s.gate) throw new Error('no gate');
             if (!s.modelsLoaded) throw new Error('modelsLoaded false');
-            if (s.hp !== 100) throw new Error(`hp ${s.hp} != 100`);
+            // This legacy scenario runs against an unpaused world, so the
+            // idle runner can legally have taken contact damage by now. Assert
+            // that the HUD mirrors the authoritative session HP instead of a
+            // pristine 100. Player-eye D9 owns "no damage before play".
+            if (typeof s.hp !== 'number' || s.hp < 0 || s.hp > 100) {
+                throw new Error(`hp out of range: ${s.hp}`);
+            }
+            const hudHP = parseFloat(s.hudHP);
+            if (!Number.isFinite(hudHP) || Math.abs(hudHP - s.hp) > 0.5) {
+                throw new Error(`HUD hp ${s.hudHP} != session hp ${s.hp}`);
+            }
             if (s.gameState !== 'playing') throw new Error(`gameState ${s.gameState}`);
             if (s.hudHidden) throw new Error('hud hidden');
             if (s.loadingVisible) throw new Error('loading still visible');

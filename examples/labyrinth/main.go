@@ -42,6 +42,7 @@ var clientFS embed.FS
 func main() {
 	addr := flag.String("addr", "127.0.0.1:0", "loopback listen address for the game page")
 	seed := flag.Uint64("seed", 0, "maze seed; 0 picks one at random")
+	pauseWithoutPlayer := flag.Bool("pause-without-player", true, "freeze the world while no player has entered the game")
 	flag.Parse()
 
 	if *seed == 0 {
@@ -59,7 +60,9 @@ func main() {
 	// (actor AI, stun timers, damage, win/lose, escalation) on the loop, so
 	// all game logic runs on the single-writer goroutine.
 	m := maze.Generate(*seed, 21, 21)
-	g := game.NewGame(m, game.TargetActorCount, *seed) // roster size lives in game.TargetActorCount
+	g := game.NewGameWithOptions(m, game.TargetActorCount, *seed, game.Options{ // roster size lives in game.TargetActorCount
+		PauseWithoutPlayer: *pauseWithoutPlayer,
+	})
 
 	// Start the authoritative loop.
 	go g.Loop.Run(ctx)
@@ -357,6 +360,12 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request, g *game.Game) {
 					g.FirePulse(sess.ID, snap.Round, aim)
 				}
 			}
+		case "play":
+			play, err := proto.DecodePlay(env)
+			if err != nil {
+				continue
+			}
+			g.SetPlaying(sess.ID, play.On)
 		case "debug":
 			dbg, err := proto.DecodeDebug(env)
 			if err != nil {

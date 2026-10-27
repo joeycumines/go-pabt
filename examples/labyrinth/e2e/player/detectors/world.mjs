@@ -187,9 +187,19 @@ export function detectFlow(tl) {
         }
     }
     // Damage taken while a menu/modal covers the game.
+    const loads = (tl.loads || [])
+        .map((l) => (typeof l === 'number' ? l : l && l.t))
+        .filter((t) => typeof t === 'number');
     const hurt = [];
     for (let i = 1; i < ps.length; i++) {
         if (typeof ps[i].hp !== 'number' || ps[i].hp >= ps[i - 1].hp || ps[i].t - ps[i - 1].t > 1000) continue;
+        // A fresh page starts at its default HP before the first snapshot
+        // arrives. The first reading after a reload is not a server HP drop,
+        // even if the rejoin snapshot carries the HP from before the reload.
+        if (loads.some((lt) => lt > ps[i - 1].t && lt <= ps[i].t)) continue;
+        // Before the first snapshot arrives, the page reports its default HP.
+        // A drop from that placeholder is not a server damage event.
+        if (typeof ps[i - 1].round === 'number' && ps[i - 1].round < 0) continue;
         const d = sampleAt(tl.dom, ps[i].t);
         const modals = Object.keys((d && d.modals) || {}).filter((k) => k !== 'overlay');
         if (modals.length) hurt.push({ t: ps[i].t, modals, from: ps[i - 1].hp, to: ps[i].hp });

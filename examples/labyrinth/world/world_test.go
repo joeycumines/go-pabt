@@ -63,3 +63,18 @@ func TestSnapshotRunnerIsValueCopy(t *testing.T) {
 		t.Fatalf("snapshot runner position mutated: %v", snap.Runner.Pos)
 	}
 }
+
+func TestStepFreezesTerminalPhase(t *testing.T) {
+	m := maze.Generate(42, 11, 11)
+	w := New(m)
+	w.Runner.Pos = m.Start
+	w.Phase = PhaseLost
+
+	w.Step(1.0 / 30.0)
+	if w.Round != 0 {
+		t.Fatalf("round advanced after loss: %d", w.Round)
+	}
+	if w.Runner.Pos != m.Start {
+		t.Fatalf("runner moved after loss: %v", w.Runner.Pos)
+	}
+}

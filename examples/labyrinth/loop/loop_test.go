@@ -163,3 +163,38 @@ func TestNextTickDelayNeverNonPositive(t *testing.T) {
 		})
 	}
 }
+
+func TestGateFreezesWorldButDrainsCommandsAndPublishes(t *testing.T) {
+	m := maze.Generate(42, 11, 11)
+	w := world.New(m)
+	l := New(w)
+
+	var hookRuns, cmdRuns atomic.Int64
+	l.SetTickHook(func(*world.World) { hookRuns.Add(1) })
+	l.SetGate(func() bool { return false })
+	l.Submit(func(*world.World) { cmdRuns.Add(1) })
+
+	l.TickOnce()
+
+	if w.Round != 0 {
+		t.Fatalf("round advanced while gated: %d", w.Round)
+	}
+	if hookRuns.Load() != 0 {
+		t.Fatalf("tick hook ran while gated: %d", hookRuns.Load())
+	}
+	if cmdRuns.Load() != 1 {
+		t.Fatalf("command was not drained while gated: %d", cmdRuns.Load())
+	}
+	if snap := l.Snapshot(); snap.Round != 0 {
+		t.Fatalf("published round while gated = %d, want 0", snap.Round)
+	}
+
+	l.SetGate(func() bool { return true })
+	l.TickOnce()
+	if w.Round != 1 {
+		t.Fatalf("round after gate reopened = %d, want 1", w.Round)
+	}
+	if hookRuns.Load() != 1 {
+		t.Fatalf("tick hook runs after gate reopened = %d, want 1", hookRuns.Load())
+	}
+}

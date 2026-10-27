@@ -60,6 +60,7 @@ export function probeResults(tl) {
 
 export function detectControls(tl, frames, grid = null) {
     const out = [];
+    const ps = playing(tl);
     const r = probeResults(tl);
     if (!r.w) return out; // this journey did not run a controls check
     const names = { w: 'W (forward)', s: 'S (back)', a: 'A (strafe left)', d: 'D (strafe right)' };
@@ -97,6 +98,10 @@ export function detectControls(tl, frames, grid = null) {
     // (mouse moved right) must both slide the scene LEFT. Comparing the two
     // pixel shifts is independent of any world/camera convention.
     const lr = r['look-right'];
+    // A hit's screen shake or knockback moves the whole picture during the
+    // strafe probe, so the pixel shift is not evidence about D's direction.
+    const hitDuring = (p) => between(ps, p.t0 - 100, p.t1 + 100).some((s) => s.shake)
+        || eventTimes(tl).some((e) => e.type === 'hit' && e.t >= p.t0 - 100 && e.t <= p.t1 + 100);
     if (lr && frames) {
         const look = shiftBetween(tl, frames, lr.t0 - 30, lr.t1);
         const strafe = r.d && len(r.d.v) >= 0.03 ? shiftBetween(tl, frames, r.d.t0 - 30, r.d.t1) : null;
@@ -109,7 +114,7 @@ export function detectControls(tl, frames, grid = null) {
                     : 'The scene slid the same way the mouse moved, which is what turning the opposite way looks like.',
             }));
         }
-        if (confident(strafe) && strafe.shift > 0) {
+        if (confident(strafe) && strafe.shift > 0 && !hitDuring(r.d)) {
             out.push(finding('D2', 'S1', 'Strafe is mirrored: D moves the view to the LEFT', { t: r.d.t0, until: r.d.t1, evidence: ev }));
         }
         if (look && look.score >= CONFIDENT.minCorr && Math.abs(look.shift) <= 1 && Math.abs(wrapAngle(lr.b.yaw - lr.a.yaw)) > 0.1) {

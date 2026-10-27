@@ -156,7 +156,7 @@ export function installProbe(opts) {
         const s = { t, locked: !!document.pointerLockElement, focus: document.hasFocus(), vis: document.visibilityState };
         if (a) {
             try {
-                s.gs = a.gameState; s.pos = a.playerPos; s.spos = a.serverPlayerPos; s.yaw = a.playerYaw;
+                s.gs = a.gameState; s.play = a.serverPlaying; s.pos = a.playerPos; s.spos = a.serverPlayerPos; s.yaw = a.playerYaw;
                 s.hp = a.hp; s.round = a.round; s.intensity = a.intensity; s.ws = a.wsOpen;
                 s.vel = a.playerVel; s.input = a.inputState; s.elem = a.playerElement; s.fov = a.cameraFov;
                 s.aspect = innerWidth / Math.max(1, innerHeight);

@@ -191,3 +191,21 @@ func TestDecodeBT(t *testing.T) {
 		t.Errorf("position = (%f, %f), want (5.5, 3.3)", parsed.X, parsed.Y)
 	}
 }
+
+func TestDecodePlay(t *testing.T) {
+	for _, on := range []bool{true, false} {
+		payload, _ := json.Marshal(PlayPayload{On: on})
+		data, _ := json.Marshal(Envelope{Type: "play", Payload: payload})
+		env, err := Decode(data)
+		if err != nil {
+			t.Fatalf("Decode: %v", err)
+		}
+		parsed, err := DecodePlay(env)
+		if err != nil {
+			t.Fatalf("DecodePlay: %v", err)
+		}
+		if parsed.On != on {
+			t.Fatalf("on = %v, want %v", parsed.On, on)
+		}
+	}
+}

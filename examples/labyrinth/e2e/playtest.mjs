@@ -50,7 +50,7 @@ function buildBinary() {
 }
 
 function launchServer(bin, seed) {
-    const child = spawn(bin, ['-seed', String(seed)], { stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(bin, ['-seed', String(seed), '-pause-without-player=false'], { stdio: ['ignore', 'pipe', 'pipe'] });
     let output = '';
     child.stdout.on('data', (d) => { output += d.toString(); });
     child.stderr.on('data', (d) => { output += d.toString(); });

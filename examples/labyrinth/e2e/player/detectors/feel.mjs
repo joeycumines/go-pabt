@@ -42,7 +42,10 @@ function tenHz(tl) {
     const out = [];
     let last = -Infinity;
     for (const s of playing(tl)) {
-        if (s.gs !== 'playing' || s.t - last < 100) continue;
+        // A covered/paused game is not play time: enemies frozen behind a
+        // menu are not standing still at the player, and the dead-time clock
+        // must not tick while the player cannot act.
+        if (s.gs !== 'playing' || s.play === false || s.t - last < 100) continue;
         last = s.t;
         out.push(s);
     }

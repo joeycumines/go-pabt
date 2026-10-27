@@ -53,6 +53,12 @@ type Loop struct {
 	// escalation) mutate the world under the single-writer guarantee. Set
 	// before Run; never mutated afterwards.
 	tickHook Command
+
+	// gate decides whether the world advances this tick. When it returns
+	// false the loop still drains commands and publishes a snapshot, but
+	// skips Step and the hook, so the round counter, AI, damage and
+	// escalation all freeze while the player is not present. Set before Run.
+	gate func() bool
 }
 
 // New creates a loop over the given world and publishes the initial snapshot.
@@ -80,6 +86,14 @@ func (l *Loop) Submit(cmd Command) {
 // it may freely mutate the world (actor movement, timers, phase changes).
 func (l *Loop) SetTickHook(cmd Command) {
 	l.tickHook = cmd
+}
+
+// SetGate registers a predicate that decides whether the world advances on
+// each tick. A nil gate (the default) always advances. Commands are drained
+// and snapshots are published even while the gate is closed. It must be
+// called before Run.
+func (l *Loop) SetGate(fn func() bool) {
+	l.gate = fn
 }
 
 // Snapshot returns the latest defensive-copy snapshot. It is safe to call
@@ -159,14 +173,20 @@ func (l *Loop) tick() {
 		cmd(l.world)
 	}
 
-	// Advance the world by one fixed timestep.
-	l.world.Step(TickInterval.Seconds())
+	// Advance the world by one fixed timestep unless the presence gate says
+	// nobody is playing. Commands above still run (a rejoin's world reset
+	// must land while paused), and the snapshot below still publishes the
+	// frozen state.
+	if l.gate == nil || l.gate() {
+		l.world.Step(TickInterval.Seconds())
 
-	// Run the game-logic hook on the writer goroutine, after commands and the
-	// step, so it observes the latest runner position and may mutate the world
-	// (actor AI, timers, win/lose) under the single-writer guarantee.
-	if l.tickHook != nil {
-		l.tickHook(l.world)
+		// Run the game-logic hook on the writer goroutine, after commands and
+		// the step, so it observes the latest runner position and may mutate
+		// the world (actor AI, timers, win/lose) under the single-writer
+		// guarantee.
+		if l.tickHook != nil {
+			l.tickHook(l.world)
+		}
 	}
 
 	// Publish a defensive-copy snapshot for readers.
