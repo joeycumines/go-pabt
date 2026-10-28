@@ -13,6 +13,7 @@ import { ParticleEngine } from './particles.mjs';
 import { ActorStore } from './actors.mjs';
 import { VISUAL_HEIGHT } from './archetypes.mjs';
 import { relativeBearing } from './compass.mjs';
+import { move, resolve } from './predict.mjs';
 import { BotRuntime } from './bot-runtime.mjs';
 import { Inspector } from './inspector.mjs';
 import explorerRunner from './bots/explorer-runner.js';
@@ -117,8 +118,12 @@ let damageFlashTimer = 0; // red flash when player takes damage
 let damageDirTimer = 0; // seconds the directional damage arc stays visible
 let damageDirX = 0, damageDirZ = -1; // world-space unit direction to the damage source
 
-// Position reconciliation
+// Position reconciliation and client prediction (T5)
 let serverPos = null; // last server position for reconciliation
+let predictedPos = null; // { x, y } in maze coordinates (x, z in 3D world space)
+let pendingInputs = []; // unacknowledged inputs queue: { seq, forward, strafe, yaw, pitch, sprint }
+let lastSnapSeq = -1; // sequence number of last processed snapshot
+let errorOffsetX = 0, errorOffsetZ = 0; // decaying visual smoothing error offset
 let lastHP = 100; // last known player HP from server
 
 // S2 elemental system: 0=fire 1=ice 2=lightning 3=void, cycle
@@ -347,6 +352,11 @@ function init() {
         pauseRequired = mazeData.pauseWithoutPlayer !== false;
         // Place camera at maze start.
         camera.pos = [maze.startX, PLAYER_HEIGHT, maze.startY];
+        predictedPos = { x: maze.startX, y: maze.startY };
+        pendingInputs = [];
+        lastSnapSeq = -1;
+        errorOffsetX = 0;
+        errorOffsetZ = 0;
         // Hide loading and show HUD. The pointer-lock prompt waits for the
         // first-run tutorial overlay to dismiss so the two never stack.
         loading.hidden = true;
@@ -497,106 +507,49 @@ function update(dt) {
     if (botRuntime && botRuntime.active) {
         botRuntime.step(dt);
     }
-    const maxSpeed = input.sprint ? 6.5 : 4.0;
-
-    // I2: velocity-based movement with momentum and friction.
-    // Movement basis: yaw-relative WASD.
-    const fwd = [Math.sin(camera.yaw), 0, Math.cos(camera.yaw)];
-    const right = [-Math.cos(camera.yaw), 0, Math.sin(camera.yaw)];
-
-    // Normalize input so diagonal movement doesn't exceed maxSpeed.
-    // Without this, forward+strafe gives sqrt(2)*maxSpeed ≈ 1.41x cardinal.
-    const inputMag = Math.hypot(input.forward, input.strafe);
-    const normFwd = inputMag > 0.01 ? input.forward / inputMag : 0;
-    const normStr = inputMag > 0.01 ? input.strafe / inputMag : 0;
-
-    // Desired velocity from normalized input.
-    const wantX = (fwd[0] * normFwd + right[0] * normStr) * maxSpeed;
-    const wantZ = (fwd[2] * normFwd + right[2] * normStr) * maxSpeed;
-
-    // Acceleration: when input is present, lerp toward target velocity quickly;
-    // otherwise friction decays existing velocity (momentum / sliding).
-    const hasInput = inputMag > 0.01;
-    if (hasInput) {
-        // Tight response: ~50% of target within 0.1s (exponential lerp).
-        const a = 1 - Math.pow(0.001, dt);
-        playerVelX += (wantX - playerVelX) * a;
-        playerVelZ += (wantZ - playerVelZ) * a;
-    } else {
-        const decay = Math.pow(FRICTION, dt * 60);
-        playerVelX *= decay;
-        playerVelZ *= decay;
-        // Snap to zero below threshold to avoid perpetual drift.
-        if (Math.abs(playerVelX) < 0.01) playerVelX = 0;
-        if (Math.abs(playerVelZ) < 0.01) playerVelZ = 0;
+    if (!predictedPos && maze) {
+        predictedPos = { x: camera.pos[0], y: camera.pos[2] };
+    }
+    // T5: Smooth per-frame client prediction using instant-speed model matching the server.
+    if (predictedPos && maze) {
+        predictedPos = move(maze, predictedPos, camera.yaw, input.forward, input.strafe, input.sprint, dt);
     }
 
-    // Clamp total speed so impulses (blowback) can briefly exceed maxSpeed
-    // but sustained motion is capped.
-    const spd = Math.hypot(playerVelX, playerVelZ);
-    const cap = maxSpeed * 1.6; // allow blowback overshoot up to 1.6x
-    if (spd > cap) {
-        playerVelX = playerVelX / spd * cap;
-        playerVelZ = playerVelZ / spd * cap;
-    }
-
-    // Feed camera.updateMovement both the sprint INTENT (input.sprint) and
-    // the ACTUAL velocity magnitude. Sprint intent drives FOV widening (FPS
-    // convention: FOV signals sprint mode regardless of wall blocking); actual
-    // speed drives weapon bob (so a wall-blocked player doesn't bob in place).
-    const actualSpeed = Math.hypot(playerVelX, playerVelZ);
-    camera.updateMovement(dt, input.sprint, actualSpeed);
-
-    // Position reconciliation: reconcile against authoritative serverPos BEFORE
-    // integrating local velocity/collision so a server knockback or corner
-    // collision never leaves camera.pos stranded on the opposite side of a wall.
+    // T5: Snapshot reconciliation on a NEW snapshot seq.
+    // Start from authoritative server pos and replay unacknowledged inputs (seq > ack).
     const snap = net.getSnapshot();
     if (snap && snap.data) {
         const sp = snap.data.runner;
         serverPos = [sp.x, PLAYER_HEIGHT, sp.y];
-        const drift = Math.hypot(serverPos[0] - camera.pos[0], serverPos[2] - camera.pos[2]);
-        const sameCell = Math.floor(serverPos[0]) === Math.floor(camera.pos[0]) &&
-            Math.floor(serverPos[2]) === Math.floor(camera.pos[2]);
-        if (drift > 0.35 || (!sameCell && drift > 0.2)) {
-            camera.pos[0] = serverPos[0];
-            camera.pos[2] = serverPos[2];
-            playerVelX *= 0.25;
-            playerVelZ *= 0.25;
-        } else {
-            const lerpRate = 0.2;
-            camera.pos[0] += (serverPos[0] - camera.pos[0]) * lerpRate;
-            camera.pos[2] += (serverPos[2] - camera.pos[2]) * lerpRate;
+
+        if (snap.seq !== lastSnapSeq) {
+            lastSnapSeq = snap.seq;
+
+            let recon = { x: sp.x, y: sp.y };
+            if (snap.ack !== undefined) {
+                pendingInputs = pendingInputs.filter(cmd => cmd.seq > snap.ack);
+            }
+            for (const cmd of pendingInputs) {
+                recon = move(maze, recon, cmd.yaw, cmd.forward, cmd.strafe, cmd.sprint, 1.0 / 30.0);
+            }
+            const intraTick = Math.max(0, Math.min(1.0 / 30.0, (performance.now() - lastInputAt) / 1000));
+            recon = move(maze, recon, camera.yaw, input.forward, input.strafe, input.sprint, intraTick);
+
+            const oldRenderX = camera.pos[0];
+            const oldRenderZ = camera.pos[2];
+            const errX = oldRenderX - recon.x;
+            const errZ = oldRenderZ - recon.y;
+
+            if (Math.hypot(errX, errZ) > 2.0) {
+                errorOffsetX = 0;
+                errorOffsetZ = 0;
+            } else {
+                errorOffsetX = errX;
+                errorOffsetZ = errZ;
+            }
+            predictedPos = recon;
         }
-    }
 
-    const prevX = camera.pos[0], prevZ = camera.pos[2];
-    let newX = prevX + playerVelX * dt;
-    let newZ = prevZ + playerVelZ * dt;
-    [newX, newZ] = resolveCollision(maze, newX, newZ, PLAYER_RADIUS);
-    // If collision clamped motion, zero velocity along the blocked axis so
-    // momentum doesn't re-push the player into the wall next frame.
-    const actualDx = newX - prevX;
-    const actualDz = newZ - prevZ;
-    if (Math.abs(actualDx) < Math.abs(playerVelX * dt) * 0.5) playerVelX *= 0.2;
-    if (Math.abs(actualDz) < Math.abs(playerVelZ * dt) * 0.5) playerVelZ *= 0.2;
-    camera.pos[0] = newX;
-    camera.pos[2] = newZ;
-
-    // Jump and gravity.
-    if (input.consumeJump() && grounded) {
-        playerVelY = JUMP_VEL;
-        grounded = false;
-    }
-    playerVelY += GRAVITY * dt;
-    camera.pos[1] += playerVelY * dt;
-
-    if (camera.pos[1] <= PLAYER_HEIGHT) {
-        camera.pos[1] = PLAYER_HEIGHT;
-        playerVelY = 0;
-        grounded = true;
-    }
-
-    if (snap && snap.data) {
         // Gang war state: dynamic territory control and crossfire rifts.
         if (snap.data.territoryControl) territoryControl = snap.data.territoryControl;
         hazards = snap.data.hazards || [];
@@ -609,6 +562,39 @@ function update(dt) {
         } else if (gameState === 'playing' && snap.data.phase === 2) {
             handleEvent({type: 'caught'});
         }
+    }
+
+    // Visual smoothing: decay error offset toward zero (exp(-15*dt))
+    errorOffsetX *= Math.exp(-15 * dt);
+    errorOffsetZ *= Math.exp(-15 * dt);
+    if (Math.abs(errorOffsetX) < 1e-4) errorOffsetX = 0;
+    if (Math.abs(errorOffsetZ) < 1e-4) errorOffsetZ = 0;
+
+    const prevX = camera.pos[0], prevZ = camera.pos[2];
+    if (predictedPos) {
+        camera.pos[0] = predictedPos.x + errorOffsetX;
+        camera.pos[2] = predictedPos.y + errorOffsetZ;
+    }
+    const actualDx = camera.pos[0] - prevX;
+    const actualDz = camera.pos[2] - prevZ;
+    const actualSpeed = dt > 0 ? Math.hypot(actualDx, actualDz) / dt : 0;
+    playerVelX = dt > 0 ? actualDx / dt : 0;
+    playerVelZ = dt > 0 ? actualDz / dt : 0;
+
+    camera.updateMovement(dt, input.sprint, actualSpeed);
+
+    // Jump and gravity (visual only).
+    if (input.consumeJump() && grounded) {
+        playerVelY = JUMP_VEL;
+        grounded = false;
+    }
+    playerVelY += GRAVITY * dt;
+    camera.pos[1] += playerVelY * dt;
+
+    if (camera.pos[1] <= PLAYER_HEIGHT) {
+        camera.pos[1] = PLAYER_HEIGHT;
+        playerVelY = 0;
+        grounded = true;
     }
 
     // Pulse fire: click to fire (with cooldown). The shot itself rides on
@@ -696,6 +682,15 @@ function update(dt) {
             false,
             !!shot,
         );
+        const cmd = {
+            seq: net.inputSeq,
+            forward: input.forward,
+            strafe: input.strafe,
+            yaw: shot ? shot.yaw : camera.yaw,
+            pitch: shot ? shot.pitch : camera.pitch,
+            sprint: input.sprint,
+        };
+        pendingInputs.push(cmd);
         sent++;
     }
 
@@ -827,7 +822,15 @@ function installAriadne() {
         },
         fire() { input.fire = true; },
         setYaw(y) { camera.yaw = y; },
-        teleport(x, z) { camera.pos[0] = x; camera.pos[2] = z; net.sendDebugTeleport(x, z); },
+        teleport(x, z) {
+            camera.pos[0] = x;
+            camera.pos[2] = z;
+            predictedPos = { x, y: z };
+            pendingInputs = [];
+            errorOffsetX = 0;
+            errorOffsetZ = 0;
+            net.sendDebugTeleport(x, z);
+        },
         // E2E: grid line-of-sight check between two XZ world points. Samples
         // the maze grid (same source the renderer and collision use) so
         // scenarios can verify a clear fire lane instead of assuming one —
@@ -1015,6 +1018,10 @@ function handleEvent(evt) {
             if (serverPos) {
                 camera.pos[0] = serverPos[0];
                 camera.pos[2] = serverPos[2];
+                predictedPos = { x: serverPos[0], y: serverPos[2] };
+                pendingInputs = [];
+                errorOffsetX = 0;
+                errorOffsetZ = 0;
             }
             gameState = 'caught';
             syncPlayState();
@@ -1026,6 +1033,10 @@ function handleEvent(evt) {
             if (serverPos) {
                 camera.pos[0] = serverPos[0];
                 camera.pos[2] = serverPos[2];
+                predictedPos = { x: serverPos[0], y: serverPos[2] };
+                pendingInputs = [];
+                errorOffsetX = 0;
+                errorOffsetZ = 0;
             }
             gameState = 'won';
             syncPlayState();
@@ -1624,40 +1635,8 @@ function territoryAt(x, y, mazeData) {
 }
 
 function resolveCollision(mazeData, px, pz, radius) {
-    const minX = Math.floor(px - radius);
-    const maxX = Math.floor(px + radius);
-    const minZ = Math.floor(pz - radius);
-    const maxZ = Math.floor(pz + radius);
-
-    for (let cz = minZ; cz <= maxZ; cz++) {
-        for (let cx = minX; cx <= maxX; cx++) {
-            if (cx < 0 || cz < 0 || cx >= mazeData.w || cz >= mazeData.h) continue;
-            if (mazeData.grid[cz * mazeData.w + cx] !== 0) continue;
-
-            const nx = Math.max(cx, Math.min(px, cx + 1));
-            const nz = Math.max(cz, Math.min(pz, cz + 1));
-            const ddx = px - nx;
-            const ddz = pz - nz;
-            const dist2 = ddx * ddx + ddz * ddz;
-
-            if (dist2 < radius * radius) {
-                if (dist2 > 1e-12) {
-                    const dist = Math.sqrt(dist2);
-                    px += ddx / dist * (radius - dist);
-                    pz += ddz / dist * (radius - dist);
-                } else {
-                    const left = px - cx, right = cx + 1 - px;
-                    const up = pz - cz, down = cz + 1 - pz;
-                    const mn = Math.min(left, right, up, down);
-                    if (mn === left) px = cx - radius;
-                    else if (mn === right) px = cx + 1 + radius;
-                    else if (mn === up) pz = cz - radius;
-                    else pz = cz + 1 + radius;
-                }
-            }
-        }
-    }
-    return [px, pz];
+    const res = resolve(mazeData, { x: px, y: pz }, radius);
+    return [res.x, res.y];
 }
 
 init();
