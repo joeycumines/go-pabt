@@ -6,6 +6,7 @@ export class HUD {
         this.minimapCtx = this.minimap.getContext('2d');
         this.intensityFill = document.getElementById('intensity-fill');
         this.hpFill = document.getElementById('hp-fill');
+        this.hpText = document.getElementById('hp-text');
         this.chipRound = document.getElementById('chip-round');
         this.chipFps = document.getElementById('chip-fps');
         this.chipElement = document.getElementById('chip-element');
@@ -31,6 +32,7 @@ export class HUD {
     setHP(hp, maxHP) {
         const pct = Math.max(0, Math.min(100, (hp / maxHP) * 100));
         this.hpFill.style.width = pct + '%';
+        if (this.hpText) this.hpText.textContent = Math.max(0, Math.round(hp)) + ' / ' + maxHP;
         // Color shift: green > yellow > red
         if (pct > 60) {
             this.hpFill.style.background = 'linear-gradient(90deg, #00ff80, #00cc60)';

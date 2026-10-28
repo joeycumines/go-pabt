@@ -11,10 +11,18 @@ import (
 	"github.com/joeycumines/go-pabt/examples/labyrinth/world"
 )
 
+// Seed 6 exercises every archetype (including a caster bolt) for every
+// persona. Seed 444004 was re-baselined in T4: the capped runner
+// knockback and invulnerability window change the deterministic path
+// enough that the explorer reaches the gate before any caster engages,
+// which made O9's bolt floor vacuous rather than wrong. T7/T8 revisit
+// the oracle floors on top of the new combat model.
+const defaultPlaytestSeed = 6
+
 func TestAllOraclesPassAcrossAllPersonas(t *testing.T) {
 	for _, p := range AllPersonas() {
 		cfg := Config{
-			Seed:    444004,
+			Seed:    defaultPlaytestSeed,
 			Persona: p,
 			Ticks:   450,
 			Actors:  game.TargetActorCount,
@@ -50,10 +58,10 @@ func TestAllOraclesPassAcrossAllPersonas(t *testing.T) {
 
 func TestExplorerRunnerWinsGameOrganicallyWithoutTeleports(t *testing.T) {
 	ep := RunEpisode(Config{
-		Seed:    444004,
+		Seed:    defaultPlaytestSeed,
 		Persona: PersonaExplorerRunner,
 		Ticks:   600,
-		Actors:  8,
+		Actors:  game.TargetActorCount,
 	})
 	if ep.TeleportsUsed != 0 {
 		t.Fatalf("expected 0 teleports, got %d", ep.TeleportsUsed)

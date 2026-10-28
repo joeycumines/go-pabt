@@ -30,6 +30,16 @@ type Runner struct {
 	// 3=void. Power-ups change it; the pulse uses it for elemental
 	// advantage against actors.
 	Element int
+	// InvulnTicks is the remaining damage grace period after a hit. Damage
+	// from every source is ignored while it is positive, bounding the rate
+	// at which overlapping enemies and hazards can drain HP.
+	InvulnTicks int
+	// LastDamageRound is the authoritative round of the most recent hit,
+	// used to start out-of-combat regeneration after a quiet window.
+	LastDamageRound int
+	// LastAttacker is the ID of the actor that last damaged the runner
+	// (empty for environmental sources).
+	LastAttacker string
 }
 
 // StunDuration is the number of ticks a minotaur stays stunned.

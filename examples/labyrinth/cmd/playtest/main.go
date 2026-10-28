@@ -16,7 +16,7 @@ import (
 
 func main() {
 	personaFlag := flag.String("persona", "all", "persona to run (explorer_runner, combat_hunter, stealth_baiter, element_tactician, chaos_stress, or all)")
-	seedFlag := flag.Uint64("seed", 444004, "deterministic maze and game seed")
+	seedFlag := flag.Uint64("seed", 6, "deterministic maze and game seed")
 	ticksFlag := flag.Int("ticks", 450, "number of 30Hz ticks to simulate per episode")
 	actorsFlag := flag.Int("actors", game.TargetActorCount, "initial actor count")
 	outDirFlag := flag.String("out", "", "optional directory to write report.md, report.json, and trajectory.svg")

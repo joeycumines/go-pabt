@@ -155,7 +155,7 @@ func (g *Game) tickHazards(w *world.World) {
 		if h.DamageCooldown <= 0 {
 			h.DamageCooldown = HazardDamageInterval
 			if distSq(h.Pos, w.Runner.Pos) < HazardRadius*HazardRadius {
-				w.Runner.HP -= HazardDamage
+				g.damageRunner(w, HazardDamage, "hazard", h.Pos, "")
 			}
 			for _, m := range w.Minotaurs {
 				if m.HP > 0 && distSq(h.Pos, m.Pos) < HazardRadius*HazardRadius {
@@ -393,56 +393,6 @@ func (g *Game) separateActors(w *world.World) {
 			b.Pos.Y += uy * push
 			a.Pos = g.Maze.Resolve(a.Pos, maze.Radius)
 			b.Pos = g.Maze.Resolve(b.Pos, maze.Radius)
-		}
-	}
-}
-
-// I3: separateRunnerFromActors pushes the runner and each overlapping actor
-// apart by a mass-ratio impulse. The runner's position is then synced back
-// to every active session's authoritative netcode state so reconciliation
-// matches the physical push. Pure world-level separation runs regardless of
-// whether any sessions are connected (keeps tests and headless use honest).
-func (g *Game) separateRunnerFromActors(w *world.World) {
-	for i := 0; i < len(w.Minotaurs); i++ {
-		a := w.Minotaurs[i]
-		if a.HP <= 0 {
-			continue
-		}
-		dx := a.Pos.X - w.Runner.Pos.X
-		dy := a.Pos.Y - w.Runner.Pos.Y
-		d2 := dx*dx + dy*dy
-		if d2 >= RunnerActorSeparation*RunnerActorSeparation {
-			continue
-		}
-		d := math.Sqrt(d2)
-		if d < 1e-9 {
-			d = 1e-9
-			dx, dy = 1e-9, 0
-		}
-		ux, uy := dx/d, dy/d
-		push := RunnerActorSeparation - d
-		aMass := actorMass(ActorType(a.Type))
-		totalMass := RunnerMass + aMass
-		// Runner pushed opposite to the actor direction (away).
-		runnerPush := push * (aMass / totalMass)
-		w.Runner.Pos.X -= ux * runnerPush
-		w.Runner.Pos.Y -= uy * runnerPush
-		actorPush := push * (RunnerMass / totalMass)
-		a.Pos.X += ux * actorPush
-		a.Pos.Y += uy * actorPush
-		// Re-resolve both against the maze so a push never shoves either
-		// body into a wall. cbd0ef3 dropped this clamp on evidence from a
-		// test that never ran; restored 2026-10-13.
-		w.Runner.Pos = g.Maze.Resolve(w.Runner.Pos, maze.Radius)
-		a.Pos = g.Maze.Resolve(a.Pos, maze.Radius)
-	}
-	// Sync authoritative runner position back to every active session so
-	// the reconciliation target includes the knockback displacement.
-	g.sessMu.RLock()
-	defer g.sessMu.RUnlock()
-	for _, sess := range g.sessions {
-		if sess != nil && sess.Net != nil {
-			sess.Net.Pos = w.Runner.Pos
 		}
 	}
 }

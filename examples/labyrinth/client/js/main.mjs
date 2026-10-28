@@ -114,6 +114,8 @@ let firePending = null; // {yaw, pitch} of a shot waiting for the next tick
 let muzzleFlashTimer = 0;
 let hitFlashTimer = 0;
 let damageFlashTimer = 0; // red flash when player takes damage
+let damageDirTimer = 0; // seconds the directional damage arc stays visible
+let damageDirX = 0, damageDirZ = -1; // world-space unit direction to the damage source
 
 // Position reconciliation
 let serverPos = null; // last server position for reconciliation
@@ -430,6 +432,20 @@ function frame(time) {
     // Hit-flash overlay (server-confirmed stun feedback).
     const hf = document.getElementById('hit-flash');
     if (hf) hf.hidden = hitFlashTimer <= 0 && damageFlashTimer <= 0;
+
+    // Directional damage arc: keep it pointed at the source while the player
+    // turns, then fade it out after one second.
+    const dd = document.getElementById('damage-dir');
+    if (dd) {
+        if (damageDirTimer > 0) {
+            damageDirTimer = Math.max(0, damageDirTimer - dt);
+            dd.hidden = false;
+            dd.style.transform = 'rotate(' + relativeBearing(camera.yaw, damageDirX, damageDirZ) + 'rad)';
+            dd.style.opacity = String(Math.min(1, damageDirTimer / 0.25));
+        } else {
+            dd.hidden = true;
+        }
+    }
 
     requestAnimationFrame(frame);
 }
@@ -1121,11 +1137,24 @@ function handleEvent(evt) {
             }
             break;
         }
-        case 'hit':
+        case 'hit': {
             damageFlashTimer = 10;
+            // D5: point the damage arc at the source. x/y are the attacker's
+            // world position (hazard, bolt origin or the mob that hit).
+            if (evt.data && Number.isFinite(evt.data.x) && Number.isFinite(evt.data.y)) {
+                const dx = evt.data.x - camera.pos[0];
+                const dz = evt.data.y - camera.pos[2];
+                const len = Math.hypot(dx, dz);
+                if (len > 0.01) {
+                    damageDirX = dx / len;
+                    damageDirZ = dz / len;
+                }
+            }
+            damageDirTimer = 1;
             // R3: trigger screen shake on player damage.
             applyScreenShake(0.05, 0.2);
             break;
+        }
         case 'spawn':
             // H5: Wave announcement banner.
             if (evt.data && evt.data.intensity !== undefined) {

@@ -35,7 +35,7 @@ func TestActorMassTable(t *testing.T) {
 // longer stand inside an enemy with no physical consequence beyond HP loss.
 func TestContactKnockbackDisplacesBoth(t *testing.T) {
 	// Use a simple open-cell maze fragment so Resolve doesn't clamp.
-	m := &maze.Maze{W: 21, H: 21, Grid: make([]maze.Cell, 21*21)}
+	m := floorMaze(21, 21)
 	w := world.New(m)
 	w.Runner.Pos = maze.Vec2{X: 10.0, Y: 10.0}
 	w.Runner.HP = 100
@@ -71,7 +71,11 @@ func TestContactKnockbackDisplacesBoth(t *testing.T) {
 	if actorDist < 0.01 {
 		t.Fatalf("actor should have been nudged by contact knockback, got %v", actorDist)
 	}
-	// Brute is 3x player mass, so actor push must be < runner push.
+	// Runner knockback is capped, but the brute's mass-ratio share is still
+	// smaller than the runner's share.
+	if runnerDist > RunnerKnockbackMax+1e-9 {
+		t.Fatalf("runner knockback %v exceeds the %v cap", runnerDist, RunnerKnockbackMax)
+	}
 	if actorDist >= runnerDist {
 		t.Fatalf("brute (heavy) must move less than runner (light): actor=%v runner=%v", actorDist, runnerDist)
 	}
@@ -81,7 +85,7 @@ func TestContactKnockbackDisplacesBoth(t *testing.T) {
 // actor along the shot direction via the mass-ratio knockback. This test
 // exercises the actual FirePulse code path (not a duplicated formula).
 func TestPulseKnockbackPushesActorAway(t *testing.T) {
-	m := &maze.Maze{W: 21, H: 21, Grid: make([]maze.Cell, 21*21)}
+	m := floorMaze(21, 21)
 	w := world.New(m)
 	w.Runner.Pos = maze.Vec2{X: 10.0, Y: 10.0}
 
@@ -123,7 +127,7 @@ func TestPulseKnockbackPushesActorAway(t *testing.T) {
 // a player standing on top of an actor apart before contact damage triggers,
 // so the player can never remain embedded inside an enemy between ticks.
 func TestSeparateRunnerFromActorsOverlapping(t *testing.T) {
-	m := &maze.Maze{W: 21, H: 21, Grid: make([]maze.Cell, 21*21)}
+	m := floorMaze(21, 21)
 	w := world.New(m)
 	w.Runner.Pos = maze.Vec2{X: 10.0, Y: 10.0}
 
@@ -142,7 +146,8 @@ func TestSeparateRunnerFromActorsOverlapping(t *testing.T) {
 	g.separateRunnerFromActors(w)
 
 	dist := math.Hypot(w.Runner.Pos.X-caster.Pos.X, w.Runner.Pos.Y-caster.Pos.Y)
-	if dist < RunnerActorSeparation*0.9 {
-		t.Fatalf("overlapping runner+actor should have been separated to >= %v, got %v", RunnerActorSeparation*0.9, dist)
+	want := maze.Radius + actorBodyRadius(ActorCaster)
+	if dist < want*0.99 {
+		t.Fatalf("overlapping runner+actor should have been separated to >= %v (body radii), got %v", want, dist)
 	}
 }

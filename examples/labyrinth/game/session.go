@@ -5,7 +5,6 @@ package game
 import (
 	"crypto/rand"
 	"encoding/hex"
-	"math"
 	mrand "math/rand"
 	"strconv"
 	"sync"
@@ -406,16 +405,7 @@ func (g *Game) tickLogic(w *world.World) {
 		b.UpdateWorldView(snap, m)
 		b.Tick("tick")
 		if tel := b.LastTelemetry(); tel.CastBolt && w.Round%30 == 0 {
-			w.Runner.HP -= 2
-			g.broadcastEvent(Event{
-				Type: "bolt",
-				Data: map[string]interface{}{
-					"id":      m.ID,
-					"element": m.Element,
-					"x":       m.Pos.X,
-					"y":       m.Pos.Y,
-				},
-			})
+			g.casterBolt(w, m)
 		}
 		afterBrainPos[i] = m.Pos
 
@@ -563,6 +553,16 @@ func (g *Game) tickLogic(w *world.World) {
 // Every timer that gates repeated behavior decays here, on the writer
 // goroutine, so none can latch closed forever.
 func (g *Game) tickTimers(w *world.World) {
+	if w.Runner.InvulnTicks > 0 {
+		w.Runner.InvulnTicks--
+	}
+	// Out-of-combat regeneration: after six seconds without damage, one HP
+	// returns every half second. Never revives a dead runner.
+	if w.Runner.HP > 0 && w.Runner.HP < world.MaxHP &&
+		w.Round-w.Runner.LastDamageRound >= RegenDelayTicks &&
+		w.Round%RegenIntervalTicks == 0 {
+		w.Runner.HP++
+	}
 	for i, m := range w.Minotaurs {
 		if m.Stunned {
 			m.StunTicks--
@@ -686,6 +686,9 @@ func (g *Game) submitWorldResetIfTerminal(sess *PlayerSession) {
 		w.Runner.HP = world.MaxHP
 		w.Runner.Element = 0
 		w.Runner.Grounded = true
+		w.Runner.InvulnTicks = 0
+		w.Runner.LastDamageRound = 0
+		w.Runner.LastAttacker = ""
 		// Rebuild the actor roster from scratch: fresh HP, no stun, full
 		// faction balance. Clear brains/histories/states so spawnActor
 		// rebuilds them aligned with the new Minotaurs slice.
@@ -843,59 +846,11 @@ func (g *Game) ApplyInput(id SessionID, cmd netcode.InputCmd) {
 		if w.Phase != world.PhaseRunning {
 			return
 		}
+		prevPos := sess.Net.Pos
 		sess.Net.ApplyInput(g.Maze, cmd, loop.TickInterval.Seconds())
+		sess.Net.Pos = g.resolveRunnerAgainstActors(w, prevPos, sess.Net.Pos)
 		w.Runner.Pos = sess.Net.Pos
 		w.Runner.Yaw = sess.Net.Yaw
 		w.Runner.Pitch = sess.Net.Pitch
 	})
-}
-
-// tickContactDamage applies contact damage and mass-ratio knockback between
-// the runner and every non-stunned actor within 0.7u. Pulled out of the
-// brain loop so separation/damage applies to the world state regardless of
-// brain iteration state (keeps the logic testable without a live brain).
-func (g *Game) tickContactDamage(w *world.World) {
-	for _, m := range w.Minotaurs {
-		if m.HP <= 0 || m.Stunned || m.AttackCooldown > 0 {
-			continue
-		}
-		dx := m.Pos.X - w.Runner.Pos.X
-		dy := m.Pos.Y - w.Runner.Pos.Y
-		if dx*dx+dy*dy >= 0.7*0.7 {
-			continue
-		}
-		dmg := actorDamage(ActorType(m.Type))
-		w.Runner.HP -= dmg
-		m.AttackCooldown = 30 // 1 second cooldown at 30Hz
-		// I3: knockback on contact — both bodies pushed apart by the
-		// mass-ratio impulse. Runner flies away from the actor; the actor
-		// is nudged in the opposite direction.
-		d := math.Hypot(dx, dy)
-		if d < 1e-9 {
-			d = 1e-9
-			dx, dy = 1e-9, 0
-		}
-		ux, uy := dx/d, dy/d
-		aMass := actorMass(ActorType(m.Type))
-		totalMass := RunnerMass + aMass
-		runnerPush := ContactKnockback * (aMass / totalMass)
-		w.Runner.Pos.X -= ux * runnerPush
-		w.Runner.Pos.Y -= uy * runnerPush
-		actorPush := ContactKnockback * (RunnerMass / totalMass)
-		m.Pos.X += ux * actorPush
-		m.Pos.Y += uy * actorPush
-		// Resolve both against the maze so knockback never pushes either
-		// body into a wall. Without this, contact near a corridor edge
-		// shoves entities through solid geometry.
-		w.Runner.Pos = g.Maze.Resolve(w.Runner.Pos, maze.Radius)
-		m.Pos = g.Maze.Resolve(m.Pos, maze.Radius)
-		g.broadcastEvent(Event{
-			Type: "hit",
-			Data: map[string]interface{}{
-				"damage":    dmg,
-				"hp":        w.Runner.HP,
-				"knockback": true,
-			},
-		})
-	}
 }
