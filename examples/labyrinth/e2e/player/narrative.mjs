@@ -12,6 +12,7 @@
 import { playing, sampleAt, eventTimes, fmt } from './detectors/common.mjs';
 import { onScreen, feelProfile } from './detectors/feel.mjs';
 import { renderTruth } from './detectors/truth.mjs';
+import { pilotRealismProfile } from './detectors/control.mjs';
 
 const KIND = { B: 'Brute', S: 'Swarm', C: 'Caster', K: 'Stalker' };
 const kind = (id) => KIND[String(id)[0]] || 'enemy';
@@ -154,5 +155,12 @@ export function plainVerdicts(tl, grid) {
     const jumped = p.teleports.filter((x) => x.visible).length;
     v.push(`Enemies popping in/out in view: ${popped}; visible teleports: ${jumped} - ${popped + jumped ? 'BAD: things should not appear from nothing' : 'OK'}.`);
     if (r) v.push(`Where enemies are drawn vs where the server has them: median ${fmt(r.medianErrU)}u apart, ${r.pctOver1u}% of the time more than 1u apart - ${r.medianErrU > 1 ? 'BAD: the player is looking at a picture that is not the game' : r.p95ErrU > 1 ? 'WEAK' : 'OK'}.`);
+    const pr = pilotRealismProfile(tl, grid);
+    if (pr) {
+        const wOk = pr.maxWDownsIn5s <= 6;
+        const cOk = pr.turretBouts.length === 0;
+        const oOk = pr.omniscientTargets.length === 0;
+        v.push(`Pilot realism: max ${pr.maxWDownsIn5s} W-presses in 5s (${wOk ? 'OK: continuous forward movement' : 'BAD: robotic stop-and-go W micro-toggling'}); combat movement ${pr.combatBouts === 0 ? 'n/a (no multi-shot bouts)' : `${pr.combatBouts - pr.turretBouts.length}/${pr.combatBouts} bouts with strafing/kiting, min displacement ${pr.minCombatDispU}u (${cOk ? 'OK' : 'BAD: stationary turret shooting'})`}; target perception ${oOk ? 'OK (all targets on-screen or within radar)' : `BAD (${pr.omniscientTargets.length} omniscient target locks)`}.`);
+    }
     return v;
 }

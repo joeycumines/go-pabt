@@ -11,7 +11,7 @@
 import { horizontalShift } from '../image.mjs';
 import { finding, playing, sampleAt, marksOf, between, eventTimes, fmt, hudMasks } from './common.mjs';
 import { wrapAngle } from '../maze.mjs';
-import { hfov } from './feel.mjs';
+import { hfov, onScreen } from './feel.mjs';
 
 const RAD_PER_PX = 0.002; // camera.mjs mouse sensitivity (only used to size the expected screen shift)
 
@@ -315,4 +315,116 @@ export function detectKnockback(tl) {
         evidence: { hitsJudged: pushes.length, over1_6u: big.length, worstU: fmt(worst.d), from: worst.from.map((v) => +v.toFixed(2)), to: worst.to.map((v) => +v.toFixed(2)), hp: `${worst.hpFrom}->${worst.hpTo}` },
         detail: 'Consecutive contact hits chain their knockback, launching the player through the maze (and into walls) while HP drains.',
     })];
+}
+
+// pilotRealismProfile computes summary metrics for how human-like the pilot's
+// inputs and combat movement were during active play (excluding calibration
+// probe segments).
+export function pilotRealismProfile(tl, grid = null) {
+    const ps = playing(tl).filter((s) => s.gs === 'playing');
+    const M = tl.marks || [];
+    let seg = '';
+    const activeWDowns = [];
+    for (const m of M) {
+        if (m.kind === 'segment') seg = m.name || '';
+        if (seg === 'controls' || seg === 'look-around' || seg === 'alt-tab-while-moving') continue;
+        if (m.kind === 'keydown' && m.key === 'w') activeWDowns.push(m.t);
+    }
+    let maxWDownsIn5s = 0, maxWWindowT = null;
+    for (let i = 0; i < activeWDowns.length; i++) {
+        let j = i;
+        while (j < activeWDowns.length && activeWDowns[j] - activeWDowns[i] <= 5000) j++;
+        const count = j - i;
+        if (count > maxWDownsIn5s) {
+            maxWDownsIn5s = count;
+            maxWWindowT = activeWDowns[i];
+        }
+    }
+
+    const clicks = M.filter((m) => m.kind === 'click');
+    const combatBouts = [];
+    for (let i = 0; i < clicks.length; i++) {
+        let j = i;
+        while (j + 1 < clicks.length && clicks[j + 1].t - clicks[i].t <= 2600) j++;
+        const count = j - i + 1;
+        if (count >= 3 && clicks[j].t - clicks[i].t >= 900) {
+            const t0 = clicks[i].t - 100, t1 = clicks[j].t + 200;
+            const win = between(ps, t0, t1);
+            let path = 0;
+            for (let k = 1; k < win.length; k++) {
+                path += Math.hypot(win[k].pos[0] - win[k - 1].pos[0], win[k].pos[2] - win[k - 1].pos[2]);
+            }
+            const moveKeys = M.filter((m) => m.t >= t0 && m.t <= t1 && (m.kind === 'keydown' || m.kind === 'keyup') && ['w', 'a', 's', 'd'].includes(m.key)).length;
+            const enemyNear = win.some((s) => (s.actors || []).some((a) => a.hp > 0 && Math.hypot(a.x - s.pos[0], a.z - s.pos[2]) <= 6.5));
+            if (enemyNear) combatBouts.push({ t0: clicks[i].t, t1: clicks[j].t, shots: count, pathU: path, moveKeys });
+            i = j;
+        }
+    }
+
+    const omniscientTargets = [];
+    if (grid) {
+        for (const m of M) {
+            if (m.kind !== 'engage' || !m.id) continue;
+            const win = between(ps, m.t - 2000, m.t + 100);
+            const cur = sampleAt(ps, m.t);
+            const actorNow = cur && (cur.actors || []).find((a) => a.id === m.id);
+            const distNow = actorNow && cur ? Math.hypot(actorNow.x - cur.pos[0], actorNow.z - cur.pos[2]) : (typeof m.d === 'number' ? m.d : Infinity);
+            const seenOnScreen = win.some((s) => {
+                const a = (s.actors || []).find((x) => x.id === m.id && x.hp > 0);
+                return a && onScreen(grid, s, a);
+            });
+            const inRadar = distNow <= 6.5 || win.some((s) => {
+                const a = (s.actors || []).find((x) => x.id === m.id && x.hp > 0);
+                return a && Math.hypot(a.x - s.pos[0], a.z - s.pos[2]) <= 6.5;
+            });
+            if (!seenOnScreen && !inRadar) {
+                omniscientTargets.push({ t: m.t, id: m.id, distU: fmt(distNow) });
+            }
+        }
+    }
+
+    return {
+        maxWDownsIn5s,
+        maxWWindowT,
+        combatBouts: combatBouts.length,
+        turretBouts: combatBouts.filter((b) => b.pathU < 0.25 && b.moveKeys === 0),
+        minCombatDispU: combatBouts.length ? +Math.min(...combatBouts.map((b) => b.pathU)).toFixed(2) : null,
+        omniscientTargets,
+    };
+}
+
+// detectPilotRealism (D19) audits whether the playtest pilot acted like a
+// human player rather than a robotic script:
+//   - D19a: rapid W-key micro-toggling (> 6 W keydowns within 5s of navigation)
+//   - D19b: stationary turret combat (>= 3 shots over >= 0.9s with < 0.25u
+//           movement and no movement keys while an enemy is within 6.5u)
+//   - D19c: omniscient target lock (engaging an enemy outside screen FOV+LOS
+//           and outside 6.5u minimap radar awareness)
+export function detectPilotRealism(tl, grid = null) {
+    const p = pilotRealismProfile(tl, grid);
+    const out = [];
+    if (p.maxWDownsIn5s > 6) {
+        out.push(finding('D19', 'S2', 'Pilot behavior is robotic: rapid W-key micro-toggling while steering', {
+            t: p.maxWWindowT, until: p.maxWWindowT + 5000,
+            evidence: { wKeydownsIn5s: p.maxWDownsIn5s },
+            detail: 'A human player holds W continuously while steering through corridors with the mouse; releasing and re-pressing W on every minor heading adjustment is robotic stop-and-go slop.',
+        }));
+    }
+    if (p.turretBouts.length) {
+        const b = p.turretBouts[0];
+        out.push(finding('D19', 'S2', 'Pilot behavior is robotic: standing completely still like a turret during combat', {
+            t: b.t0, until: b.t1,
+            evidence: { turretBouts: p.turretBouts.length, totalBouts: p.combatBouts, shots: b.shots, playerMovedU: fmt(b.pathU) },
+            detail: 'The pilot fired 3+ consecutive shots at a nearby enemy without strafing, backing up, or repositioning.',
+        }));
+    }
+    if (p.omniscientTargets.length) {
+        const o = p.omniscientTargets[0];
+        out.push(finding('D19', 'S2', 'Pilot behavior is robotic: targeting an enemy outside human perception', {
+            t: o.t,
+            evidence: { count: p.omniscientTargets.length, targetId: o.id, distU: o.distU },
+            detail: 'The pilot engaged an enemy that was neither visible on screen (FOV + wall-clear LOS) nor within local minimap/threat radar awareness (<= 6.5u).',
+        }));
+    }
+    return out;
 }

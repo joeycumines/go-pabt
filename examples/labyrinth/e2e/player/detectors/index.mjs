@@ -3,7 +3,7 @@
 import { Grid } from '../maze.mjs';
 import { FrameStore, finding } from './common.mjs';
 import { detectIllegibleView, detectFrozenScreen } from './view.mjs';
-import { detectControls, detectLook, detectSnaps, detectStalls, detectStuckKey, detectKnockback } from './control.mjs';
+import { detectControls, detectLook, detectSnaps, detectStalls, detectStuckKey, detectKnockback, detectPilotRealism } from './control.mjs';
 import { detectCrosshair, detectHpTruth, detectSilentDamage, detectLayering } from './hud.mjs';
 import { detectEmbeddedActors, detectPlayerInWall, detectShots, detectFlow, detectHealth } from './world.mjs';
 import { detectRenderTruth } from './truth.mjs';
@@ -53,6 +53,7 @@ export function runDetectors(tl, runDir) {
         ...detectEngagement(tl, grid),
         ...detectGhosts(tl),
         ...detectRenderTruth(tl),
+        ...detectPilotRealism(tl, grid),
     ];
     const rank = { S1: 0, S2: 1, S3: 2 };
     return all.sort((a, b) => rank[a.severity] - rank[b.severity] || (a.t || 0) - (b.t || 0));

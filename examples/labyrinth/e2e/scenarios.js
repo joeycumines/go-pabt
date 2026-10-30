@@ -517,15 +517,19 @@ export default [
                 await waitForReady(ctx.page, 20000, 'actor contact reload');
                 await ctx.page.waitForTimeout(1000);
             }
-            await ctx.page.evaluate(() => {
-                const a = window.__ariadne;
-                const act = a.actors[0];
-                a.teleport(act.pos[0], act.pos[2]);
-            });
-            await ctx.page.waitForFunction(() => {
-                const a = window.__ariadne;
-                return a.hp < 100 || a.gameState === 'caught';
-            }, undefined, { timeout: 8000 });
+            const deadline = Date.now() + 8000;
+            let hit = false;
+            while (Date.now() < deadline && !hit) {
+                hit = await ctx.page.evaluate(() => {
+                    const a = window.__ariadne;
+                    if (a.hp < 100 || a.gameState === 'caught') return true;
+                    const live = a.actors.filter(x => x.hp > 0 && !x.stunned);
+                    const act = live.find(x => x.element !== a.playerElement) || live[0] || a.actors[0];
+                    if (act) a.teleport(act.pos[0], act.pos[2]);
+                    return false;
+                });
+                if (!hit) await ctx.page.waitForTimeout(150);
+            }
             const s = await ctx.page.evaluate(() => ({ hp: window.__ariadne.hp, gs: window.__ariadne.gameState }));
             if (s.hp === 100 && s.gs !== 'caught') throw new Error(`no damage: hp ${s.hp}`);
         },

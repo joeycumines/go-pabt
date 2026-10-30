@@ -139,14 +139,34 @@ export function installProbe(opts) {
 
     // read returns plain data only (no methods): what the pilot is allowed
     // to know - its own position/heading/HP, the maze (= the minimap) and the
-    // enemies it could locate on screen or minimap.
+    // enemies it could locate on screen (FOV + wall-clear LOS) or on the
+    // local minimap/threat radar (within 6.0u).
     pe.read = () => {
         const a = raw;
         if (!a) return null;
+        const pos = a.playerPos || [0, 0, 0];
+        const yaw = a.playerYaw || 0;
+        const fx = Math.sin(yaw), fz = Math.cos(yaw);
+        const vfov = ((a.cameraFov || 70) * Math.PI) / 180;
+        const aspect = innerWidth / Math.max(1, innerHeight);
+        const halfHfov = Math.atan(Math.tan(vfov / 2) * aspect) + 0.08;
+        const actors = [];
+        for (const x of a.actors || []) {
+            if (!x || !x.pos) continue;
+            const dx = x.pos[0] - pos[0], dz = x.pos[2] - pos[2];
+            const d = Math.hypot(dx, dz);
+            const ang = d > 1e-4 ? Math.acos(Math.max(-1, Math.min(1, (dx * fx + dz * fz) / d))) : 0;
+            const clear = typeof a.losClear === 'function' ? a.losClear(pos[0], pos[2], x.pos[0], x.pos[2]) : true;
+            const onScreen = d <= 15 && ang <= halfHfov && clear;
+            const inRadar = d <= 6.0;
+            if (onScreen || inRadar) {
+                actors.push({ id: x.id, x: x.pos[0], y: x.pos[1], z: x.pos[2], hp: x.hp, st: x.stunned, el: x.element, onScreen });
+            }
+        }
         return {
-            gs: a.gameState, pos: a.playerPos, yaw: a.playerYaw, hp: a.hp, round: a.round,
+            gs: a.gameState, pos, yaw, hp: a.hp, round: a.round,
             locked: !!document.pointerLockElement,
-            actors: a.actors.map((x) => ({ id: x.id, x: x.pos[0], y: x.pos[1], z: x.pos[2], hp: x.hp, st: x.stunned, el: x.element })),
+            actors,
             grid: a.mazeGrid ? { w: a.mazeSize[0], h: a.mazeSize[1], cells: a.mazeGrid, gate: a.gate } : null,
         };
     };

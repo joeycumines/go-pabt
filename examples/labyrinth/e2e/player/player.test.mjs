@@ -17,7 +17,7 @@ import { decodePng, viewMetrics, horizontalShift } from './image.mjs';
 import { Grid, WALL, FLOOR, GAP } from './maze.mjs';
 import { FrameStore } from './detectors/common.mjs';
 import { VIEW, WEAPON, isIllegible, detectIllegibleView, detectFrozenScreen } from './detectors/view.mjs';
-import { detectControls, detectLook, detectSnaps, detectStalls, detectStuckKey, detectKnockback } from './detectors/control.mjs';
+import { detectControls, detectLook, detectSnaps, detectStalls, detectStuckKey, detectKnockback, detectPilotRealism } from './detectors/control.mjs';
 import { detectCrosshair, detectSilentDamage, detectLayering, detectHpTruth } from './detectors/hud.mjs';
 import { detectFlow, detectPlayerInWall, detectShots, detectEmbeddedActors, detectHealth } from './detectors/world.mjs';
 import { detectBodyCollision, detectGhosts, detectEngagement, detectUnseenDamage, detectGunImpact } from './detectors/feel.mjs';
@@ -488,17 +488,34 @@ test('in-page probe: calling __ariadne.teleport() is recorded as a violation, re
         await page.addInitScript(installProbe, { rafGapMs: 100, domEveryMs: 100 });
         // Init scripts run on navigation, as they do for the real game page.
         await page.route('http://probe.test/', (route) => route.fulfill({ contentType: 'text/html', body: `<canvas id="glcanvas"></canvas><script>
-            window.__ariadne = { get hp() { return 42; }, teleport() { window.__teleported = true; }, bots: { load() {} } };
+            window.__ariadne = {
+                get hp() { return 42; },
+                get playerPos() { return [1.5, 0.5, 1.5]; },
+                get playerYaw() { return 0; },
+                get cameraFov() { return 70; },
+                losClear(x0, z0, x1, z1) { return z1 < 10; },
+                get actors() {
+                    return [
+                        { id: 'V-1', pos: [1.5, 0.5, 4.5], hp: 20, stunned: false, element: 0 }, // on-screen + LOS
+                        { id: 'R-1', pos: [1.5, 0.5, 0.2], hp: 20, stunned: false, element: 1 }, // behind player but <= 6.0u radar
+                        { id: 'F-1', pos: [18.5, 0.5, 18.5], hp: 20, stunned: false, element: 2 }, // far + occluded: excluded from __pe.read
+                    ];
+                },
+                teleport() { window.__teleported = true; },
+                bots: { load() {} },
+            };
             window.__wsIsTap = new WebSocket('ws://127.0.0.1:9/') instanceof WebSocket && WebSocket.OPEN === 1;
             window.__read = window.__ariadne.hp;
+            window.__peReadIds = window.__pe.read().actors.map((a) => a.id);
             window.__ariadne.teleport(1, 2);
             window.__ariadne.bots.load('x');
         </script>` }));
         await page.goto('http://probe.test/');
-        const r = await page.evaluate(() => ({ v: window.__pe.drain().violations.map((x) => x.what), read: window.__read, did: window.__teleported, ws: window.__wsIsTap, raw: 'raw' in window.__pe }));
+        const r = await page.evaluate(() => ({ v: window.__pe.drain().violations.map((x) => x.what), read: window.__read, peReadIds: window.__peReadIds, did: window.__teleported, ws: window.__wsIsTap, raw: 'raw' in window.__pe }));
         assert.equal(r.ws, true, 'the wire tap keeps WebSocket instanceof and statics intact');
         assert.equal(r.raw, false, 'the unguarded game object is not reachable from the page');
         assert.equal(r.read, 42);
+        assert.deepEqual(r.peReadIds, ['V-1', 'R-1'], '__pe.read filters out actors outside screen FOV+LOS and outside 6u radar');
         assert.equal(r.did, true, 'the guard records but does not break the call');
         assert.deepEqual(r.v, ['__ariadne.teleport()', '__ariadne.bots.load()']);
     } finally {
@@ -513,4 +530,56 @@ test('runDetectors and the diary run end-to-end on a synthetic journey', () => {
     assert.ok(Array.isArray(f));
     const lines = diary(t, new Grid(7, 7, grid().cells), f);
     assert.ok(lines.some((l) => l.includes('you press W')));
+});
+
+test('D19: rapid W micro-toggling, stationary turret combat, and omniscient targeting are reported; human-like continuous walking and kiting pass', () => {
+    const g = new Grid(7, 7, grid().cells);
+
+    // 1. Rapid W micro-toggling (> 6 W keydowns in 5s during active navigation)
+    const wMarks = [{ t: 100, kind: 'segment', name: 'leave-spawn' }];
+    for (let i = 0; i < 8; i++) {
+        wMarks.push({ t: 500 + i * 400, kind: 'keydown', key: 'w' }, { t: 650 + i * 400, kind: 'keyup', key: 'w' });
+    }
+    const wBad = tl({ marks: wMarks, samples: [S(0), S(4000)] });
+    assert.ok(detectPilotRealism(wBad, g).some((f) => f.id === 'D19' && /micro-toggling/.test(f.title)));
+
+    // Continuous W hold passes
+    const wGood = tl({
+        marks: [{ t: 100, kind: 'segment', name: 'leave-spawn' }, { t: 200, kind: 'keydown', key: 'w' }, { t: 4500, kind: 'keyup', key: 'w' }],
+        samples: [S(0), S(4600)],
+    });
+    assert.deepEqual(detectPilotRealism(wGood, g), []);
+
+    // 2. Stationary turret combat (3+ shots over >=0.9s with <0.25u movement and no movement keys while enemy is near)
+    const turretMarks = [
+        { t: 100, kind: 'segment', name: 'hunt' },
+        { t: 1000, kind: 'click' },
+        { t: 1550, kind: 'click' },
+        { t: 2100, kind: 'click' },
+    ];
+    const nearEnemy = [{ id: 'B-1', x: 1.5, z: 4.0, hp: 30 }];
+    const turretSamples = [800, 1000, 1550, 2100, 2400].map((t) => S(t, { pos: [1.5, 0.5, 1.5], yaw: 0, actors: nearEnemy }));
+    const turretBad = tl({ marks: turretMarks, samples: turretSamples });
+    assert.ok(detectPilotRealism(turretBad, g).some((f) => f.id === 'D19' && /turret/.test(f.title)));
+
+    // Strafing/kiting during combat passes
+    const kiteMarks = [
+        { t: 100, kind: 'segment', name: 'hunt' },
+        { t: 1000, kind: 'keydown', key: 'd' },
+        { t: 1050, kind: 'click' },
+        { t: 1400, kind: 'keyup', key: 'd' },
+        { t: 1550, kind: 'keydown', key: 'a' },
+        { t: 1600, kind: 'click' },
+        { t: 1950, kind: 'keyup', key: 'a' },
+        { t: 2150, kind: 'click' },
+    ];
+    const kiteSamples = [800, 1050, 1600, 2150, 2400].map((t, i) => S(t, { pos: [1.5 + (i % 2) * 0.4, 0.5, 1.5], yaw: 0, actors: nearEnemy }));
+    const kiteGood = tl({ marks: kiteMarks, samples: kiteSamples });
+    assert.deepEqual(detectPilotRealism(kiteGood, g), []);
+
+    // 3. Omniscient target lock (engaging an enemy behind a wall and > 6.5u away)
+    const farEnemy = [{ id: 'C-9', x: 5.5, z: 5.5, hp: 25 }]; // dist from (1.5, 1.5) is ~5.65u; let's place player at (1.1, 1.1) and enemy at (5.9, 5.9) -> dist = 6.79u, wall at x=3 blocks LOS
+    const omniSamples = [500, 1000, 1500, 2000].map((t) => S(t, { pos: [1.1, 0.5, 1.1], yaw: 0, actors: [{ id: 'C-9', x: 5.9, z: 5.9, hp: 25 }] }));
+    const omniBad = tl({ marks: [{ t: 2000, kind: 'engage', id: 'C-9', d: 6.79 }], samples: omniSamples });
+    assert.ok(detectPilotRealism(omniBad, g).some((f) => f.id === 'D19' && /outside human perception/.test(f.title)));
 });

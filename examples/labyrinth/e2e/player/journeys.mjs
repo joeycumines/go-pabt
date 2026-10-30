@@ -4,7 +4,7 @@
 // session.mark(); they never assert - judging is the detectors' job.
 
 import { Actuator } from './actuate.mjs';
-import { readPlayer, readGrid, faceYaw, walkTo, visibleActors, engage, yawTo, RAD_PER_PX } from './pilot.mjs';
+import { readPlayer, readGrid, faceYaw, walkTo, visibleActors, engage, exploreCorridors, yawTo, RAD_PER_PX } from './pilot.mjs';
 
 // enterGame goes through the real onboarding: read the tutorial, press Enter,
 // click into the game to take pointer lock. Returns whether lock was taken.
@@ -37,16 +37,19 @@ async function waitGrid(s) {
 }
 
 // controlsCheck is the "first ten seconds" a new player spends learning the
-// controls: look around, then tap each movement key in the most open
-// direction. The D2/D3 detectors judge these segments.
+// controls: glance left and right across the spawn corridor, then tap each
+// movement key in the most open direction. The D2/D3 detectors judge these
+// segments.
 async function controlsCheck(s, act, grid) {
-    // Look all the way round in small steps (~98px each), pausing between
-    // them: each step is a separate gesture whose on-screen shift (~75px at
-    // 640px wide) fits the D3 pixel-shift window.
+    // Glance left and right in 8 natural mouse sweeps (each ~90-115px so its
+    // expected screen shift of ~70-85px at 640px wide fits the D3 pixel-shift
+    // estimator's 20-110px window), pausing briefly between glances like a
+    // player checking their surroundings.
     s.mark('segment', { name: 'look-around' });
-    for (let i = 0; i < 32; i++) {
-        await act.look((Math.PI / 16) / RAD_PER_PX, 0, { steps: 4 });
-        await act.wait(250, 'look step');
+    const glances = [-0.22, -0.18, 0.24, 0.20, 0.22, -0.24, -0.18, 0.16];
+    for (const rad of glances) {
+        await act.look(rad / RAD_PER_PX, 0, { steps: 5, stepMs: 8 });
+        await act.wait(240, 'look step');
     }
     const p = await readPlayer(s.page);
     let best = { yaw: p.yaw, dist: 0 };
@@ -96,7 +99,8 @@ async function clickEndOverlay(s, act) {
 }
 
 export const JOURNEYS = {
-    // J1: cold start - first impression, onboarding, controls.
+    // J1: cold start - first impression, onboarding, controls, then explore
+    // outward while reacting to any visible threat in the corridor.
     async J1(s) {
         const act = new Actuator(s);
         s.mark('segment', { name: 'onboarding' });
@@ -106,17 +110,22 @@ export const JOURNEYS = {
         await act.wait(2000, 'taking in the first view');
         if (locked) await controlsCheck(s, act, grid);
         s.mark('segment', { name: 'leave-spawn' });
-        const r = await walkTo(act, s.page, grid, grid.gate[0], grid.gate[1], { timeoutMs: 15000 });
+        const r = await walkTo(act, s.page, grid, grid.gate[0], grid.gate[1], {
+            timeoutMs: 16000, defend: true,
+        });
         s.mark('result', r);
     },
 
-    // J2: escape - navigate to the gate, see the win screen, play again.
+    // J2: escape - navigate to the gate while defending against enemies that
+    // block the corridor, see the win screen, play again.
     async J2(s) {
         const act = new Actuator(s);
         await enterGame(s, act, { readMs: 1500 });
         const grid = await waitGrid(s);
         s.mark('segment', { name: 'run-to-gate' });
-        const r = await walkTo(act, s.page, grid, grid.gate[0], grid.gate[1], { timeoutMs: 180000, arrive: 0.2, sprint: true });
+        const r = await walkTo(act, s.page, grid, grid.gate[0], grid.gate[1], {
+            timeoutMs: 180000, arrive: 0.2, sprint: true, defend: true, defendRange: 3.8,
+        });
         s.mark('result', r);
         await act.wait(2500, 'reading the end screen');
         s.mark('segment', { name: 'play-again' });
@@ -129,7 +138,8 @@ export const JOURNEYS = {
         }
     },
 
-    // J3: fight - find enemies, aim with the mouse, click to fire.
+    // J3: fight - explore corridors to locate enemies by sight or minimap
+    // radar, then fight them with active strafing and kiting.
     async J3(s) {
         const act = new Actuator(s);
         await enterGame(s, act, { readMs: 1500 });
@@ -137,6 +147,7 @@ export const JOURNEYS = {
         s.mark('segment', { name: 'hunt' });
         const t0 = Date.now();
         const fired = [];
+        const visited = new Map();
         while (Date.now() - t0 < 70000) {
             const p = await readPlayer(s.page);
             if (!p || p.gs !== 'playing') break;
@@ -146,18 +157,22 @@ export const JOURNEYS = {
                 fired.push(...await engage(act, s.page, grid, vis[0].id, { shots: 4 }));
                 continue;
             }
-            const live = p.actors.filter((a) => a.hp > 0);
-            if (!live.length) { await act.wait(500); continue; }
-            const near = live.map((a) => ({ a, n: (grid.path(p.pos[0], p.pos[2], a.x, a.z) || { length: 1e9 }).length })).sort((x, y) => x.n - y.n)[0].a;
-            await walkTo(act, s.page, grid, near.x, near.z, {
-                timeoutMs: 6000, arrive: 2.5,
-                stopWhen: (q) => visibleActors(grid, q, 8).length > 0,
-            });
+            const radar = (p.actors || []).filter((a) => a.hp > 0);
+            if (radar.length) {
+                const near = radar.map((a) => ({ a, n: (grid.path(p.pos[0], p.pos[2], a.x, a.z) || { length: 1e9 }).length })).sort((x, y) => x.n - y.n)[0].a;
+                await walkTo(act, s.page, grid, near.x, near.z, {
+                    timeoutMs: 5000, arrive: 2.4, visited,
+                    stopWhen: (q) => visibleActors(grid, q, 9).length > 0,
+                });
+                continue;
+            }
+            await exploreCorridors(act, s.page, grid, visited, { timeoutMs: 5000, sprint: true });
         }
         s.mark('result', { fired: fired.length, shots: fired });
     },
 
-    // J4: death - stand in harm's way without fighting back, read the death
+    // J4: death - search corridors using local perception, press close into
+    // perceived enemies without firing until overwhelmed, read the death
     // screen, restart.
     async J4(s) {
         const act = new Actuator(s);
@@ -165,14 +180,19 @@ export const JOURNEYS = {
         const grid = await waitGrid(s);
         s.mark('segment', { name: 'seek-danger' });
         const t0 = Date.now();
+        const visited = new Map();
         while (Date.now() - t0 < 120000) {
             const p = await readPlayer(s.page);
             if (!p || p.gs !== 'playing') break;
-            const live = p.actors.filter((a) => a.hp > 0);
-            if (!live.length) { await act.wait(500); continue; }
-            const near = live.sort((x, y) => Math.hypot(x.x - p.pos[0], x.z - p.pos[2]) - Math.hypot(y.x - p.pos[0], y.z - p.pos[2]))[0];
-            await walkTo(act, s.page, grid, near.x, near.z, { timeoutMs: 4000, arrive: 0.8 });
-            await act.wait(800, 'standing in harm\'s way');
+            const live = (p.actors || []).filter((a) => a.hp > 0);
+            if (live.length) {
+                const near = live.sort((x, y) => Math.hypot(x.x - p.pos[0], x.z - p.pos[2]) - Math.hypot(y.x - p.pos[0], y.z - p.pos[2]))[0];
+                await walkTo(act, s.page, grid, near.x, near.z, { timeoutMs: 3500, arrive: 0.75, visited });
+                await faceYaw(act, s.page, yawTo(p.pos[0], p.pos[2], near.x, near.z), { tol: 0.1, passes: 2 });
+                await act.wait(650, 'standing in harm\'s way');
+                continue;
+            }
+            await exploreCorridors(act, s.page, grid, visited, { timeoutMs: 5000, sprint: true });
         }
         await act.wait(2500, 'reading the death screen');
         s.mark('segment', { name: 'restart' });

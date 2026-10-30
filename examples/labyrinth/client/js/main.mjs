@@ -521,14 +521,23 @@ function update(dt) {
     const snap = net.getSnapshot();
     if (snap && snap.data) {
         const sp = snap.data.runner;
-        serverPos = [sp.x, PLAYER_HEIGHT, sp.y];
+        const nextServerPos = [sp.x, PLAYER_HEIGHT, sp.y];
 
         if (snap.seq !== lastSnapSeq) {
+            // If an authoritative server event (e.g. world reset on rejoin)
+            // moved the runner while no inputs are pending, snap prediction to
+            // the new authoritative position instead of re-sending old coords.
+            const serverJump = serverPos
+                ? Math.hypot(sp.x - serverPos[0], sp.y - serverPos[2])
+                : 0;
             lastSnapSeq = snap.seq;
 
             let recon = { x: sp.x, y: sp.y };
             if (snap.ack !== undefined) {
                 pendingInputs = pendingInputs.filter(cmd => cmd.seq > snap.ack);
+            }
+            if (serverJump > 2.0 && input.forward === 0 && input.strafe === 0) {
+                pendingInputs = [];
             }
             for (const cmd of pendingInputs) {
                 recon = move(maze, recon, cmd.yaw, cmd.forward, cmd.strafe, cmd.sprint, 1.0 / 30.0);
@@ -550,6 +559,7 @@ function update(dt) {
             }
             predictedPos = recon;
         }
+        serverPos = nextServerPos;
 
         // Gang war state: dynamic territory control and crossfire rifts.
         if (snap.data.territoryControl) territoryControl = snap.data.territoryControl;
