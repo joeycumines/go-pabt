@@ -340,9 +340,7 @@ func (g *Game) applyPulseKnockback(m *world.Minotaur, aim netcode.RayHitOrigin) 
 	fy := math.Cos(aim.Yaw) * math.Cos(aim.Pitch)
 	aMass := actorMass(ActorType(m.Type))
 	kick := PulseKnockback * (RunnerMass / (RunnerMass + aMass))
-	m.Pos.X += fx * kick
-	m.Pos.Y += fy * kick
-	m.Pos = g.Maze.Resolve(m.Pos, maze.Radius)
+	m.Pos = g.knockActor(m.Pos, fx, fy, kick)
 }
 
 // rayOccluded samples the maze grid along a ray from origin toward
@@ -361,7 +359,7 @@ func (g *Game) rayOccluded(origin maze.Vec2, rangeAlong, yaw, pitch float64) boo
 		y := origin.Y + fy*d
 		cx := int(math.Floor(x))
 		cy := int(math.Floor(y))
-		if !g.Maze.At(cx, cy).Walkable() {
+		if g.Maze.Solid(cx, cy) {
 			return true
 		}
 	}

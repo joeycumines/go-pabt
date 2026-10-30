@@ -177,9 +177,7 @@ func (g *Game) tickContactDamage(w *world.World) {
 		totalMass := RunnerMass + aMass
 		g.knockRunner(w, maze.Vec2{X: -dx, Y: -dy}, ContactKnockback*(aMass/totalMass))
 		actorPush := ContactKnockback * (RunnerMass / totalMass)
-		m.Pos.X += ux * actorPush
-		m.Pos.Y += uy * actorPush
-		m.Pos = g.Maze.Resolve(m.Pos, maze.Radius)
+		m.Pos = g.knockActor(m.Pos, ux, uy, actorPush)
 	}
 }
 

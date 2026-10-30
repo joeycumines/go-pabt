@@ -14,6 +14,8 @@
 // This module is deliberately pure (no DOM, no globals) so node tests can
 // drive it directly.
 
+import { resolve } from './predict.mjs';
+
 const DEFAULT_APPROACH_RATE = 12; // 1/s: ~63% of the gap closed in 83 ms
 
 function newBuffer(m, nowSec) {
@@ -101,12 +103,17 @@ export class ActorStore {
     // the approach is frame-rate independent. Facing and gait come from the
     // displacement the renderer actually drew, so models walk the way they
     // move rather than snapping to the server's heading.
-    step(dt) {
+    step(dt, maze = null) {
         const a = 1 - Math.exp(-this.approachRate * Math.max(0, dt));
         for (const buf of this.buffers.values()) {
             buf.pos[0] += (buf.targetPos[0] - buf.pos[0]) * a;
             buf.pos[1] += (buf.targetPos[1] - buf.pos[1]) * a;
             buf.pos[2] += (buf.targetPos[2] - buf.pos[2]) * a;
+            if (maze) {
+                const res = resolve(maze, { x: buf.pos[0], y: buf.pos[2] });
+                buf.pos[0] = res.x;
+                buf.pos[2] = res.y;
+            }
             const px = buf.pos[0] - buf.prevPos[0];
             const pz = buf.pos[2] - buf.prevPos[2];
             buf.step = Math.hypot(px, pz);

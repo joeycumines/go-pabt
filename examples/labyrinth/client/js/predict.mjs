@@ -38,50 +38,58 @@ export function resolve(maze, pos, radius = RADIUS) {
     const w = maze.w !== undefined ? maze.w : maze.W;
     const h = maze.h !== undefined ? maze.h : maze.H;
 
-    let posX = clamp(pos.x !== undefined ? pos.x : pos.X, radius, w - radius);
-    let posY = clamp(pos.y !== undefined ? pos.y : pos.Y, radius, h - radius);
+    let posX = pos.x !== undefined ? pos.x : pos.X;
+    let posY = pos.y !== undefined ? pos.y : pos.Y;
 
-    const minX = Math.floor(posX - radius);
-    const maxX = Math.floor(posX + radius);
-    const minY = Math.floor(posY - radius);
-    const maxY = Math.floor(posY + radius);
+    for (let pass = 0; pass < 3; pass++) {
+        posX = clamp(posX, radius, w - radius);
+        posY = clamp(posY, radius, h - radius);
 
-    for (let cy = minY; cy <= maxY; cy++) {
-        for (let cx = minX; cx <= maxX; cx++) {
-            if (!isSolid(maze, cx, cy)) {
-                continue;
-            }
-            const nx = clamp(posX, cx, cx + 1);
-            const ny = clamp(posY, cy, cy + 1);
-            const dx = posX - nx;
-            const dy = posY - ny;
-            const dist2 = dx * dx + dy * dy;
-            if (dist2 >= radius * radius) {
-                continue;
-            }
-            if (dist2 > 1e-12) {
-                const dist = Math.sqrt(dist2);
-                const push = radius - dist;
-                posX += (dx / dist) * push;
-                posY += (dy / dist) * push;
-            } else {
-                const left = posX - cx;
-                const right = (cx + 1) - posX;
-                const up = posY - cy;
-                const down = (cy + 1) - posY;
-                const mn = Math.min(Math.min(left, right), Math.min(up, down));
-                if (mn === left) {
-                    posX = cx - radius;
-                } else if (mn === right) {
-                    posX = (cx + 1) + radius;
-                } else if (mn === up) {
-                    posY = cy - radius;
+        const minX = Math.floor(posX - radius);
+        const maxX = Math.floor(posX + radius);
+        const minY = Math.floor(posY - radius);
+        const maxY = Math.floor(posY + radius);
+
+        for (let cy = minY; cy <= maxY; cy++) {
+            for (let cx = minX; cx <= maxX; cx++) {
+                if (!isSolid(maze, cx, cy)) {
+                    continue;
+                }
+                const nx = clamp(posX, cx, cx + 1);
+                const ny = clamp(posY, cy, cy + 1);
+                const dx = posX - nx;
+                const dy = posY - ny;
+                const dist2 = dx * dx + dy * dy;
+                if (dist2 >= radius * radius) {
+                    continue;
+                }
+                if (dist2 > 1e-12) {
+                    const dist = Math.sqrt(dist2);
+                    const push = radius - dist;
+                    posX += (dx / dist) * push;
+                    posY += (dy / dist) * push;
                 } else {
-                    posY = (cy + 1) + radius;
+                    const left = posX - cx;
+                    const right = (cx + 1) - posX;
+                    const up = posY - cy;
+                    const down = (cy + 1) - posY;
+                    const mn = Math.min(Math.min(left, right), Math.min(up, down));
+                    if (mn === left) {
+                        posX = cx - radius;
+                    } else if (mn === right) {
+                        posX = (cx + 1) + radius;
+                    } else if (mn === up) {
+                        posY = cy - radius;
+                    } else {
+                        posY = (cy + 1) + radius;
+                    }
                 }
             }
         }
     }
+
+    posX = clamp(posX, radius, w - radius);
+    posY = clamp(posY, radius, h - radius);
 
     return { x: posX, y: posY };
 }

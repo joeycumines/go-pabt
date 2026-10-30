@@ -132,6 +132,7 @@ func (a *moveAction) advance() (bt.Status, error) {
 			remaining = 0
 		}
 	}
+	*a.state.selfPos = a.state.maze.Resolve(*a.state.selfPos, maze.Radius)
 	if a.state.selfPos.X == startX && a.state.selfPos.Y == startY {
 		a.stuck++
 		if a.stuck >= stuckLimit {

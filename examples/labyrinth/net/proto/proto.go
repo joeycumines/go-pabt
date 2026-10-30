@@ -112,13 +112,14 @@ func DecodePlay(env *Envelope) (*PlayPayload, error) {
 // uses this grid verbatim for rendering and collision, so there is never a
 // client/server maze desync.
 type MazePayload struct {
-	W      int     `json:"w"`
-	H      int     `json:"h"`
-	Grid   []int   `json:"grid"` // cell kind per cell, row-major
-	StartX float64 `json:"startX"`
-	StartY float64 `json:"startY"`
-	GateX  float64 `json:"gateX"`
-	GateY  float64 `json:"gateY"`
+	W        int     `json:"w"`
+	H        int     `json:"h"`
+	Grid     []int   `json:"grid"` // cell kind per cell, row-major
+	StartX   float64 `json:"startX"`
+	StartY   float64 `json:"startY"`
+	StartYaw float64 `json:"startYaw"`
+	GateX    float64 `json:"gateX"`
+	GateY    float64 `json:"gateY"`
 
 	// PauseWithoutPlayer tells the client whether the authoritative world
 	// waits for a present player. When false (legacy harness mode), the

@@ -64,15 +64,14 @@ const ids = (fs) => fs.map((f) => `${f.id}:${f.severity}`);
 
 // ---------- geometry ----------
 
-test('Grid.segment sees walls, gaps on the line, and a gap under the shooter', () => {
+test('Grid.segment sees walls and treats gaps/rifts as open to shots', () => {
     const g = new Grid(7, 7, grid().cells);
     assert.equal(g.segment(1.5, 2.5, 4.5, 2.5).wall, true);
     assert.equal(g.segment(1.5, 5.5, 2.5, 5.5).wall, false);
-    assert.equal(g.segment(4.5, 5.5, 4.9, 5.5).gap, false, 'segment ending before the gap cell');
-    assert.equal(g.segment(4.5, 5.5, 5.9, 5.5).gap, true, 'target standing on a gap: the server ray samples inside it');
-    assert.equal(g.segment(4.5, 5.5, 5.5, 4.5).gap, false);
-    assert.equal(g.segment(5.4, 5.4, 5.6, 2.5).startGap, true, 'shooter standing on a gap');
-    assert.equal(g.segment(5.4, 5.4, 5.6, 2.5).gap, true);
+    assert.equal(g.segment(4.5, 5.5, 4.9, 5.5).gap, false);
+    assert.equal(g.segment(4.5, 5.5, 5.9, 5.5).gap, false, 'gaps/rifts do not occlude shots');
+    assert.equal(g.segment(5.4, 5.4, 5.6, 2.5).startGap, false);
+    assert.equal(g.segment(5.4, 5.4, 5.6, 2.5).gap, false);
     assert.ok(Math.abs(g.castRay(1.5, 1.5, 1, 0).dist - 1.5) < 1e-9, 'wall face at x=3 is 1.5u away');
     assert.deepEqual(g.path(1.5, 1.5, 5.5, 1.5).at(-1), [5.5, 1.5]);
 });
@@ -270,11 +269,12 @@ test('D8: enemies standing inside walls are reported', () => {
     assert.deepEqual(ids(detectEmbeddedActors(t, g)), ['D8:S2']);
 });
 
-test('D8: shots that fail while the shooter stands on a gap are attributed to the gap', () => {
-    const shots = [0, 1, 2].map((i) => ({ t: 1000 + i * 600, actorId: 'S-1', dist: 3, yawErr: 0, gapOnLine: true, pos: [5.4, 0.5, 5.4] }));
-    const t = tl({ marks: [{ t: 3000, kind: 'result', shots }], samples: [S(900, { pos: [5.4, 0.5, 5.4], actors: [{ id: 'S-1', x: 5.5, z: 2.5, hp: 10 }] })] });
+test('D8: shots across a gap cell are not flagged as blocked by the gap, while unexplained misses still report', () => {
+    const shots = [0, 1, 2, 3].map((i) => ({ t: 1000 + i * 600, actorId: 'S-1', dist: 3, yawErr: 0, pos: [5.4, 0.5, 5.4] }));
+    const t = tl({ marks: [{ t: 3500, kind: 'result', shots }], samples: [S(900, { pos: [5.4, 0.5, 5.4], actors: [{ id: 'S-1', x: 5.5, z: 2.5, hp: 10 }] })] });
     const f = detectShots(t);
-    assert.ok(f.some((x) => x.id === 'D8' && /Standing on certain floor tiles/.test(x.title)));
+    assert.equal(f.some((x) => x.id === 'D8' && /gap cells/.test(x.title)), false);
+    assert.ok(f.some((x) => x.id === 'D8' && /Most shots at a clearly visible/.test(x.title)));
     const landed = tl({ ...t, wire: shots.map((s) => ({ kind: 'event', t: s.t + 30, type: 'stunned', data: { minotaur: 'S-1', hp: 5 } })) });
     assert.deepEqual(detectShots(landed), []);
 });

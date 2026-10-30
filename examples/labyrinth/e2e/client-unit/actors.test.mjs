@@ -82,3 +82,20 @@ test('facing and gait follow the drawn displacement', () => {
     assert.ok(buf.step > 0);
     assert.ok(Math.abs(buf.yaw) < 1e-6, `yaw ${buf.yaw}`);
 });
+
+test('step with maze resolves interpolated position out of corner walls', () => {
+    // 5x5 maze with a wall at (2, 1) so interpolating straight from (1.5, 1.5)
+    // to (2.5, 2.5) would cut through the wall corner at (2, 1) without resolve.
+    const grid = new Array(25).fill(1);
+    grid[1 * 5 + 2] = 0; // wall at cx=2, cz=1
+    const maze = { w: 5, h: 5, grid };
+    const store = new ActorStore();
+    store.applySnapshot(1, [snap('B-1', 1.85, 1.85)], 0);
+    store.applySnapshot(2, [snap('B-1', 2.15, 2.15)], 0.05);
+    for (let i = 0; i < 10; i++) {
+        store.step(0.016, maze);
+        const p = store.get('B-1').pos;
+        const cx = Math.floor(p[0]), cz = Math.floor(p[2]);
+        assert.notEqual(grid[cz * 5 + cx], 0, `actor entered wall cell (${cx},${cz}) at (${p[0]},${p[2]})`);
+    }
+});

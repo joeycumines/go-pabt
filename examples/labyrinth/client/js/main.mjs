@@ -350,8 +350,9 @@ function init() {
     net.onMaze = (mazeData) => {
         maze = mazeData;
         pauseRequired = mazeData.pauseWithoutPlayer !== false;
-        // Place camera at maze start.
+        // Place camera at maze start, facing down the longest open corridor.
         camera.pos = [maze.startX, PLAYER_HEIGHT, maze.startY];
+        camera.yaw = typeof maze.startYaw === 'number' ? maze.startYaw : 0;
         predictedPos = { x: maze.startX, y: maze.startY };
         pendingInputs = [];
         lastSnapSeq = -1;
@@ -501,7 +502,7 @@ function update(dt) {
             actorStore.applySnapshot(pausedSnap.seq, pausedSnap.data.minotaurs, performance.now() / 1000);
             if (btHud) btHud.pruneToRoster(pausedSnap.data.minotaurs.map(m => m.id));
         }
-        actorStore.step(dt);
+        actorStore.step(dt, maze);
         return;
     }
     if (botRuntime && botRuntime.active) {
@@ -635,7 +636,7 @@ function update(dt) {
     input.fire = false;
 
     // H2: Crosshair aim feedback — raycast from camera forward, turn crosshair
-    // red if it intersects an actor within 12u.
+    // red if it intersects an actor within 12u along a clear line of sight.
     const crosshairEl = document.getElementById('crosshair');
     if (crosshairEl) {
         const aimDir = camera.aimDir();
@@ -649,7 +650,7 @@ function update(dt) {
             if (dist > 12 || dist < 0.5) continue;
             // R13: full 3D dot product — works at any pitch angle.
             const dot = (aimDir[0] * dx + aimDir[1] * dy + aimDir[2] * dz) / dist;
-            if (dot > 0.95) {
+            if (dot > 0.95 && ddaClear(maze, camera.pos[0], camera.pos[2], buf.pos[0], buf.pos[2])) {
                 aimLocked = true;
                 break;
             }
@@ -703,7 +704,7 @@ function update(dt) {
         // actor drops immediately instead of lingering on its last frame.
         if (btHud) btHud.pruneToRoster(snap.data.minotaurs.map(m => m.id));
     }
-    actorStore.step(dt);
+    actorStore.step(dt, maze);
 
     // Advance projectiles; cull after 0.5s. Clash sparks fade over 0.4s.
     projectiles = projectiles.filter(p => now - p.born < 0.5);
@@ -837,21 +838,7 @@ function installAriadne() {
         // the server's rayOccluded rejects shots through walls, which was
         // the dominant cause of flaky fire scenarios.
         losClear(x1, z1, x2, z2) {
-            if (!maze) return false;
-            const dist = Math.hypot(x2 - x1, z2 - z1);
-            const steps = Math.max(1, Math.ceil(dist / 0.25));
-            for (let i = 1; i < steps; i++) {
-                const t = i / steps;
-                const cx = Math.floor(x1 + (x2 - x1) * t);
-                const cz = Math.floor(z1 + (z2 - z1) * t);
-                if (cx < 0 || cz < 0 || cx >= maze.w || cz >= maze.h) return false;
-                const cell = maze.grid[cz * maze.w + cx];
-                // Match the server's rayOccluded: only floor (1) and
-                // platform (2) are transparent; wall (0), gap (3), and
-                // out-of-bounds occlude.
-                if (cell !== 1 && cell !== 2) return false;
-            }
-            return true;
+            return ddaClear(maze, x1, z1, x2, z2);
         },
         // E2E: find a fire standpoint near a target — an open maze cell at
         // ~dist units from the target with an unobstructed line of sight to
@@ -1214,8 +1201,12 @@ function render() {
     }
 
     const instances = [];
-    const wallColor = [0.25, 0.25, 0.38, 1.0];
-    const floorColor = [0.08, 0.08, 0.12, 1.0];
+    // Walls use alpha < 0.5 so the fragment shader applies the brick/mortar pattern.
+    const wallColor = [0.28, 0.28, 0.42, 0.25];
+    const floorColor = [0.09, 0.09, 0.14, 1.0];
+    const platformColor = [0.22, 0.24, 0.34, 1.0];
+    const riftSlabColor = [0.02, 0.01, 0.04, 1.0];
+    const riftCrackColor = [0.85, 0.22, 0.95, 1.0];
     const gateColor = [0.0, 1.0, 0.5, 1.0];
     const stunnedColor = [0.3, 0.3, 0.8, 1.0];
 
@@ -1229,6 +1220,31 @@ function render() {
                     pos: [x + 0.5, 0.5, z + 0.5],
                     scale: [1, 1, 1],
                     color: wallColor,
+                });
+            } else if (cell === 2) {
+                // Raised platform slab (walkable by player, distinct stone step).
+                instances.push({
+                    pos: [x + 0.5, 0.04, z + 0.5],
+                    scale: [0.96, 0.18, 0.96],
+                    color: platformColor,
+                });
+            } else if (cell === 3) {
+                // Gap / rift cell: recessed dark chasm with glowing emissive cracks.
+                // Player and shots cross freely; enemies path around it.
+                instances.push({
+                    pos: [x + 0.5, -0.14, z + 0.5],
+                    scale: [1, 0.08, 1],
+                    color: riftSlabColor,
+                });
+                instances.push({
+                    pos: [x + 0.5, -0.04, z + 0.5],
+                    scale: [0.82, 0.03, 0.14],
+                    color: riftCrackColor,
+                });
+                instances.push({
+                    pos: [x + 0.5, -0.04, z + 0.5],
+                    scale: [0.14, 0.03, 0.82],
+                    color: riftCrackColor,
                 });
             } else {
                 // S5: territory overlay toggle. When off, floor is neutral;
@@ -1637,6 +1653,32 @@ function territoryAt(x, y, mazeData) {
 function resolveCollision(mazeData, px, pz, radius) {
     const res = resolve(mazeData, { x: px, y: pz }, radius);
     return [res.x, res.y];
+}
+
+// Exact grid DDA line-of-sight check between two XZ world points: returns
+// false if any wall cell (0) or out-of-bounds cell is crossed by the segment.
+function ddaClear(mazeData, x1, z1, x2, z2) {
+    if (!mazeData || !mazeData.grid) return false;
+    const dist = Math.hypot(x2 - x1, z2 - z1);
+    let cx = Math.floor(x1), cz = Math.floor(z1);
+    if (cx < 0 || cz < 0 || cx >= mazeData.w || cz >= mazeData.h) return false;
+    if (mazeData.grid[cz * mazeData.w + cx] === 0) return false;
+    if (dist < 1e-6) return true;
+    const dx = (x2 - x1) / dist, dz = (z2 - z1) / dist;
+    const stepX = dx > 0 ? 1 : -1, stepZ = dz > 0 ? 1 : -1;
+    const tDeltaX = dx !== 0 ? Math.abs(1 / dx) : Infinity;
+    const tDeltaZ = dz !== 0 ? Math.abs(1 / dz) : Infinity;
+    let tMaxX = dx !== 0 ? (dx > 0 ? cx + 1 - x1 : x1 - cx) * tDeltaX : Infinity;
+    let tMaxZ = dz !== 0 ? (dz > 0 ? cz + 1 - z1 : z1 - cz) * tDeltaZ : Infinity;
+    let t = 0;
+    while (t <= dist) {
+        if (tMaxX < tMaxZ) { t = tMaxX; tMaxX += tDeltaX; cx += stepX; }
+        else { t = tMaxZ; tMaxZ += tDeltaZ; cz += stepZ; }
+        if (t >= dist) break;
+        if (cx < 0 || cz < 0 || cx >= mazeData.w || cz >= mazeData.h) return false;
+        if (mazeData.grid[cz * mazeData.w + cx] === 0) return false;
+    }
+    return true;
 }
 
 init();

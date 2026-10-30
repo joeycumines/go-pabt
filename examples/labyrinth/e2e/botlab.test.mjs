@@ -156,7 +156,8 @@ function testPathToUnreachableGoalLeadsToClosestCell() {
 function testLosClearRespectsWalls() {
     const world = fakeWorld();
     world.maze.grid[5 * 21 + 1] = 0; // a wall between (1,1) and (1,10)
-    assert.equal(losClear(world.maze, 1.5, 1.5, 10.5, 1.5), true);
+    world.maze.grid[1 * 21 + 5] = 3; // a gap/rift between (1,1) and (10,1)
+    assert.equal(losClear(world.maze, 1.5, 1.5, 10.5, 1.5), true, 'gaps/rifts must not block line of sight');
     assert.equal(losClear(world.maze, 1.5, 1.5, 1.5, 10.5), false, 'a wall must block line of sight');
 }
 

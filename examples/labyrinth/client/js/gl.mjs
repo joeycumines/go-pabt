@@ -38,17 +38,39 @@ uniform vec3 uFogColor;
 out vec4 fragColor;
 
 void main() {
-    // Simple directional light
+    vec3 n = normalize(vNormal);
     vec3 lightDir = normalize(vec3(0.3, 1.0, 0.5));
-    float diff = max(dot(normalize(vNormal), lightDir), 0.0);
-    vec3 lit = vColor.rgb * (0.3 + 0.7 * diff);
+    float diff = max(dot(n, lightDir), 0.0);
+
+    float dist = length(vWorldPos - uCameraPos);
+    float headlamp = 1.0 / (1.0 + 0.35 * dist * dist);
+
+    vec3 baseColor = vColor.rgb;
+    if (vColor.a < 0.5) {
+        // Wall cells are emitted with alpha < 0.5: apply procedural running-bond
+        // brick & mortar texture in world space so walls at any range (<1.5u)
+        // have strong luminance contrast and edge energy.
+        float u = abs(n.x) > 0.5 ? vWorldPos.z : vWorldPos.x;
+        float v = vWorldPos.y;
+        float row = floor(v * 6.0);
+        float col = floor(u * 3.0 + mod(row, 2.0) * 0.5);
+        float bu = fract(u * 3.0 + mod(row, 2.0) * 0.5);
+        float bv = fract(v * 6.0);
+        float mortar = (bu < 0.08 || bu > 0.92 || bv < 0.12 || bv > 0.88) ? 1.0 : 0.0;
+        float brickHash = fract(sin(row * 12.9898 + col * 78.233) * 43758.5453);
+        float shade = 0.72 + 0.52 * brickHash + 0.12 * sin(bu * 6.28318);
+        vec3 brickCol = baseColor * shade * (0.85 + 0.30 * v);
+        vec3 mortarCol = baseColor * 0.22;
+        baseColor = mix(brickCol, mortarCol, mortar);
+    }
+
+    vec3 lit = baseColor * (0.28 + 0.52 * diff + 0.95 * headlamp);
 
     // Exponential fog
-    float dist = length(vWorldPos - uCameraPos);
     float fog = 1.0 - exp(-uFogDensity * dist);
     vec3 final = mix(lit, uFogColor, fog);
 
-    fragColor = vec4(final, vColor.a);
+    fragColor = vec4(final, 1.0);
 }
 `;
 

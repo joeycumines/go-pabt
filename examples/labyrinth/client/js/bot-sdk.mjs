@@ -157,8 +157,8 @@ function round3(v) {
 }
 
 // losClear reports whether an unobstructed line of sight exists between two
-// XZ points. Only floor and platform cells are transparent, which matches
-// the server's rayOccluded rule and the client's own visibility test.
+// XZ points. Only wall cells and out-of-bounds occlude; floor, platform, and
+// gap cells are transparent, matching the server's rayOccluded rule.
 export function losClear(maze, x1, z1, x2, z2) {
     if (!maze || !maze.grid) return false;
     const dist = Math.hypot(x2 - x1, z2 - z1);
@@ -169,7 +169,7 @@ export function losClear(maze, x1, z1, x2, z2) {
         const cz = Math.floor(z1 + (z2 - z1) * t);
         if (cx < 0 || cz < 0 || cx >= maze.w || cz >= maze.h) return false;
         const kind = maze.grid[cz * maze.w + cx];
-        if (kind !== CELL_FLOOR && kind !== CELL_PLATFORM) return false;
+        if (kind === CELL_WALL) return false;
     }
     return true;
 }

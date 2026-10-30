@@ -2,7 +2,10 @@
 
 package maze
 
-import "math/rand"
+import (
+	"math"
+	"math/rand"
+)
 
 // CellKind classifies a maze cell for rendering, collision, and pathfinding.
 type CellKind uint8
@@ -33,8 +36,9 @@ type Maze struct {
 	W, H int // dimensions in cells
 	Grid []Cell
 
-	Start Vec2 // runner spawn (center of a floor cell)
-	Gate  Vec2 // escape gate (center of a floor cell)
+	Start    Vec2    // runner spawn (center of a floor cell)
+	StartYaw float64 // initial heading down the longest open corridor from Start
+	Gate     Vec2    // escape gate (center of a floor cell)
 }
 
 // At returns the cell at (cx, cy). Out-of-range reads are walls.
@@ -127,9 +131,34 @@ func Generate(seed uint64, w, h int) *Maze {
 	m.set(sx, sy, Cell{Kind: CellFloor})
 	m.set(gx, gy, Cell{Kind: CellFloor})
 	m.Start = Vec2{float64(sx) + 0.5, float64(sy) + 0.5}
+	m.StartYaw = m.longestOpenAxisYaw(sx, sy)
 	m.Gate = Vec2{float64(gx) + 0.5, float64(gy) + 0.5}
 
 	return m
+}
+
+// longestOpenAxisYaw returns the heading (math.Atan2(dx, dy)) from (sx, sy)
+// along whichever of the four cardinal directions has the longest open
+// (non-wall) straight run, so a spawning player looks down a corridor rather
+// than into an adjacent wall.
+func (m *Maze) longestOpenAxisYaw(sx, sy int) float64 {
+	axes := [4][2]int{{0, 1}, {1, 0}, {0, -1}, {-1, 0}}
+	bestLen := -1
+	bestAxis := axes[0]
+	for _, ax := range axes {
+		run := 0
+		cx, cy := sx+ax[0], sy+ax[1]
+		for cx >= 0 && cy >= 0 && cx < m.W && cy < m.H && !m.Solid(cx, cy) {
+			run++
+			cx += ax[0]
+			cy += ax[1]
+		}
+		if run > bestLen {
+			bestLen = run
+			bestAxis = ax
+		}
+	}
+	return math.Atan2(float64(bestAxis[0]), float64(bestAxis[1]))
 }
 
 func (m *Maze) set(cx, cy int, c Cell) {

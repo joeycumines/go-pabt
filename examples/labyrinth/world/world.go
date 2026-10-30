@@ -102,7 +102,7 @@ type World struct {
 func New(m *maze.Maze) *World {
 	return &World{
 		Maze:   m,
-		Runner: Runner{Pos: m.Start, Grounded: true, HP: MaxHP},
+		Runner: Runner{Pos: m.Start, Yaw: m.StartYaw, Grounded: true, HP: MaxHP},
 		Phase:  PhaseRunning,
 	}
 }

@@ -99,8 +99,8 @@ func (g *Game) factionCombat(w *world.World) {
 				dx, dy, dist = 1.0, 0.0, 1.0
 			}
 			ux, uy := dx/dist, dy/dist
-			a.Pos = g.Maze.Resolve(maze.Vec2{X: a.Pos.X + ux*1.05, Y: a.Pos.Y + uy*1.05}, maze.Radius)
-			b.Pos = g.Maze.Resolve(maze.Vec2{X: b.Pos.X - ux*1.05, Y: b.Pos.Y - uy*1.05}, maze.Radius)
+			a.Pos = g.knockActor(a.Pos, ux, uy, 1.05)
+			b.Pos = g.knockActor(b.Pos, -ux, -uy, 1.05)
 			spawnClashHazard(w, a, b)
 			g.broadcastEvent(Event{
 				Type: "clash",
@@ -118,6 +118,27 @@ func (g *Game) factionCombat(w *world.World) {
 			}
 		}
 	}
+}
+
+// knockActor displaces an actor along (ux, uy) by dist in small substeps,
+// resolving collision at each substep and stopping if a wall blocks progress.
+func (g *Game) knockActor(pos maze.Vec2, ux, uy, dist float64) maze.Vec2 {
+	moved := 0.0
+	for moved < dist-1e-9 {
+		step := math.Min(KnockbackStepSize, dist-moved)
+		next := maze.Vec2{X: pos.X + ux*step, Y: pos.Y + uy*step}
+		resolved := g.Maze.Resolve(next, maze.Radius)
+		if g.Maze.Solid(int(math.Floor(resolved.X)), int(math.Floor(resolved.Y))) {
+			break
+		}
+		if math.Hypot(resolved.X-pos.X, resolved.Y-pos.Y) < step*0.5 {
+			pos = resolved
+			break
+		}
+		pos = resolved
+		moved += step
+	}
+	return pos
 }
 
 // spawnClashHazard leaves a temporary elemental rift at the midpoint of a
@@ -348,6 +369,7 @@ func (g *Game) applyStrategyMovement(w *world.World) {
 				remaining = 0
 			}
 		}
+		m.Pos = g.Maze.Resolve(m.Pos, maze.Radius)
 	}
 }
 

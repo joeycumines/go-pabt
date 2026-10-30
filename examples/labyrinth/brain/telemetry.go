@@ -40,7 +40,7 @@ type TickTelemetry struct {
 }
 
 // HasClearLOS checks whether the straight segment between a and b in m crosses
-// only walkable cells (CellFloor or CellPlatform), matching server rayOccluded.
+// no solid wall cells, matching server rayOccluded.
 func HasClearLOS(m *maze.Maze, a, b maze.Vec2) bool {
 	if m == nil {
 		return false
@@ -50,14 +50,14 @@ func HasClearLOS(m *maze.Maze, a, b maze.Vec2) bool {
 	dist := math.Hypot(dx, dy)
 	if dist < 1e-6 {
 		cx, cy := int(math.Floor(a.X)), int(math.Floor(a.Y))
-		return m.At(cx, cy).Walkable()
+		return !m.Solid(cx, cy)
 	}
 	steps := int(math.Ceil(dist / 0.2))
 	for i := 1; i <= steps; i++ {
 		t := float64(i) / float64(steps)
 		x := a.X + dx*t
 		y := a.Y + dy*t
-		if !m.At(int(math.Floor(x)), int(math.Floor(y))).Walkable() {
+		if m.Solid(int(math.Floor(x)), int(math.Floor(y))) {
 			return false
 		}
 	}

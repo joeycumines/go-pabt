@@ -151,3 +151,19 @@ func TestSeparateRunnerFromActorsOverlapping(t *testing.T) {
 		t.Fatalf("overlapping runner+actor should have been separated to >= %v (body radii), got %v", want, dist)
 	}
 }
+
+func TestKnockActorNeverCrossesThinWall(t *testing.T) {
+	m := floorMaze(21, 21)
+	// Place a 1-cell wall at (11, 10).
+	m.Grid[10*m.W+11] = maze.Cell{Kind: maze.CellWall}
+	g := NewGame(m, 0, 42)
+	// Actor at (10.65, 10.5) pushed +X by 1.05u must stop at the wall face
+	// (x = 11.0 - 0.3 = 10.7) and never tunnel through to x >= 11.
+	pos := g.knockActor(maze.Vec2{X: 10.65, Y: 10.5}, 1.0, 0.0, 1.05)
+	if m.Solid(int(math.Floor(pos.X)), int(math.Floor(pos.Y))) {
+		t.Fatalf("knockActor left actor inside a solid wall at %v", pos)
+	}
+	if pos.X > 11.0-maze.Radius+1e-9 {
+		t.Fatalf("knockActor tunneled through wall at x=11: got %v", pos)
+	}
+}

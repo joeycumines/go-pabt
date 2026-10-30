@@ -3,6 +3,7 @@
 package maze
 
 import (
+	"math"
 	"testing"
 )
 
@@ -133,5 +134,41 @@ func TestGapNotWalkable(t *testing.T) {
 	}
 	if m.At(1, 1).Walkable() {
 		t.Fatal("gap should not be walkable")
+	}
+}
+
+func TestStartYawFacesLongestCorridor(t *testing.T) {
+	for _, seed := range []uint64{12345, 777, 4242, 31337, 2024} {
+		m := Generate(seed, 21, 21)
+		fx := math.Sin(m.StartYaw)
+		fy := math.Cos(m.StartYaw)
+		nextX := int(math.Floor(m.Start.X + fx))
+		nextY := int(math.Floor(m.Start.Y + fy))
+		if m.Solid(nextX, nextY) {
+			t.Fatalf("seed %d: StartYaw %f faces solid cell (%d, %d) from %v", seed, m.StartYaw, nextX, nextY, m.Start)
+		}
+	}
+}
+
+func TestResolveMultiPassCorner(t *testing.T) {
+	// L-shaped wall corner at (0,0)-(2,0)-(0,2); cylinder pushed into (0.9, 0.9)
+	// must resolve cleanly into the open interior cell (1,1) without remaining
+	// inside any wall cell.
+	m := &Maze{W: 5, H: 5, Grid: make([]Cell, 25)}
+	for y := 0; y < 5; y++ {
+		for x := 0; x < 5; x++ {
+			if x == 0 || y == 0 || x == 4 || y == 4 {
+				m.set(x, y, Cell{Kind: CellWall})
+			} else {
+				m.set(x, y, Cell{Kind: CellFloor})
+			}
+		}
+	}
+	resolved := m.Resolve(Vec2{0.85, 0.85}, Radius)
+	if m.Solid(int(math.Floor(resolved.X)), int(math.Floor(resolved.Y))) {
+		t.Fatalf("resolved %v is still inside a solid wall cell", resolved)
+	}
+	if resolved.X < 1.0+Radius-1e-9 || resolved.Y < 1.0+Radius-1e-9 {
+		t.Fatalf("resolved %v violates wall clearance %f from corner (1,1)", resolved, Radius)
 	}
 }

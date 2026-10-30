@@ -48,17 +48,14 @@ export class Grid {
     }
 
     // segment classifies the straight segment between two points: whether a
-    // wall blocks it, and whether a gap (which RENDERS as floor but the server
-    // treats as opaque to shots) lies on it - including the cell the segment
-    // starts in, since a shooter standing on a gap fires through it.
+    // wall blocks it. Gap/rift cells are recessed floor features that do not
+    // block shots or line of sight (only walls do).
     segment(x1, z1, x2, z2) {
         const dist = Math.hypot(x2 - x1, z2 - z1);
-        const startGap = this.at(x1, z1) === GAP;
-        if (dist < 1e-6) return { dist, wall: false, gap: startGap, startGap };
+        if (dist < 1e-6) return { dist, wall: false, gap: false, startGap: false };
         const r = this.castRay(x1, z1, (x2 - x1) / dist, (z2 - z1) / dist, dist);
         const wall = r.dist < dist;
-        const gap = startGap || r.crossed.some((c) => c.type === GAP && c.dist < dist);
-        return { dist, wall, gap, startGap };
+        return { dist, wall, gap: false, startGap: false };
     }
 
     // path is A* over 4-connected passable cells, returning cell centres from

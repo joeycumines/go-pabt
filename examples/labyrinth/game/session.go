@@ -271,13 +271,14 @@ func NewGame(m *maze.Maze, initialActors int, seed uint64) *Game {
 // MazePayload returns the authoritative maze for sending to clients on connect.
 func (g *Game) MazePayload() proto.MazePayload {
 	p := proto.MazePayload{
-		W:      g.Maze.W,
-		H:      g.Maze.H,
-		Grid:   make([]int, len(g.Maze.Grid)),
-		StartX: g.Maze.Start.X,
-		StartY: g.Maze.Start.Y,
-		GateX:  g.Maze.Gate.X,
-		GateY:  g.Maze.Gate.Y,
+		W:        g.Maze.W,
+		H:        g.Maze.H,
+		Grid:     make([]int, len(g.Maze.Grid)),
+		StartX:   g.Maze.Start.X,
+		StartY:   g.Maze.Start.Y,
+		StartYaw: g.Maze.StartYaw,
+		GateX:    g.Maze.Gate.X,
+		GateY:    g.Maze.Gate.Y,
 
 		PauseWithoutPlayer: g.pauseWithoutPlayer,
 	}
@@ -620,7 +621,7 @@ func (g *Game) AddSession(token string) (*PlayerSession, string, uint64) {
 	tok := string(id)
 	sess := &PlayerSession{
 		ID:      id,
-		Net:     netcode.NewSession(tok, g.Maze.Start, 0),
+		Net:     netcode.NewSession(tok, g.Maze.Start, g.Maze.StartYaw),
 		Token:   tok,
 		connGen: 1,
 	}
@@ -682,6 +683,8 @@ func (g *Game) submitWorldResetIfTerminal(sess *PlayerSession) {
 		w.Round = 0
 		w.Intensity = 0
 		w.Runner.Pos = g.Maze.Start
+		w.Runner.Yaw = g.Maze.StartYaw
+		w.Runner.Pitch = 0
 		w.Runner.Vel = maze.Vec2{}
 		w.Runner.HP = world.MaxHP
 		w.Runner.Element = 0
@@ -707,6 +710,8 @@ func (g *Game) submitWorldResetIfTerminal(sess *PlayerSession) {
 		// prediction reconciles to the spawn point.
 		if sess != nil && sess.Net != nil {
 			sess.Net.Pos = g.Maze.Start
+			sess.Net.Yaw = g.Maze.StartYaw
+			sess.Net.Pitch = 0
 		}
 	})
 }
