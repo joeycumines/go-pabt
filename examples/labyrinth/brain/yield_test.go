@@ -9,13 +9,12 @@ import (
 	"github.com/joeycumines/go-pabt/examples/labyrinth/world"
 )
 
-// TestAllyYieldingFlagsSameElementApproach pins the I4 trigger: AllyYielding
-// must be set when the runner is SAME element, detected, and within 3u — and
-// must stay clear for a different-element runner at the same distance.
-func TestAllyYieldingFlagsSameElementApproach(t *testing.T) {
+// TestSameElementActorsAreHostile pins the T7 combat rule: same-element mobs
+// are hostile to the player (AllyYielding stays false) and pursue directly.
+func TestSameElementActorsAreHostile(t *testing.T) {
 	m := maze.Generate(42, 11, 11)
 	w := world.New(m)
-	minotaur := &world.Minotaur{ID: "M-1", Pos: m.Start, Element: 0}
+	minotaur := &world.Minotaur{ID: "M-1", Pos: m.Start, Element: 0, HP: 40}
 	w.Minotaurs = append(w.Minotaurs, minotaur)
 
 	b, err := NewBrain("M-1", m, &minotaur.Pos)
@@ -23,16 +22,15 @@ func TestAllyYieldingFlagsSameElementApproach(t *testing.T) {
 		t.Fatalf("NewBrain: %v", err)
 	}
 
-	// Same element, within sight range (6u) and yield range (3u).
 	w.Runner.Element = 0
 	w.Runner.Pos = maze.Vec2{X: minotaur.Pos.X + 2, Y: minotaur.Pos.Y}
 	snap := w.Copy()
 	b.UpdateWorldView(snap, minotaur)
-	if !b.world.AllyYielding {
-		t.Fatal("AllyYielding not set for same-element runner within 3u")
+	if b.world.AllyYielding {
+		t.Fatal("AllyYielding must stay false: same-element actors are hostile to the player")
 	}
 
-	// Different element: no yielding even at the same distance.
+	// Different element also keeps AllyYielding false.
 	w.Runner.Element = 1
 	snap = w.Copy()
 	b.UpdateWorldView(snap, minotaur)
@@ -41,26 +39,20 @@ func TestAllyYieldingFlagsSameElementApproach(t *testing.T) {
 	}
 }
 
-// TestPursueActionYieldsLaterally pins the I4 path shape: with AllyYielding
-// set, PursueAction's first-tick path aims at the LATERALLY OFFSET target,
-// not the runner's position. The acceptance case: same-element actor at
-// (5,5), runner at (5,3) approaching +Y — the offset path's first waypoint
-// must displace the actor off x==5 (the lateral shift), while the non-yield
-// path stays on the direct line.
-func TestPursueActionYieldsLaterally(t *testing.T) {
-	// Hand-authored open 11x11 maze (no interior walls) so the A* path
-	// geometry is deterministic and the lateral offset is observable.
+// TestPursueActionAdvancesDirectlyForSameElement verifies that a same-element
+// actor pursues directly along the line to the runner rather than stepping aside.
+func TestPursueActionAdvancesDirectlyForSameElement(t *testing.T) {
 	m := &maze.Maze{W: 11, H: 11, Grid: make([]maze.Cell, 11*11)}
 	for i := range m.Grid {
 		m.Grid[i] = maze.Cell{Kind: maze.CellFloor}
 	}
 	w := world.New(m)
 
-	selfPos := maze.Vec2{X: 5, Y: 5}
-	minotaur := &world.Minotaur{ID: "M-1", Pos: selfPos, Element: 0}
+	selfPos := maze.Vec2{X: 5.5, Y: 5.5}
+	minotaur := &world.Minotaur{ID: "M-1", Pos: selfPos, Element: 0, HP: 40}
 	w.Minotaurs = append(w.Minotaurs, minotaur)
 	w.Runner.Element = 0
-	w.Runner.Pos = maze.Vec2{X: 5, Y: 3}
+	w.Runner.Pos = maze.Vec2{X: 5.5, Y: 3.5}
 
 	state := NewState(&WorldView{
 		PlayerDetected: true,
@@ -69,7 +61,6 @@ func TestPursueActionYieldsLaterally(t *testing.T) {
 		HasLastKnown:   true,
 		SelfElement:    0,
 		PlayerElement:  0,
-		AllyYielding:   true,
 	}, m, &selfPos)
 
 	pursue := NewPursueAction(state)
@@ -80,14 +71,8 @@ func TestPursueActionYieldsLaterally(t *testing.T) {
 	if status.String() != "running" && status.String() != "Running" {
 		t.Fatalf("pursue status = %v, want running", status)
 	}
-
-	// With yielding on, the actor must have moved off the x==5 line the
-	// runner is approaching along (the perpendicular offset direction).
-	if selfPos.X == 5 && selfPos.Y != 5 {
-		t.Fatalf("yielding pursue moved straight along x=5: %+v", selfPos)
-	}
-	if selfPos.X == 5 && selfPos.Y == 5 {
-		t.Fatalf("yielding pursue did not move the actor at all: %+v", selfPos)
+	if selfPos.X != 5.5 || selfPos.Y >= 5.5 {
+		t.Fatalf("same-element pursue should advance directly toward runner along x=5.5: %+v", selfPos)
 	}
 }
 

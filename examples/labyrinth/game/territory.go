@@ -3,6 +3,7 @@
 package game
 
 import (
+	"github.com/joeycumines/go-pabt/examples/labyrinth/brain"
 	"github.com/joeycumines/go-pabt/examples/labyrinth/maze"
 )
 
@@ -38,10 +39,16 @@ func TerritoryOf(m *maze.Maze, pos maze.Vec2) Element {
 }
 
 // homeTerritoryPos returns a random walkable position inside the given
-// faction's home quadrant, at least 9 cells from start and gate. It returns
-// false if no suitable cell was found, so the caller can fall back to an
-// unbiased spawn.
+// faction's home quadrant, at least 5 cells from start and gate, and at least
+// 8u from the runner with no line of sight so actors never spawn in plain view.
+// It returns false if no suitable cell was found, so the caller can fall back
+// to an unbiased spawn.
 func (g *Game) homeTerritoryPos(elem Element) (maze.Vec2, bool) {
+	avoidRunner := g.World != nil && g.Maze.W >= 15 && g.Maze.H >= 15
+	var runnerPos maze.Vec2
+	if avoidRunner {
+		runnerPos = g.World.Runner.Pos
+	}
 	for attempts := 0; attempts < 100; attempts++ {
 		cx := 1 + g.rng.Intn(g.Maze.W-2)
 		cy := 1 + g.rng.Intn(g.Maze.H-2)
@@ -53,6 +60,9 @@ func (g *Game) homeTerritoryPos(elem Element) (maze.Vec2, bool) {
 			continue
 		}
 		if distSq(pos, g.Maze.Start) < 25 || distSq(pos, g.Maze.Gate) < 25 {
+			continue
+		}
+		if avoidRunner && (distSq(pos, runnerPos) < 64 || brain.HasClearLOS(g.Maze, pos, runnerPos)) {
 			continue
 		}
 		return pos, true

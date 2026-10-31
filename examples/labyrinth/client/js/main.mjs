@@ -165,6 +165,8 @@ let actorThreads = new Map(); // actorID -> { focus: [x,y], element, advantage }
 // to innate control until the first snapshot arrives.
 let territoryControl = [0, 1, 2, 3];
 let hazards = []; // live crossfire rifts from the snapshot
+let bolts = new Map(); // id -> { id, pos: [x,y,z], vx, vy, element }
+let lastBoltSeq = -1;
 let clashSparks = []; // transient twin-color flashes at crossfire points
 let clashCount = 0;
 const ACTOR_MAX_HP = [40, 20, 25, 25]; // mirrors game.actorHP per archetype
@@ -500,6 +502,7 @@ function update(dt) {
         const pausedSnap = net.getSnapshot();
         if (pausedSnap && pausedSnap.data) {
             actorStore.applySnapshot(pausedSnap.seq, pausedSnap.data.minotaurs, performance.now() / 1000);
+            syncBoltsFromSnapshot(pausedSnap);
             if (btHud) btHud.pruneToRoster(pausedSnap.data.minotaurs.map(m => m.id));
         }
         actorStore.step(dt, maze);
@@ -710,11 +713,21 @@ function update(dt) {
     // actors exist, so removed ids drop instead of lingering as ghosts.
     if (snap && snap.data) {
         actorStore.applySnapshot(snap.seq, snap.data.minotaurs, now);
+        syncBoltsFromSnapshot(snap);
         // G3: keep the BT HUD rows synced with the live roster so a dead
         // actor drops immediately instead of lingering on its last frame.
         if (btHud) btHud.pruneToRoster(snap.data.minotaurs.map(m => m.id));
     }
     actorStore.step(dt, maze);
+    for (const buf of minotaurBuffers.values()) {
+        if (buf.justArrived) {
+            buf.justArrived = false;
+            if (particles) {
+                const ec = ELEMENT_COLORS[buf.element | 0] || ELEMENT_COLORS[0];
+                particles.arrivalBurst([buf.pos[0], buf.pos[1] + 0.35, buf.pos[2]], ec);
+            }
+        }
+    }
 
     // Advance projectiles; cull after 0.5s. Clash sparks fade over 0.4s.
     projectiles = projectiles.filter(p => now - p.born < 0.5);
@@ -725,6 +738,14 @@ function update(dt) {
         p.pos[2] += p.dir[2] * 40 * dt;
         // I1: trail particle behind each projectile every frame.
         if (particles) particles.trail(p.pos, p.color);
+    }
+    for (const b of bolts.values()) {
+        b.pos[0] += b.vx * dt;
+        b.pos[2] += b.vy * dt;
+        if (particles) {
+            const ec = ELEMENT_COLORS[b.element | 0] || ELEMENT_COLORS[2];
+            particles.trail(b.pos, ec);
+        }
     }
     // I1: advance particle simulation.
     if (particles) particles.update(dt);
@@ -776,6 +797,29 @@ function update(dt) {
 
 }
 
+function syncBoltsFromSnapshot(snap) {
+    if (!snap || !snap.data || snap.seq === lastBoltSeq) return;
+    lastBoltSeq = snap.seq;
+    const seen = new Set();
+    for (const b of snap.data.bolts || []) {
+        seen.add(b.id);
+        let cur = bolts.get(b.id);
+        if (!cur) {
+            cur = { id: b.id, pos: [b.x, PLAYER_HEIGHT * 0.78, b.y], vx: b.vx || 0, vy: b.vy || 0, element: b.element | 0 };
+            bolts.set(b.id, cur);
+        } else {
+            cur.pos[0] = b.x;
+            cur.pos[2] = b.y;
+            cur.vx = b.vx || 0;
+            cur.vy = b.vy || 0;
+            cur.element = b.element | 0;
+        }
+    }
+    for (const id of [...bolts.keys()]) {
+        if (!seen.has(id)) bolts.delete(id);
+    }
+}
+
 function installAriadne() {
     // Read-only debug hook for verification and the S4 debugging GUI.
     // Exposes live game state without pausing the game.
@@ -793,7 +837,14 @@ function installAriadne() {
         get actors() {
             const out = [];
             for (const [id, buf] of minotaurBuffers) {
-                out.push({ id, pos: [...buf.pos], type: buf.type, stunned: buf.stunned, element: buf.element, hp: buf.hp, strategy: buf.strategy, attackUntil: buf.attackUntil || 0, hurtUntil: buf.hurtUntil || 0 });
+                out.push({ id, pos: [...buf.pos], type: buf.type, stunned: buf.stunned, element: buf.element, hp: buf.hp, strategy: buf.strategy, atk: buf.atk || 0, atkType: buf.atkType || 0, attackUntil: buf.attackUntil || 0, hurtUntil: buf.hurtUntil || 0 });
+            }
+            return out;
+        },
+        get bolts() {
+            const out = [];
+            for (const b of bolts.values()) {
+                out.push({ id: b.id, x: b.pos[0], y: b.pos[2], vx: b.vx, vy: b.vy, element: b.element });
             }
             return out;
         },
@@ -811,7 +862,7 @@ function installAriadne() {
         get mazeSize() { return maze ? [maze.w, maze.h] : null; },
         get mazeGrid() { return maze && maze.grid ? Array.from(maze.grid) : null; },
         get gate() { return maze ? [maze.gateX, maze.gateY] : null; },
-        get projectileCount() { return projectiles.length; },
+        get projectileCount() { return projectiles.length + bolts.size; },
         get particleCount() { return particles ? particles.count : 0; },
         get playerVel() { return [playerVelX, playerVelY, playerVelZ]; },
         get inputState() { return { forward: input.forward, strafe: input.strafe, sprint: input.sprint, jump: input.jump }; },
@@ -1087,20 +1138,6 @@ function handleEvent(evt) {
                 const ec = ELEMENT_COLORS[elemIdx] || ELEMENT_COLORS[2];
                 const startX = evt.data.x;
                 const startZ = evt.data.y;
-                const dx = camera.pos[0] - startX;
-                const dz = camera.pos[2] - startZ;
-                const len = Math.hypot(dx, dz);
-                const dirX = len > 0.01 ? dx / len : 0;
-                const dirZ = len > 0.01 ? dz / len : 0;
-                projectiles.push({
-                    pos: [startX, PLAYER_HEIGHT * 0.8, startZ],
-                    dir: [dirX, 0, dirZ],
-                    color: ec,
-                    born: performance.now() / 1000,
-                    life: 0.8,
-                    maxLife: 0.8,
-                    speed: 12.0,
-                });
                 if (particles) {
                     particles.impactSparks([startX, PLAYER_HEIGHT * 0.8, startZ], ec);
                 }
@@ -1404,30 +1441,40 @@ function render() {
         // Wounded actors dim toward black so battle damage reads at a glance.
         const hpFrac = Math.max(0, Math.min(1, (buf.hp === undefined ? 1 : buf.hp) / (ACTOR_MAX_HP[buf.type|0] || 30)));
         const dim = 0.45 + 0.55 * hpFrac;
-        const tint = buf.stunned ? stunnedColor : [ec[0] * dim, ec[1] * dim, ec[2] * dim, 1.0];
+        const atk = Math.max(0, Math.min(1, buf.atk || 0));
+        const baseTint = buf.stunned ? stunnedColor : [ec[0] * dim, ec[1] * dim, ec[2] * dim, 1.0];
+        const tint = atk > 0 && !buf.stunned
+            ? [
+                baseTint[0] + (1 - baseTint[0]) * atk * 0.78,
+                baseTint[1] + (1 - baseTint[1]) * atk * 0.78,
+                baseTint[2] + (1 - baseTint[2]) * atk * 0.78,
+                1.0,
+            ]
+            : baseTint;
+        const atkPulse = 1 + 0.18 * atk;
         const model = modelsReady ? modelBank.models.get(modelFor(id, buf.type, buf.element)) : null;
         if (model) {
             let anim = 'idle';
             if (buf.stunned || (buf.hurtUntil || 0) > actNow) anim = 'hurt';
-            else if ((buf.attackUntil || 0) > actNow) anim = 'attack';
+            else if (atk > 0 || (buf.attackUntil || 0) > actNow) anim = 'attack';
             else if ((buf.step || 0) > 0.002) anim = 'move';
             const animName = ModelBank.pickAnim(model, anim) || ModelBank.pickAnim(model, 'idle');
-            const scale = visualH / model.height;
+            const scale = (visualH * atkPulse) / model.height;
             const mm = new Float32Array(16);
             actorModelMatrix(buf.pos, buf.yaw || 0, scale, -buf.pos[1] - model.minY * scale, mm);
             const fae = FACTION_EMISSIVE[buf.element|0] || FACTION_EMISSIVE[0];
-            const fas = FACTION_EMISSIVE_STRENGTH[buf.element|0] || 0.5;
+            const fas = (FACTION_EMISSIVE_STRENGTH[buf.element|0] || 0.5) + atk * 0.6;
             modelBank.draw(model, animName, actNow + hashPhase(id), mm, tint, true, fae, fas);
         } else {
             let bodyScale, headY, eyeY;
             switch (buf.type|0) {
-                case 1: bodyScale = [0.3, 0.4, 0.3]; headY = 0.5; eyeY = 0.55; break;
-                case 2: bodyScale = [0.35, 1.0, 0.35]; headY = 1.05; eyeY = 1.1; break;
-                case 3: bodyScale = [0.6, 0.5, 0.6]; headY = 0.6; eyeY = 0.65; break;
-                default: bodyScale = [0.5, 0.8, 0.5]; headY = 0.8; eyeY = 0.85;
+                case 1: bodyScale = [0.3 * atkPulse, 0.4 * atkPulse, 0.3 * atkPulse]; headY = 0.5 * atkPulse; eyeY = 0.55 * atkPulse; break;
+                case 2: bodyScale = [0.35 * atkPulse, 1.0 * atkPulse, 0.35 * atkPulse]; headY = 1.05 * atkPulse; eyeY = 1.1 * atkPulse; break;
+                case 3: bodyScale = [0.6 * atkPulse, 0.5 * atkPulse, 0.6 * atkPulse]; headY = 0.6 * atkPulse; eyeY = 0.65 * atkPulse; break;
+                default: bodyScale = [0.5 * atkPulse, 0.8 * atkPulse, 0.5 * atkPulse]; headY = 0.8 * atkPulse; eyeY = 0.85 * atkPulse;
             }
             instances.push({ pos: [buf.pos[0], buf.pos[1] + bodyScale[1] / 2, buf.pos[2]], scale: bodyScale, color: tint });
-            instances.push({ pos: [buf.pos[0], buf.pos[1] + headY, buf.pos[2]], scale: [0.3, 0.3, 0.3], color: buf.stunned ? stunnedColor : [Math.min(1, ec[0] + 0.2), Math.min(1, ec[1] + 0.2), Math.min(1, ec[2] + 0.2), 1.0] });
+            instances.push({ pos: [buf.pos[0], buf.pos[1] + headY, buf.pos[2]], scale: [0.3 * atkPulse, 0.3 * atkPulse, 0.3 * atkPulse], color: buf.stunned ? stunnedColor : [Math.min(1, ec[0] + 0.2 + atk * 0.5), Math.min(1, ec[1] + 0.2 + atk * 0.5), Math.min(1, ec[2] + 0.2 + atk * 0.5), 1.0] });
             instances.push({ pos: [buf.pos[0] - 0.1, buf.pos[1] + eyeY, buf.pos[2] - 0.15], scale: [0.08, 0.08, 0.08], color: [1, 1, 1, 1] });
             instances.push({ pos: [buf.pos[0] + 0.1, buf.pos[1] + eyeY, buf.pos[2] - 0.15], scale: [0.08, 0.08, 0.08], color: [1, 1, 1, 1] });
         }
@@ -1508,6 +1555,16 @@ function render() {
             pos: [p.pos[0], p.pos[1], p.pos[2]],
             scale: [0.12, 0.12, 0.6],
             color: p.color,
+        });
+    }
+
+    // Server bolt projectiles from casters.
+    for (const b of bolts.values()) {
+        const ec = ELEMENT_COLORS[b.element | 0] || ELEMENT_COLORS[2];
+        instances.push({
+            pos: [b.pos[0], b.pos[1], b.pos[2]],
+            scale: [0.28, 0.28, 0.28],
+            color: [Math.min(1, ec[0] + 0.25), Math.min(1, ec[1] + 0.25), Math.min(1, ec[2] + 0.25), 1.0],
         });
     }
 

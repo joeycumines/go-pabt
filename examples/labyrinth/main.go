@@ -423,6 +423,18 @@ func snapshotToProto(snap *world.Snapshot) proto.SnapshotPayload {
 			Element:  m.Element,
 			HP:       m.HP,
 			Strategy: m.Strategy,
+			Atk:      m.Atk,
+			AtkType:  m.AtkType,
+		})
+	}
+	for _, b := range snap.Bolts {
+		p.Bolts = append(p.Bolts, proto.BoltState{
+			ID:      b.ID,
+			X:       b.Pos.X,
+			Y:       b.Pos.Y,
+			VX:      b.Vel.X,
+			VY:      b.Vel.Y,
+			Element: b.Element,
 		})
 	}
 	for _, h := range snap.Hazards {

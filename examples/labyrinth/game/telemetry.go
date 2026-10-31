@@ -275,6 +275,18 @@ func (g *Game) FirePulse(id SessionID, fireRound int, aim netcode.RayHitOrigin) 
 			return
 		}
 		g.pulsesFired.Add(1)
+		// Gunshot alert: every living actor within 10u hears the shot and
+		// updates its LastKnownPos to the runner's position.
+		for i, m := range w.Minotaurs {
+			if m.HP <= 0 || i >= len(g.Brains) {
+				continue
+			}
+			dx := m.Pos.X - w.Runner.Pos.X
+			dy := m.Pos.Y - w.Runner.Pos.Y
+			if dx*dx+dy*dy <= 10.0*10.0 {
+				g.Brains[i].AlertPlayerPos(w.Runner.Pos)
+			}
+		}
 		bestIdx := -1
 		bestRange := math.MaxFloat64
 		for i, hist := range g.Histories {

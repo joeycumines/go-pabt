@@ -207,6 +207,7 @@ type Game struct {
 	// because clients may still hold interpolation buffers for a removed
 	// actor when its old ID would otherwise be handed to a respawn.
 	nextActorID int
+	nextBoltID  int
 
 	// actorStates is parallel to World.Minotaurs (faction combat cooldowns
 	// and strategy state). Only touched on the writer goroutine.
@@ -298,6 +299,11 @@ func (g *Game) spawnActor(typ ActorType) {
 		pos, found = p, true
 	}
 	if !found {
+		avoidRunner := g.World != nil && g.Maze.W >= 15 && g.Maze.H >= 15
+		var runnerPos maze.Vec2
+		if avoidRunner {
+			runnerPos = g.World.Runner.Pos
+		}
 		for attempts := 0; attempts < 200; attempts++ {
 			cx := 1 + g.rng.Intn(g.Maze.W-2)
 			cy := 1 + g.rng.Intn(g.Maze.H-2)
@@ -306,6 +312,9 @@ func (g *Game) spawnActor(typ ActorType) {
 			}
 			p := maze.Vec2{X: float64(cx) + 0.5, Y: float64(cy) + 0.5}
 			if distSq(p, g.Maze.Start) < 25 || distSq(p, g.Maze.Gate) < 25 {
+				continue
+			}
+			if avoidRunner && (distSq(p, runnerPos) < 64 || brain.HasClearLOS(g.Maze, p, runnerPos)) {
 				continue
 			}
 			pos, found = p, true
@@ -405,9 +414,6 @@ func (g *Game) tickLogic(w *world.World) {
 		snap := w.Copy()
 		b.UpdateWorldView(snap, m)
 		b.Tick("tick")
-		if tel := b.LastTelemetry(); tel.CastBolt && w.Round%30 == 0 {
-			g.casterBolt(w, m)
-		}
 		afterBrainPos[i] = m.Pos
 
 		// Record position for lag compensation.
@@ -416,9 +422,9 @@ func (g *Game) tickLogic(w *world.World) {
 		}
 	}
 
-	// I3: contact damage + mass-ratio knockback between runner and actors.
-	// Runs outside the brain loop so it fires regardless of brain state.
+	// I3/T7: telegraphed melee attacks, caster bolts, and mass-ratio knockback.
 	g.tickContactDamage(w)
+	g.tickBolts(w)
 	afterKnockbackPos := make([]maze.Vec2, len(w.Minotaurs))
 	for i, m := range w.Minotaurs {
 		afterKnockbackPos[i] = m.Pos
@@ -702,8 +708,9 @@ func (g *Game) submitWorldResetIfTerminal(sess *PlayerSession) {
 		for i := 0; i < TargetActorCount; i++ {
 			g.spawnActor(ActorType(i % 4))
 		}
-		// Reset hazards and re-spawn power-ups.
+		// Reset hazards, bolts, and re-spawn power-ups.
 		w.Hazards = nil
+		w.Bolts = nil
 		w.PowerUps = nil
 		spawnPowerUps(w, g.rng)
 		// Sync the session's authoritative position so the client's

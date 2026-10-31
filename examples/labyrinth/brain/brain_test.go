@@ -34,8 +34,21 @@ func TestDisadvantagedMinotaurRetreats(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewBrain: %v", err)
 	}
+	// At full HP (40/40 >= 60%), a disadvantaged actor stays aggressive and does not retreat.
+	minotaur.HP = 40
 	snap := w.Copy()
 	b.UpdateWorldView(snap, minotaur)
+	if b.world.AtDisadvantage {
+		t.Fatalf("full-HP disadvantaged actor should not set AtDisadvantage")
+	}
+
+	// When wounded (< 60% of max HP), AtDisadvantage triggers Retreat.
+	minotaur.HP = 15
+	snap = w.Copy()
+	b.UpdateWorldView(snap, minotaur)
+	if !b.world.AtDisadvantage {
+		t.Fatalf("wounded disadvantaged actor should set AtDisadvantage")
+	}
 	var sawRetreat bool
 	for i := 0; i < 10; i++ {
 		snap = w.Copy()
@@ -54,7 +67,7 @@ func TestDisadvantagedMinotaurRetreats(t *testing.T) {
 		}
 	}
 	if !sawRetreat {
-		t.Fatalf("disadvantaged actor never executed Retreat action")
+		t.Fatalf("wounded disadvantaged actor never executed Retreat action")
 	}
 }
 

@@ -371,6 +371,7 @@ func evalO7DisadvantageResolution(ep *EpisodeResult) OracleResult {
 	reinforceDist := ep.Causality.ActionDistance["Reinforce"]
 	disadvantageDetectedTicks := 0
 	pursueWhileDisadvantaged := 0
+	fullHPDisadvantagedPursue := 0
 	retreatSuccess := 0
 	retreatAbortedAtBoundary := 0
 	for i := 1; i < len(ep.Records); i++ {
@@ -384,6 +385,8 @@ func evalO7DisadvantageResolution(ep *EpisodeResult) OracleResult {
 				if a.Brain.ActiveAction == "Pursue" {
 					pursueWhileDisadvantaged++
 				}
+			} else if a.Brain.PlayerDetected && (ep.Records[i].RunnerElement+1)%4 == a.Element && a.Brain.ActiveAction == "Pursue" {
+				fullHPDisadvantagedPursue++
 			}
 			prev, ok := prevMap[a.ActorID]
 			if !ok {
@@ -398,15 +401,15 @@ func evalO7DisadvantageResolution(ep *EpisodeResult) OracleResult {
 			}
 		}
 	}
-	metric := fmt.Sprintf("disadvantageTicks=%d, pursueWhileDisadvantaged=%d, retreatTicks=%d (dist=%.2fu), reinforceTicks=%d (dist=%.2fu)",
-		disadvantageDetectedTicks, pursueWhileDisadvantaged, retreatTicks, retreatDist, reinforceTicks, reinforceDist)
-	if disadvantageDetectedTicks < 10 {
+	metric := fmt.Sprintf("disadvantageTicks=%d, fullHPDisadvantagedPursue=%d, pursueWhileDisadvantaged=%d, retreatTicks=%d (dist=%.2fu), reinforceTicks=%d (dist=%.2fu)",
+		disadvantageDetectedTicks, fullHPDisadvantagedPursue, pursueWhileDisadvantaged, retreatTicks, retreatDist, reinforceTicks, reinforceDist)
+	if disadvantageDetectedTicks+fullHPDisadvantagedPursue < 10 {
 		return OracleResult{
 			ID:        "O7",
 			Name:      "OracleDisadvantageResolution",
 			Verdict:   VerdictFail,
 			Metric:    metric,
-			Summary:   fmt.Sprintf("Elemental disadvantage was not exercised sufficiently (%d ticks < 10 floor; vacuous run).", disadvantageDetectedTicks),
+			Summary:   fmt.Sprintf("Elemental disadvantage was not exercised sufficiently (%d ticks < 10 floor; vacuous run).", disadvantageDetectedTicks+fullHPDisadvantagedPursue),
 			RootCause: "Actors at elemental disadvantage against runner never engaged or detected the runner.",
 		}
 	}
@@ -416,11 +419,11 @@ func evalO7DisadvantageResolution(ep *EpisodeResult) OracleResult {
 			Name:      "OracleDisadvantageResolution",
 			Verdict:   VerdictFail,
 			Metric:    metric,
-			Summary:   fmt.Sprintf("Actors at disadvantage pursued the advantaged runner for %d ticks instead of retreating or reinforcing.", pursueWhileDisadvantaged),
-			RootCause: "brain/state.go & brain/actions.go: KeyAtDisadvantage precondition must prevent PursueAction when disadvantaged.",
+			Summary:   fmt.Sprintf("Wounded actors at disadvantage pursued the advantaged runner for %d ticks instead of retreating or reinforcing.", pursueWhileDisadvantaged),
+			RootCause: "brain/state.go & brain/actions.go: KeyAtDisadvantage precondition must prevent PursueAction when wounded and disadvantaged.",
 		}
 	}
-	if (retreatTicks+reinforceTicks) < 10 || (retreatDist+reinforceDist) < 1.0 {
+	if disadvantageDetectedTicks >= 10 && ((retreatTicks+reinforceTicks) < 10 || (retreatDist+reinforceDist) < 1.0) {
 		return OracleResult{
 			ID:        "O7",
 			Name:      "OracleDisadvantageResolution",

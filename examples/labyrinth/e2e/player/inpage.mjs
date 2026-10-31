@@ -79,7 +79,8 @@ export function installProbe(opts) {
                         pe.wire.push({
                             t, kind: 'snap', round: env.p.round,
                             runner: env.p.runner ? [env.p.runner.x, env.p.runner.y, env.p.runner.hp] : null,
-                            m: (env.p.minotaurs || []).map((m) => [m.id, m.x, m.y, m.hp, m.stunned ? 1 : 0]),
+                            m: (env.p.minotaurs || []).map((m) => [m.id, m.x, m.y, m.hp, m.stunned ? 1 : 0, m.atk || 0, m.atkType || 0]),
+                            bolts: (env.p.bolts || []).map((b) => [b.id, b.x, b.y, b.vx || 0, b.vy || 0, b.element || 0]),
                         });
                     } else if (env.t === 'event' && env.p) {
                         pe.wire.push({ t, kind: 'event', type: env.p.type, data: env.p.data });

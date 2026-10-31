@@ -36,6 +36,17 @@ type SnapshotPayload struct {
 	Intensity        int             `json:"intensity"`
 	TerritoryControl [4]int          `json:"territoryControl"`
 	Hazards          []HazardState   `json:"hazards"`
+	Bolts            []BoltState     `json:"bolts,omitempty"`
+}
+
+// BoltState is one ranged projectile's state in a snapshot.
+type BoltState struct {
+	ID      int     `json:"id"`
+	X       float64 `json:"x"`
+	Y       float64 `json:"y"`
+	VX      float64 `json:"vx"`
+	VY      float64 `json:"vy"`
+	Element int     `json:"element"`
 }
 
 // RunnerState is the player's state in a snapshot.
@@ -64,6 +75,10 @@ type MinotaurState struct {
 	// Strategy is the actor's current faction strategy: 0=patrol 1=raid
 	// 2=retreat.
 	Strategy int `json:"strategy"`
+	// Atk is the actor's normalized attack windup progress in [0, 1].
+	Atk float64 `json:"atk,omitempty"`
+	// AtkType is 1 for melee windup, 2 for ranged bolt windup.
+	AtkType int `json:"atkType,omitempty"`
 }
 
 // PowerUpState is one elemental pickup in a snapshot.

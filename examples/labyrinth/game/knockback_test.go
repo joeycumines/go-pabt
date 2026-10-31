@@ -57,11 +57,24 @@ func TestContactKnockbackDisplacesBoth(t *testing.T) {
 	beforeRunner := w.Runner.Pos
 	beforeActor := brute.Pos
 
-	// One tick of contact: HP must drop, and both bodies must move.
+	// Telegraphed melee: tick through the 12-tick windup window. During windup
+	// brute.Atk ramps in (0, 1]; on the 13th tick the strike lands.
 	g.tickLogic(w)
+	if brute.Windup != MeleeWindupTicks {
+		t.Fatalf("brute should start melee windup (%d ticks), got %d", MeleeWindupTicks, brute.Windup)
+	}
+	if brute.Atk <= 0 || brute.AtkType != 1 {
+		t.Fatalf("brute should report melee windup telemetry: atk=%v atkType=%v", brute.Atk, brute.AtkType)
+	}
+	for i := 0; i < MeleeWindupTicks; i++ {
+		// Restore overlap so separateRunnerFromActors during windup doesn't push out of strike range.
+		w.Runner.Pos = beforeRunner
+		brute.Pos = beforeActor
+		g.tickLogic(w)
+	}
 
 	if w.Runner.HP >= 100 {
-		t.Fatalf("runner HP should have decreased from contact damage, got %v", w.Runner.HP)
+		t.Fatalf("runner HP should have decreased from melee damage after windup, got %v", w.Runner.HP)
 	}
 	runnerDist := math.Hypot(w.Runner.Pos.X-beforeRunner.X, w.Runner.Pos.Y-beforeRunner.Y)
 	actorDist := math.Hypot(brute.Pos.X-beforeActor.X, brute.Pos.Y-beforeActor.Y)

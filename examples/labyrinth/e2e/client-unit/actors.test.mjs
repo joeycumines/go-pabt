@@ -99,3 +99,17 @@ test('step with maze resolves interpolated position out of corner walls', () => 
         assert.notEqual(grid[cz * 5 + cx], 0, `actor entered wall cell (${cx},${cz}) at (${p[0]},${p[2]})`);
     }
 });
+
+test('atk telegraph and justArrived flag are tracked across snapshots', () => {
+    const store = new ActorStore();
+    store.applySnapshot(1, [snap('B-1', 1, 1)], 0);
+    assert.equal(store.get('B-1').justArrived, false, 'initial snapshot roster should not flag justArrived');
+    assert.equal(store.get('B-1').atk, 0);
+
+    store.applySnapshot(2, [snap('B-1', 1, 1, { atk: 0.5, atkType: 1 }), snap('C-2', 5, 5, { atk: 0.8, atkType: 2 })], 0.05);
+    assert.equal(store.get('B-1').atk, 0.5);
+    assert.equal(store.get('B-1').atkType, 1);
+    assert.equal(store.get('C-2').justArrived, true, 'actor appearing in subsequent snapshot flags justArrived');
+    assert.equal(store.get('C-2').atk, 0.8);
+    assert.equal(store.get('C-2').atkType, 2);
+});

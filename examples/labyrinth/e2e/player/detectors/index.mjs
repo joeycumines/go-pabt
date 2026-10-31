@@ -7,7 +7,7 @@ import { detectControls, detectLook, detectSnaps, detectStalls, detectStuckKey, 
 import { detectCrosshair, detectHpTruth, detectSilentDamage, detectLayering } from './hud.mjs';
 import { detectEmbeddedActors, detectPlayerInWall, detectShots, detectFlow, detectHealth } from './world.mjs';
 import { detectRenderTruth } from './truth.mjs';
-import { detectBodyCollision, detectGunImpact, detectUnseenDamage, detectEngagement, detectGhosts } from './feel.mjs';
+import { detectBodyCollision, detectGunImpact, detectUnseenDamage, detectEngagement, detectGhosts, detectTelegraph } from './feel.mjs';
 
 export function gridOf(tl) {
     if (!tl.grid) return null;
@@ -52,6 +52,7 @@ export function runDetectors(tl, runDir) {
         ...detectUnseenDamage(tl, grid),
         ...detectEngagement(tl, grid),
         ...detectGhosts(tl),
+        ...detectTelegraph(tl),
         ...detectRenderTruth(tl),
         ...detectPilotRealism(tl, grid),
     ];

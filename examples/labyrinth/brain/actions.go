@@ -53,6 +53,10 @@ func (e *effect) Value() any { return e.V }
 // moveSpeed is cells per tick the actor advances along its path.
 const moveSpeed = 0.35
 
+// AttackRange is the distance within which a pursuing actor stops closing and
+// triggers its melee windup.
+const AttackRange = 0.85
+
 // stuckLimit is the number of consecutive ticks a movement action may produce
 // zero displacement before it reports bt.Failure to the planner.
 const stuckLimit = 30
@@ -180,7 +184,7 @@ func (a *PursueAction) Node() bt.Node {
 		}
 		target := a.state.world.PlayerPos
 		dBefore := math.Hypot(target.X-a.state.selfPos.X, target.Y-a.state.selfPos.Y)
-		if dBefore < 0.6 {
+		if dBefore <= AttackRange {
 			a.state.world.Caught = true
 			return bt.Success, nil
 		}
@@ -204,8 +208,8 @@ func (a *PursueAction) Node() bt.Node {
 			if hasLOS && dBefore <= 7.0 {
 				a.state.world.CastBoltThisTick = true
 			}
-			if dBefore < 2.8 && hasLOS {
-				// Player is too close: kite backward to maintain standoff distance.
+			if dBefore < 1.8 && hasLOS {
+				// Player is at point-blank range: kite backward to maintain standoff distance.
 				a.state.world.ArchetypeAction = "CasterKiteBack"
 				dx := a.state.selfPos.X - target.X
 				dy := a.state.selfPos.Y - target.Y
@@ -241,7 +245,7 @@ func (a *PursueAction) Node() bt.Node {
 					a.state.movedThisTick = true
 				}
 				return bt.Running, nil
-			} else if dBefore >= 2.0 && dBefore <= 5.5 && hasLOS {
+			} else if dBefore >= 1.8 && dBefore <= 2.3 && hasLOS {
 				// Sweet spot: hold standoff position and cast ranged elemental bolt.
 				a.state.world.ArchetypeAction = "CasterRangedBolt"
 				a.state.world.CastBoltThisTick = true
@@ -264,10 +268,7 @@ func (a *PursueAction) Node() bt.Node {
 		}
 
 		var shifted *maze.Vec2
-		if a.state.world.AllyYielding {
-			s := yieldOffset(target, *a.state.selfPos)
-			shifted = &s
-		} else if a.state.world.SelfArchetype == 3 && dBefore > 2.2 {
+		if a.state.world.SelfArchetype == 3 && dBefore > 2.2 {
 			s := flankOffset(target, *a.state.selfPos)
 			shifted = &s
 		}
@@ -284,7 +285,7 @@ func (a *PursueAction) Node() bt.Node {
 		}
 		dAfter := math.Hypot(a.state.world.PlayerPos.X-a.state.selfPos.X,
 			a.state.world.PlayerPos.Y-a.state.selfPos.Y)
-		if dAfter < 0.6 {
+		if dAfter <= AttackRange {
 			a.state.world.Caught = true
 			return bt.Success, nil
 		}
@@ -491,6 +492,8 @@ func (a *RetreatAction) Node() bt.Node {
 		} else {
 			a.stuck++
 			if a.stuck >= stuckLimit {
+				a.state.world.AtDisadvantage = false
+				a.state.world.DisadvantageResolvedTicks = 60
 				return bt.Failure, nil
 			}
 		}

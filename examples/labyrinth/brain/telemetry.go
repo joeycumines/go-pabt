@@ -180,7 +180,7 @@ func (b *Brain) buildTickTelemetry(prePos, postPos maze.Vec2, moved bool, frame 
 	if t.ActionStatus == int(bt.Success) && disp < 1e-6 {
 		switch t.ActiveAction {
 		case "Pursue":
-			if playerDist > 0.65 {
+			if playerDist > AttackRange+0.05 {
 				t.ZeroMoveActionSuccess = true
 			}
 		case "Search":

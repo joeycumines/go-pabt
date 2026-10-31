@@ -5,6 +5,7 @@ package game
 import (
 	"math"
 
+	"github.com/joeycumines/go-pabt/examples/labyrinth/brain"
 	"github.com/joeycumines/go-pabt/examples/labyrinth/maze"
 	"github.com/joeycumines/go-pabt/examples/labyrinth/world"
 )
@@ -26,8 +27,16 @@ const (
 	RegenDelayTicks = 180
 	// RegenIntervalTicks is how often one HP returns once regen starts.
 	RegenIntervalTicks = 15
-	// ContactCooldownTicks gates repeat contact damage from one actor.
-	ContactCooldownTicks = 30
+	// ContactCooldownTicks gates repeat melee attacks from one actor: 45 ticks (1.5s).
+	ContactCooldownTicks = 45
+	// MeleeWindupTicks is the telegraphed melee windup duration: 12 ticks (0.4s).
+	MeleeWindupTicks = 12
+	// MeleeTriggerRange is the distance at which an actor begins its melee windup.
+	MeleeTriggerRange = 0.85
+	// MeleeStrikeRange is the maximum distance at which a completed windup lands.
+	MeleeStrikeRange = 1.1
+	// MeleeKnockback is the base knockback impulse on a melee strike.
+	MeleeKnockback = 0.5
 	// BoltDamage is a caster's ranged hit.
 	BoltDamage = 2
 )
@@ -131,53 +140,65 @@ func (g *Game) syncRunnerSessions(w *world.World) {
 	}
 }
 
-// casterBolt fires one caster's ranged attack: the projectile event the
-// client draws, then damage through the shared pipeline.
-func (g *Game) casterBolt(w *world.World, m *world.Minotaur) {
-	g.broadcastEvent(Event{
-		Type: "bolt",
-		Data: map[string]interface{}{
-			"id":      m.ID,
-			"element": m.Element,
-			"x":       m.Pos.X,
-			"y":       m.Pos.Y,
-		},
-	})
-	g.damageRunner(w, BoltDamage, "bolt", m.Pos, m.ID)
-}
-
-// tickContactDamage applies melee contact damage and mass-ratio knockback
-// between the runner and every non-stunned actor within 0.7u. Runs outside the
-// brain loop so it fires regardless of brain iteration state.
+// tickContactDamage drives telegraphed melee attacks (WindupTicks = 12 = 0.4s)
+// for every living actor within MeleeTriggerRange (0.85u). When the windup
+// completes, if the runner is still within MeleeStrikeRange (1.1u) with clear
+// line of sight, damage and mass-ratio knockback are applied.
 func (g *Game) tickContactDamage(w *world.World) {
 	for _, m := range w.Minotaurs {
-		if m.HP <= 0 || m.Stunned || m.AttackCooldown > 0 {
+		if m.HP <= 0 || m.Stunned {
+			if m.AtkType == 1 {
+				m.Windup = 0
+				m.Atk = 0
+				m.AtkType = 0
+			}
+			continue
+		}
+		if m.AtkType == 1 && m.Windup > 0 {
+			m.Windup--
+			if m.Windup > 0 {
+				m.Atk = float64(MeleeWindupTicks-m.Windup+1) / float64(MeleeWindupTicks)
+				continue
+			}
+			// Windup finished: strike if still within MeleeStrikeRange and clear LOS.
+			m.Atk = 0
+			m.AtkType = 0
+			m.AttackCooldown = ContactCooldownTicks
+			dx := m.Pos.X - w.Runner.Pos.X
+			dy := m.Pos.Y - w.Runner.Pos.Y
+			if dx*dx+dy*dy > MeleeStrikeRange*MeleeStrikeRange {
+				continue
+			}
+			if !brain.HasClearLOS(g.Maze, m.Pos, w.Runner.Pos) {
+				continue
+			}
+			dmg := actorDamage(ActorType(m.Type))
+			if !g.damageRunner(w, dmg, "melee", m.Pos, m.ID) {
+				continue
+			}
+			d := math.Hypot(dx, dy)
+			if d < 1e-9 {
+				d = 1e-9
+				dx, dy = 1e-9, 0
+			}
+			ux, uy := dx/d, dy/d
+			aMass := actorMass(ActorType(m.Type))
+			totalMass := RunnerMass + aMass
+			g.knockRunner(w, maze.Vec2{X: -dx, Y: -dy}, MeleeKnockback*(aMass/totalMass))
+			actorPush := MeleeKnockback * (RunnerMass / totalMass)
+			m.Pos = g.knockActor(m.Pos, ux, uy, actorPush)
+			continue
+		}
+		if m.Windup > 0 || m.AttackCooldown > 0 {
 			continue
 		}
 		dx := m.Pos.X - w.Runner.Pos.X
 		dy := m.Pos.Y - w.Runner.Pos.Y
-		if dx*dx+dy*dy >= 0.7*0.7 {
-			continue
+		if dx*dx+dy*dy <= MeleeTriggerRange*MeleeTriggerRange && brain.HasClearLOS(g.Maze, m.Pos, w.Runner.Pos) {
+			m.Windup = MeleeWindupTicks
+			m.AtkType = 1
+			m.Atk = 1.0 / float64(MeleeWindupTicks)
 		}
-		dmg := actorDamage(ActorType(m.Type))
-		if !g.damageRunner(w, dmg, "contact", m.Pos, m.ID) {
-			continue // invulnerable: no damage, no shove
-		}
-		m.AttackCooldown = ContactCooldownTicks
-		// Push both bodies apart by the mass-ratio impulse. The runner's
-		// share goes through knockRunner so the maze, not the impulse,
-		// decides the final position.
-		d := math.Hypot(dx, dy)
-		if d < 1e-9 {
-			d = 1e-9
-			dx, dy = 1e-9, 0
-		}
-		ux, uy := dx/d, dy/d
-		aMass := actorMass(ActorType(m.Type))
-		totalMass := RunnerMass + aMass
-		g.knockRunner(w, maze.Vec2{X: -dx, Y: -dy}, ContactKnockback*(aMass/totalMass))
-		actorPush := ContactKnockback * (RunnerMass / totalMass)
-		m.Pos = g.knockActor(m.Pos, ux, uy, actorPush)
 	}
 }
 

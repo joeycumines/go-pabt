@@ -210,7 +210,11 @@ export function feelProfile(tl, grid) {
             lastPos.set(a.id, { t: s.t, x: a.x, z: a.z, vis: onScreen(grid, s, a) });
         }
         const nowVisible = new Map(vis.map((a) => [a.id, a]));
-        if (i) {
+        // Ignore a page reload or world reset boundary (round reset or >1s
+        // gap while in menus) so replacing the old run's roster with the new
+        // run's initial roster is not counted as mid-play pop-in or vanish.
+        const continuousPlay = i && s.t - ps[i - 1].t <= 1000 && !(typeof s.round === 'number' && typeof ps[i - 1].round === 'number' && s.round < ps[i - 1].round);
+        if (continuousPlay) {
             for (const [id, a] of nowVisible) {
                 if (!prevVisible.has(id) && !(ps[i - 1].actors || []).some((x) => x.id === id)) popIns.push({ t: s.t, id, d: Math.hypot(a.x - s.pos[0], a.z - s.pos[2]) });
             }
@@ -302,4 +306,31 @@ export function detectEngagement(tl, grid) {
         out.push(finding('D16', 'S2', 'Enemies teleport in plain view', { t: tp[0].t, evidence: { count: tp.length, maxJumpU: fmt(Math.max(...tp.map((x) => x.step))) } }));
     }
     return out;
+}
+
+// D18: every melee/contact hit on the player must be preceded within 600ms by
+// an active windup telegraph (atk > 0) for that attacker in the server wire tap.
+export function detectTelegraph(tl) {
+    const snaps = (tl.wire || []).filter((w) => w.kind === 'snap' && Array.isArray(w.m));
+    if (!snaps.length) return [];
+    const hits = eventTimes(tl).filter((e) =>
+        e.type === 'hit' && e.t !== null && e.data &&
+        (e.data.source === 'melee' || e.data.source === 'contact') && e.data.attacker,
+    );
+    if (!hits.length) return [];
+    const untelegraphed = [];
+    for (const h of hits) {
+        const attackerId = h.data.attacker;
+        const win = snaps.filter((s) => s.t >= h.t - 600 && s.t <= h.t + 50);
+        const telegraphed = win.some((s) => s.m.some((m) => m[0] === attackerId && (m[5] || 0) > 0));
+        if (!telegraphed) {
+            untelegraphed.push({ t: h.t, attacker: attackerId, source: h.data.source, damage: h.data.damage });
+        }
+    }
+    if (!untelegraphed.length) return [];
+    return [finding('D18', 'S2', 'Melee hits land immediately with no visible windup telegraph', {
+        t: untelegraphed[0].t,
+        evidence: { untelegraphedHits: untelegraphed.length, totalMeleeHits: hits.length, example: untelegraphed[0] },
+        detail: 'Every melee hit on the player must be preceded within 600ms by a server windup telegraph (atk > 0) so the player can see and dodge the strike.',
+    })];
 }

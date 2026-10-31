@@ -148,6 +148,36 @@ func (b *Brain) SetPatrolTarget(pos maze.Vec2) {
 	b.world.HasPatrolTarget = true
 }
 
+// AlertPlayerPos updates the actor's last-known player position when a nearby
+// gunshot or sigil hunt reveals the runner's location.
+func (b *Brain) AlertPlayerPos(pos maze.Vec2) {
+	b.world.LastKnownPos = pos
+	b.world.HasLastKnown = true
+	b.world.SearchExhausted = false
+	b.worldRevision.Add(1)
+}
+
+// Engaged reports whether the brain is actively engaged with the player
+// (player detected in line of sight or within attack range).
+func (b *Brain) Engaged() bool {
+	return b.world.PlayerDetected || b.world.Caught
+}
+
+func actorMaxHP(typ int) int {
+	switch typ {
+	case 0:
+		return 40
+	case 1:
+		return 20
+	case 2:
+		return 25
+	case 3:
+		return 25
+	default:
+		return 30
+	}
+}
+
 // UpdateWorldView refreshes the brain's world view from the world snapshot
 // and the actor's own position. It is called by the loop before Tick.
 func (b *Brain) UpdateWorldView(snap *world.Snapshot, self *world.Minotaur) {
@@ -182,7 +212,7 @@ func (b *Brain) UpdateWorldView(snap *world.Snapshot, self *world.Minotaur) {
 		b.world.LastKnownPos = snap.Runner.Pos
 		b.world.HasLastKnown = true
 		b.world.SearchExhausted = false
-		if dist2 >= 0.65*0.65 {
+		if dist2 > AttackRange*AttackRange {
 			b.world.Caught = false
 		}
 		switch {
@@ -213,10 +243,13 @@ func (b *Brain) UpdateWorldView(snap *world.Snapshot, self *world.Minotaur) {
 
 	// Elemental advantage: fire > ice > lightning > void > fire.
 	// advantage(attacker, defender) = 2x if (attacker+1)%4 == defender.
+	// Disadvantage triggers retreat only when wounded (< 60% of max HP).
 	playerBeatsSelf := (b.world.PlayerElement+1)%4 == b.world.SelfElement
 	selfBeatsPlayer := (b.world.SelfElement+1)%4 == b.world.PlayerElement
 	dist := math.Sqrt(dist2)
-	b.world.AtDisadvantage = detected && playerBeatsSelf && b.world.DisadvantageResolvedTicks == 0 && dist >= 0.6
+	maxHP := actorMaxHP(self.Type)
+	wounded := self.HP > 0 && float64(self.HP)/float64(maxHP) < 0.6
+	b.world.AtDisadvantage = detected && playerBeatsSelf && wounded && b.world.DisadvantageResolvedTicks == 0 && dist >= AttackRange
 	b.world.AtAdvantage = selfBeatsPlayer
 
 	// Find the nearest friendly same-element ally for ReinforceAction.
@@ -237,15 +270,8 @@ func (b *Brain) UpdateWorldView(snap *world.Snapshot, self *world.Minotaur) {
 		}
 	}
 
-	// I4: Allied yielding — same-element actors path around the player.
+	// Same-element mobs are hostile to the player (no player-directed yielding).
 	b.world.AllyYielding = false
-	if b.world.PlayerDetected && b.world.SelfElement == b.world.PlayerElement {
-		rdx := snap.Runner.Pos.X - self.Pos.X
-		rdy := snap.Runner.Pos.Y - self.Pos.Y
-		if rdx*rdx+rdy*rdy < 3.0*3.0 {
-			b.world.AllyYielding = true
-		}
-	}
 
 	b.worldRevision.Add(1)
 }

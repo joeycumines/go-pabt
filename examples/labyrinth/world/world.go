@@ -55,8 +55,21 @@ type Minotaur struct {
 	Type           int // actor archetype: 0=brute, 1=swarm, 2=caster, 3=stalker
 	Element        int // 0=fire 1=ice 2=lightning 3=void; innate faction element
 	HP             int
-	Strategy       int // current faction strategy: 0=patrol 1=raid 2=retreat
-	AttackCooldown int // ticks until this minotaur may damage the runner again
+	Strategy       int     // current faction strategy: 0=patrol 1=raid 2=retreat
+	AttackCooldown int     // ticks until this minotaur may damage the runner again
+	Windup         int     // remaining windup ticks before attack fires
+	Atk            float64 // normalized windup progress in [0, 1]
+	AtkType        int     // 0=none, 1=melee, 2=bolt
+}
+
+// Bolt is an active server-simulated ranged projectile fired by a Caster.
+type Bolt struct {
+	ID      int
+	Pos     maze.Vec2
+	Vel     maze.Vec2
+	Element int
+	TTL     int
+	OwnerID string
 }
 
 // PowerUp is an elemental pickup in the maze. Stepping on one changes the
@@ -87,6 +100,7 @@ type World struct {
 	Minotaurs []*Minotaur
 	PowerUps  []*PowerUp
 	Hazards   []*Hazard
+	Bolts     []*Bolt
 	Round     int
 	Phase     Phase
 	// TerritoryControl maps each quadrant (0=NE, 1=NW, 2=SE, 3=SW) to the
@@ -139,6 +153,7 @@ type Snapshot struct {
 	Minotaurs []Minotaur
 	PowerUps  []PowerUp
 	Hazards   []Hazard
+	Bolts     []Bolt
 	Intensity int
 	Gate      maze.Vec2
 	// TerritoryControl maps each quadrant (0=NE, 1=NW, 2=SE, 3=SW) to the
@@ -169,6 +184,10 @@ func (w *World) Copy() *Snapshot {
 	s.Hazards = make([]Hazard, len(w.Hazards))
 	for i, h := range w.Hazards {
 		s.Hazards[i] = *h
+	}
+	s.Bolts = make([]Bolt, len(w.Bolts))
+	for i, b := range w.Bolts {
+		s.Bolts[i] = *b
 	}
 	return s
 }

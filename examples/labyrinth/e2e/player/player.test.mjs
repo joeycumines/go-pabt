@@ -20,7 +20,7 @@ import { VIEW, WEAPON, isIllegible, detectIllegibleView, detectFrozenScreen } fr
 import { detectControls, detectLook, detectSnaps, detectStalls, detectStuckKey, detectKnockback, detectPilotRealism } from './detectors/control.mjs';
 import { detectCrosshair, detectSilentDamage, detectLayering, detectHpTruth } from './detectors/hud.mjs';
 import { detectFlow, detectPlayerInWall, detectShots, detectEmbeddedActors, detectHealth } from './detectors/world.mjs';
-import { detectBodyCollision, detectGhosts, detectEngagement, detectUnseenDamage, detectGunImpact } from './detectors/feel.mjs';
+import { detectBodyCollision, detectGhosts, detectEngagement, detectUnseenDamage, detectGunImpact, detectTelegraph } from './detectors/feel.mjs';
 import { detectRenderTruth } from './detectors/truth.mjs';
 import { guard, runDetectors } from './detectors/index.mjs';
 import { diary } from './narrative.mjs';
@@ -582,4 +582,53 @@ test('D19: rapid W micro-toggling, stationary turret combat, and omniscient targ
     const omniSamples = [500, 1000, 1500, 2000].map((t) => S(t, { pos: [1.1, 0.5, 1.1], yaw: 0, actors: [{ id: 'C-9', x: 5.9, z: 5.9, hp: 25 }] }));
     const omniBad = tl({ marks: [{ t: 2000, kind: 'engage', id: 'C-9', d: 6.79 }], samples: omniSamples });
     assert.ok(detectPilotRealism(omniBad, g).some((f) => f.id === 'D19' && /outside human perception/.test(f.title)));
+});
+
+test('D18: melee hits without prior windup telegraph are reported; telegraphed hits and non-melee hits pass', () => {
+    const noTelegraph = tl({
+        wire: [
+            { t: 900, kind: 'snap', round: 20, runner: [1.5, 1.5, 100], m: [['B-1', 1.8, 1.5, 40, 0, 0, 0]] },
+            { t: 1000, kind: 'event', type: 'hit', data: { source: 'melee', attacker: 'B-1', damage: 20, hp: 80, x: 1.8, y: 1.5 } },
+        ],
+    });
+    assert.ok(detectTelegraph(noTelegraph).some((f) => f.id === 'D18'));
+
+    const withTelegraph = tl({
+        wire: [
+            { t: 750, kind: 'snap', round: 17, runner: [1.5, 1.5, 100], m: [['B-1', 1.8, 1.5, 40, 0, 0.5, 1]] },
+            { t: 900, kind: 'snap', round: 20, runner: [1.5, 1.5, 100], m: [['B-1', 1.8, 1.5, 40, 0, 0.9, 1]] },
+            { t: 1000, kind: 'event', type: 'hit', data: { source: 'melee', attacker: 'B-1', damage: 20, hp: 80, x: 1.8, y: 1.5 } },
+        ],
+    });
+    assert.deepEqual(detectTelegraph(withTelegraph), []);
+
+    const boltHit = tl({
+        wire: [
+            { t: 900, kind: 'snap', round: 20, runner: [1.5, 1.5, 100], m: [['C-1', 4.5, 1.5, 25, 0, 0, 0]] },
+            { t: 1000, kind: 'event', type: 'hit', data: { source: 'bolt', attacker: 'C-1', damage: 2, hp: 98, x: 4.5, y: 1.5 } },
+        ],
+    });
+    assert.deepEqual(detectTelegraph(boltHit), []);
+});
+
+test('D16: a world reset across a reload gap does not count as enemies vanishing without dying, while an in-run vanish does', () => {
+    const g = new Grid(7, 7, grid().cells);
+    const reloadReset = tl({
+        samples: [
+            S(100, { round: 200, pos: [1.5, 0.5, 1.5], yaw: 0, actors: [{ id: 'B-1', x: 1.5, z: 3.5, hp: 40 }] }),
+            S(200, { round: 203, pos: [1.5, 0.5, 1.5], yaw: 0, actors: [{ id: 'B-1', x: 1.5, z: 3.4, hp: 40 }] }),
+            // 5s reload/menu gap, then fresh game at round 0 with new roster B-10
+            S(5200, { round: 0, pos: [1.5, 0.5, 1.5], yaw: 0, actors: [{ id: 'B-10', x: 5.5, z: 5.5, hp: 40 }] }),
+            S(5300, { round: 3, pos: [1.5, 0.5, 1.5], yaw: 0, actors: [{ id: 'B-10', x: 5.5, z: 5.5, hp: 40 }] }),
+        ],
+    });
+    assert.equal(detectEngagement(reloadReset, g).some((f) => f.id === 'D16'), false);
+
+    const midRunVanish = tl({
+        samples: [
+            S(100, { round: 20, pos: [1.5, 0.5, 1.5], yaw: 0, actors: [{ id: 'B-1', x: 1.5, z: 3.5, hp: 40 }] }),
+            S(200, { round: 23, pos: [1.5, 0.5, 1.5], yaw: 0, actors: [] }),
+        ],
+    });
+    assert.ok(detectEngagement(midRunVanish, g).some((f) => f.id === 'D16'));
 });

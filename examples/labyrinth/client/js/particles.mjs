@@ -207,6 +207,26 @@ export class ParticleEngine {
         }
     }
 
+    // Arrival burst: rising elemental column when a newly spawned actor appears.
+    arrivalBurst(pos, color) {
+        const n = 18;
+        for (let i = 0; i < n; i++) {
+            const theta = (i / n) * Math.PI * 2 + (Math.random() - 0.5) * 0.2;
+            const r = 0.25 + Math.random() * 0.25;
+            const vx = Math.cos(theta) * (0.8 + Math.random() * 0.8);
+            const vy = 1.6 + Math.random() * 1.4;
+            const vz = Math.sin(theta) * (0.8 + Math.random() * 0.8);
+            this.spawn(
+                [pos[0] + Math.cos(theta) * r, pos[1], pos[2] + Math.sin(theta) * r],
+                [vx, vy, vz],
+                0.4 + Math.random() * 0.2,
+                [Math.min(1, color[0] + 0.25), Math.min(1, color[1] + 0.25), Math.min(1, color[2] + 0.25)],
+                0.16 + Math.random() * 0.1,
+                false
+            );
+        }
+    }
+
     // Advance particles; cull dead ones.
     update(dt) {
         const now = performance.now() / 1000;

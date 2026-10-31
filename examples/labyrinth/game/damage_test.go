@@ -148,10 +148,18 @@ func TestCasterBoltEmitsHitWithSource(t *testing.T) {
 	m := floorMaze(9, 9)
 	g := NewGame(m, 1, 42)
 	w := g.World
+	w.Runner.Pos = maze.Vec2{X: 4.5, Y: 4.5}
 	w.Runner.HP = 100
 	m0 := w.Minotaurs[0]
+	m0.Pos = maze.Vec2{X: 3.5, Y: 4.5}
 
 	g.casterBolt(w, m0)
+	if len(w.Bolts) != 1 {
+		t.Fatalf("casterBolt spawned %d bolts, want 1", len(w.Bolts))
+	}
+	for i := 0; i < 15 && len(w.Bolts) > 0; i++ {
+		g.tickBolts(w)
+	}
 
 	if w.Runner.HP != 100-BoltDamage {
 		t.Fatalf("bolt damage: HP = %d, want %d", w.Runner.HP, 100-BoltDamage)

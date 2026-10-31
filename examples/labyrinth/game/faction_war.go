@@ -331,7 +331,7 @@ func (g *Game) applyStrategyMovement(w *world.World) {
 		// double its speed toward a different target. Keying off actual
 		// movement (not world-view flags) also means an idle planner can
 		// never latch strategy movement closed.
-		if i < len(g.Brains) && g.Brains[i].MovedLastTick() {
+		if i < len(g.Brains) && (g.Brains[i].MovedLastTick() || g.Brains[i].Engaged()) {
 			continue
 		}
 		dx := st.TargetPos.X - m.Pos.X

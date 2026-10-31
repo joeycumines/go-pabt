@@ -161,9 +161,16 @@ export const JOURNEYS = {
             if (radar.length) {
                 const near = radar.map((a) => ({ a, n: (grid.path(p.pos[0], p.pos[2], a.x, a.z) || { length: 1e9 }).length })).sort((x, y) => x.n - y.n)[0].a;
                 await walkTo(act, s.page, grid, near.x, near.z, {
-                    timeoutMs: 5000, arrive: 2.4, visited,
+                    timeoutMs: 5000, arrive: 1.5, visited,
                     stopWhen: (q) => visibleActors(grid, q, 9).length > 0,
                 });
+                const q = await readPlayer(s.page);
+                if (q && q.gs === 'playing' && !visibleActors(grid, q, 9).length) {
+                    const rNow = (q.actors || []).filter((a) => a.hp > 0).sort((x, y) => Math.hypot(x.x - q.pos[0], x.z - q.pos[2]) - Math.hypot(y.x - q.pos[0], y.z - q.pos[2]))[0];
+                    if (rNow && !grid.segment(q.pos[0], q.pos[2], rNow.x, rNow.z).wall) {
+                        await faceYaw(act, s.page, yawTo(q.pos[0], q.pos[2], rNow.x, rNow.z), { tol: 0.08, passes: 3 });
+                    }
+                }
                 continue;
             }
             await exploreCorridors(act, s.page, grid, visited, { timeoutMs: 5000, sprint: true });
@@ -187,9 +194,17 @@ export const JOURNEYS = {
             const live = (p.actors || []).filter((a) => a.hp > 0);
             if (live.length) {
                 const near = live.sort((x, y) => Math.hypot(x.x - p.pos[0], x.z - p.pos[2]) - Math.hypot(y.x - p.pos[0], y.z - p.pos[2]))[0];
-                await walkTo(act, s.page, grid, near.x, near.z, { timeoutMs: 3500, arrive: 0.75, visited });
-                await faceYaw(act, s.page, yawTo(p.pos[0], p.pos[2], near.x, near.z), { tol: 0.1, passes: 2 });
-                await act.wait(650, 'standing in harm\'s way');
+                await walkTo(act, s.page, grid, near.x, near.z, {
+                    timeoutMs: 3800, arrive: 1.1, visited,
+                });
+                const q = await readPlayer(s.page);
+                if (!q || q.gs !== 'playing') break;
+                const vis = visibleActors(grid, q, 9.0);
+                const tgt = vis.length ? vis[0] : (q.actors || []).filter((a) => a.hp > 0).sort((x, y) => Math.hypot(x.x - q.pos[0], x.z - q.pos[2]) - Math.hypot(y.x - q.pos[0], y.z - q.pos[2]))[0];
+                if (tgt) {
+                    await faceYaw(act, s.page, yawTo(q.pos[0], q.pos[2], tgt.x, tgt.z), { tol: 0.08, passes: 3 });
+                }
+                await act.wait(900, 'standing in harm\'s way');
                 continue;
             }
             await exploreCorridors(act, s.page, grid, visited, { timeoutMs: 5000, sprint: true });

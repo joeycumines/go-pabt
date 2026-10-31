@@ -18,7 +18,7 @@ import { resolve } from './predict.mjs';
 
 const DEFAULT_APPROACH_RATE = 12; // 1/s: ~63% of the gap closed in 83 ms
 
-function newBuffer(m, nowSec) {
+function newBuffer(m, nowSec, justArrived = false) {
     return {
         pos: [m.x, 0.5, m.y],
         targetPos: [m.x, 0.5, m.y],
@@ -29,6 +29,9 @@ function newBuffer(m, nowSec) {
         hp: m.hp | 0,
         stunned: !!m.stunned,
         strategy: m.strategy | 0,
+        atk: Number(m.atk) || 0,
+        atkType: m.atkType | 0,
+        justArrived,
         yaw: 0,
         step: 0,
         attackUntil: 0,
@@ -48,6 +51,7 @@ export class ActorStore {
     // seq was already applied (nothing changes) and true otherwise.
     applySnapshot(seq, minotaurs, nowSec) {
         if (seq === this.lastSeq) return false;
+        const isFirstSnapshot = this.lastSeq === null;
         this.lastSeq = seq;
 
         const seen = new Set();
@@ -67,7 +71,7 @@ export class ActorStore {
             }
             let buf = this.buffers.get(id);
             if (!buf) {
-                buf = newBuffer(m, nowSec);
+                buf = newBuffer(m, nowSec, !isFirstSnapshot);
                 this.buffers.set(id, buf);
             }
             buf.targetPos[0] = m.x;
@@ -79,6 +83,8 @@ export class ActorStore {
             buf.hp = m.hp | 0;
             buf.stunned = !!m.stunned;
             buf.strategy = m.strategy | 0;
+            buf.atk = Number(m.atk) || 0;
+            buf.atkType = m.atkType | 0;
         }
 
         for (const id of [...this.buffers.keys()]) {
