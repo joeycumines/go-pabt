@@ -2,6 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { computeRunMetrics, evaluateFunGate, formatFunGateMarkdown } from './fungate.mjs';
+import { parseArgs } from './playtest-player.mjs';
 
 function makeSyntheticTimeline({
     t0 = 1000,
@@ -125,3 +126,18 @@ test('evaluateFunGate fails when a band is violated (e.g. 0 wins)', () => {
     assert.equal(winBand.pass, false);
     assert.ok(result.markdown.includes('Verdict: FAIL'));
 });
+
+test('parseArgs configures fun gate defaults when --gate fun is specified', () => {
+    const cfg = parseArgs(['--gate', 'fun']);
+    assert.equal(cfg.gate, 'fun');
+    assert.deepEqual(cfg.seeds, [12345, 777, 4242, 31337, 2024]);
+    assert.deepEqual(cfg.journeys, ['J6']);
+});
+
+test('parseArgs allows explicit seeds and journeys override with --gate fun', () => {
+    const cfg = parseArgs(['--gate', 'fun', '--seeds', '777,4242', '--journeys', 'J2']);
+    assert.equal(cfg.gate, 'fun');
+    assert.deepEqual(cfg.seeds, [777, 4242]);
+    assert.deepEqual(cfg.journeys, ['J2']);
+});
+

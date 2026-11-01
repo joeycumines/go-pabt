@@ -20,20 +20,43 @@ import { runDetectors, gridOf } from './detectors/index.mjs';
 import { FrameStore, finding } from './detectors/common.mjs';
 import { buildEvidence, encodeVideo, pruneFrames, findingsMarkdown } from './report.mjs';
 import { diary, plainVerdicts } from './narrative.mjs';
+import { evaluateFunGate } from './fungate.mjs';
 
 export function parseArgs(argv) {
-    const cfg = { seeds: [12345], journeys: ['J1', 'J2', 'J3', 'J4', 'J5', 'J6'], out: null, headless: false, keepFrames: false, analyze: null, rejudge: null };
+    const cfg = {
+        seeds: [12345],
+        journeys: ['J1', 'J2', 'J3', 'J4', 'J5', 'J6'],
+        out: null,
+        headless: false,
+        keepFrames: false,
+        analyze: null,
+        rejudge: null,
+        gate: null,
+    };
+    let seedsExplicit = false;
+    let journeysExplicit = false;
     for (let i = 0; i < argv.length; i++) {
         const a = argv[i];
         const val = () => { if (i + 1 >= argv.length) throw new Error(`${a} needs a value`); return argv[++i]; };
-        if (a === '--seed' || a === '--seeds') cfg.seeds = val().split(',').map((s) => { const n = Number(s); if (!Number.isInteger(n) || n <= 0) throw new Error(`bad seed ${s}`); return n; });
-        else if (a === '--journeys') cfg.journeys = val().split(',').map((s) => s.trim().toUpperCase());
+        if (a === '--seed' || a === '--seeds') {
+            cfg.seeds = val().split(',').map((s) => { const n = Number(s); if (!Number.isInteger(n) || n <= 0) throw new Error(`bad seed ${s}`); return n; });
+            seedsExplicit = true;
+        }
+        else if (a === '--journeys') {
+            cfg.journeys = val().split(',').map((s) => s.trim().toUpperCase());
+            journeysExplicit = true;
+        }
+        else if (a === '--gate') cfg.gate = val();
         else if (a === '--out') cfg.out = path.resolve(val());
         else if (a === '--headless') cfg.headless = true;
         else if (a === '--keep-frames') cfg.keepFrames = true;
         else if (a === '--analyze') cfg.analyze = path.resolve(val());
         else if (a === '--rejudge') cfg.rejudge = path.resolve(val());
         else throw new Error(`unknown argument ${a}`);
+    }
+    if (cfg.gate === 'fun') {
+        if (!seedsExplicit) cfg.seeds = [12345, 777, 4242, 31337, 2024];
+        if (!journeysExplicit) cfg.journeys = ['J6'];
     }
     for (const j of cfg.journeys) if (!JOURNEYS[j]) throw new Error(`unknown journey ${j} (have ${Object.keys(JOURNEYS).join(',')})`);
     return cfg;
@@ -99,7 +122,7 @@ function writeSummary(out, runs, meta) {
 
 // rejudge re-runs the detectors and rebuilds all evidence for every journey
 // directory of a previous --keep-frames run, without replaying the game.
-async function rejudge(out) {
+async function rejudge(out, cfg = {}) {
     const reportBrowser = await launchBrowser({ headless: true });
     const runs = [];
     try {
@@ -123,12 +146,28 @@ async function rejudge(out) {
     const bad = writeSummary(out, runs, { commit: `${commit} (re-judged recording)`, renderer: runs.map((r) => r.tl.renderer).find(Boolean) || 'unknown', headless: false, date: new Date().toISOString() });
     console.log(`\n${bad.length} S1/S2 findings. Report: ${path.join(out, 'findings.md')}`);
     process.exitCode = bad.length ? 1 : 0;
+    if (cfg.gate === 'fun') {
+        handleFunGate(out, runs);
+    }
+}
+
+function handleFunGate(out, runs) {
+    const gridMap = new Map();
+    for (const r of runs) {
+        if (r.tl && !gridMap.has(r.seed)) gridMap.set(r.seed, gridOf(r.tl));
+    }
+    const gateResult = evaluateFunGate(runs, gridMap);
+    writeFileSync(path.join(out, 'fun-gate.md'), gateResult.markdown);
+    console.log(`\n${gateResult.markdown}`);
+    console.log(`Fun Gate Result: ${gateResult.pass ? 'PASS' : 'FAIL'} (${gateResult.totalWins}/${runs.length} wins, median run ${gateResult.medianRunLengthS}s)`);
+    if (!gateResult.pass) process.exitCode = 1;
+    return gateResult;
 }
 
 async function main() {
     const cfg = parseArgs(process.argv.slice(2));
     if (cfg.analyze) { analyze(cfg.analyze); return; }
-    if (cfg.rejudge) { await rejudge(cfg.rejudge); return; }
+    if (cfg.rejudge) { await rejudge(cfg.rejudge, cfg); return; }
     const stamp = new Date().toISOString().replace(/[:.]/g, '-');
     const out = cfg.out || path.join(REPO_ROOT, 'examples', 'labyrinth', 'e2e', 'artifacts', 'player', stamp);
     mkdirSync(out, { recursive: true });
@@ -186,6 +225,9 @@ async function main() {
     const bad = writeSummary(out, runs, meta);
     console.log(`\n${bad.length} S1/S2 findings. Report: ${path.join(out, 'findings.md')}`);
     process.exitCode = bad.length ? 1 : 0;
+    if (cfg.gate === 'fun') {
+        handleFunGate(out, runs);
+    }
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
