@@ -17,9 +17,10 @@ export class Camera {
         this.bobOffsetX = 0;    // weapon lateral sway (camera-right)
         this.bobOffsetY = 0;    // weapon vertical bounce
 
+        this.enabled = true;
         this._locked = false;
         canvas.addEventListener('click', () => {
-            if (!this._locked) canvas.requestPointerLock();
+            if (!this._locked && this.enabled) canvas.requestPointerLock();
         });
         document.addEventListener('pointerlockchange', () => {
             this._locked = document.pointerLockElement === canvas;

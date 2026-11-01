@@ -245,3 +245,40 @@ func TestResolveRunnerAgainstActorsBlocksPassThrough(t *testing.T) {
 		t.Fatalf("separation = %f, want %f", dist, minSep)
 	}
 }
+
+func TestKillerInfo(t *testing.T) {
+	g := newTestGame(t)
+	w := &world.World{
+		Runner: world.Runner{
+			LastAttacker: "K-12",
+		},
+		Minotaurs: []*world.Minotaur{
+			{ID: "K-12", Type: int(ActorStalker), Element: int(ElementVoid)},
+			{ID: "B-1", Type: int(ActorBrute), Element: int(ElementFire)},
+		},
+	}
+	info := g.KillerInfo(w)
+	if info == nil {
+		t.Fatal("expected non-nil killer info")
+	}
+	if info["id"] != "K-12" || info["type"] != int(ActorStalker) || info["element"] != int(ElementVoid) {
+		t.Fatalf("unexpected killer info: %+v", info)
+	}
+
+	// Test fallback prefix when actor is not in Minotaurs slice
+	w.Minotaurs = nil
+	w.Runner.LastAttacker = "C-99"
+	info = g.KillerInfo(w)
+	if info == nil {
+		t.Fatal("expected non-nil killer info from fallback prefix")
+	}
+	if info["id"] != "C-99" || info["type"] != int(ActorCaster) || info["element"] != int(ElementLightning) {
+		t.Fatalf("unexpected fallback killer info: %+v", info)
+	}
+
+	// Empty attacker yields nil
+	w.Runner.LastAttacker = ""
+	if g.KillerInfo(w) != nil {
+		t.Fatal("expected nil killer info for empty LastAttacker")
+	}
+}

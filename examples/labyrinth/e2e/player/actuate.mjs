@@ -77,6 +77,17 @@ export class Actuator {
     // first would turn the camera while locked).
     async click() {
         this.s.mark('click');
+        const locked = await this.page.evaluate(() => !!document.pointerLockElement);
+        if (!locked && this.s.timeline.viewport) {
+            const vp = this.s.timeline.viewport;
+            const cx = Math.max(10, Math.min(vp.width - 10, this.mx));
+            const cy = Math.max(10, Math.min(vp.height - 10, this.my));
+            if (cx !== this.mx || cy !== this.my) {
+                await this.page.mouse.move(cx, cy);
+                this.mx = cx;
+                this.my = cy;
+            }
+        }
         await this.page.mouse.down();
         await sleep(40);
         await this.page.mouse.up();

@@ -215,6 +215,21 @@ export function detectFlow(tl) {
             detail: 'The end screen says "Click to restart" but the pointer is still locked to the game, so the click goes to the 3D canvas.',
         }));
     }
+    // D9 check: on death, the end screen overlay text must name the killer.
+    for (const d of tl.dom) {
+        if (d.modals && d.modals.overlay && d.modals.overlay.text && d.modals.overlay.text.includes('CAUGHT')) {
+            const text = d.modals.overlay.text;
+            const namesKiller = /slain by/i.test(text) || /(brute|swarm|caster|stalker)/i.test(text);
+            if (!namesKiller) {
+                out.push(finding('D9', 'S2', 'End screen does not name the killer on death', {
+                    t: d.t,
+                    evidence: { text },
+                    detail: 'The end screen on death must name the killer (e.g. "Slain by Ember Legion Brute").',
+                }));
+            }
+            break;
+        }
+    }
     for (const m of marksOf(tl, 'no-end-overlay')) {
         const res = marksOf(tl, 'result').filter((r) => r.t <= m.t).pop();
         if (res && (res.result === 'caught' || res.result === 'won')) {

@@ -187,17 +187,19 @@ body {
     width: 100vw;
     height: 100vh;
     display: flex;
+    flex-direction: column;
     align-items: center;
     justify-content: center;
-    background: rgba(0, 0, 0, 0.85);
+    background: rgba(0, 0, 0, 0.88);
     z-index: 500;
     cursor: pointer;
     pointer-events: auto;
-    font-size: 3rem;
+    font-size: 1.6rem;
     color: #ff0080;
-    text-shadow: 0 0 30px #ff0080;
+    text-shadow: 0 0 20px #ff0080;
     white-space: pre-line;
     text-align: center;
+    line-height: 1.8;
 }
 
 /* S2: elemental hit marker shown near the crosshair after a pulse lands. */

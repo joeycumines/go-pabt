@@ -255,6 +255,18 @@ test('D9: an ignored end-screen click is reported', () => {
     assert.ok(ids(detectFlow(tl({ marks: [{ t: 5, kind: 'end-click-ignored', locked: true }] }))).includes('D9:S2'));
 });
 
+test('D9: an end screen without killer on death is reported; naming the killer passes', () => {
+    const unnamed = tl({
+        dom: [dom(5000, { modals: { overlay: { rect: [0, 0, 100, 100], text: 'CAUGHT\nClick to restart' } } })],
+    });
+    assert.ok(ids(detectFlow(unnamed)).includes('D9:S2'));
+
+    const named = tl({
+        dom: [dom(5000, { modals: { overlay: { rect: [0, 0, 100, 100], text: 'CAUGHT\nSlain by Ember Legion Brute\nClick to restart' } } })],
+    });
+    assert.deepEqual(ids(detectFlow(named)), []);
+});
+
 test('D8: camera inside a wall or outside the maze is S1; hugging a wall at collision distance is fine', () => {
     const g = new Grid(7, 7, grid().cells);
     const inWall = tl({ samples: [0, 50, 100, 150].map((t) => S(t, { pos: [3.5, 0.5, 2.5] })) });

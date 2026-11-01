@@ -4,6 +4,7 @@ package game
 
 import (
 	"math"
+	"strings"
 
 	"github.com/joeycumines/go-pabt/examples/labyrinth/brain"
 	"github.com/joeycumines/go-pabt/examples/labyrinth/maze"
@@ -283,4 +284,36 @@ func (g *Game) resolveRunnerAgainstActors(w *world.World, prevPos, newPos maze.V
 		newPos = g.Maze.Resolve(newPos, maze.Radius)
 	}
 	return newPos
+}
+
+// KillerInfo extracts killer metadata (id, type, element) from the runner's last attacker.
+func (g *Game) KillerInfo(w *world.World) map[string]interface{} {
+	if w == nil || w.Runner.LastAttacker == "" {
+		return nil
+	}
+	info := map[string]interface{}{
+		"id": w.Runner.LastAttacker,
+	}
+	for _, m := range w.Minotaurs {
+		if m != nil && m.ID == w.Runner.LastAttacker {
+			info["type"] = int(m.Type)
+			info["element"] = int(m.Element)
+			return info
+		}
+	}
+	switch {
+	case strings.HasPrefix(w.Runner.LastAttacker, "B-"):
+		info["type"] = int(ActorBrute)
+		info["element"] = int(ElementFire)
+	case strings.HasPrefix(w.Runner.LastAttacker, "S-"):
+		info["type"] = int(ActorSwarm)
+		info["element"] = int(ElementIce)
+	case strings.HasPrefix(w.Runner.LastAttacker, "C-"):
+		info["type"] = int(ActorCaster)
+		info["element"] = int(ElementLightning)
+	case strings.HasPrefix(w.Runner.LastAttacker, "K-"):
+		info["type"] = int(ActorStalker)
+		info["element"] = int(ElementVoid)
+	}
+	return info
 }

@@ -510,7 +510,7 @@ func (g *Game) tickLogic(w *world.World) {
 	// Check lose condition.
 	if w.Runner.HP <= 0 {
 		w.Phase = world.PhaseLost
-		g.broadcastEvent(Event{Type: "caught"})
+		g.broadcastEvent(Event{Type: "caught", Data: g.KillerInfo(w)})
 		return
 	}
 

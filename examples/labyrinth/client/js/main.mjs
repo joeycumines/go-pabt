@@ -104,6 +104,13 @@ let projectiles = []; // { pos, dir, born, color }
 let lastFireTime = 0;
 let lastShotElement = -1; // element of the most recent pulse (S6b probe)
 let shotsFired = 0; // shots actually sent to the server (bot or player)
+let gameStartTime = 0;
+let playerKills = 0;
+let playerDamageTaken = 0;
+let shotsHit = 0;
+let lastHitAttacker = null;
+let endRestartBound = false;
+let lastSigilsHeld = 0;
 const FIRE_COOLDOWN = 0.5; // seconds
 // The server applies one input command per simulation tick (30 Hz), so the
 // client sends at the same rate. A slow frame sends catch-up commands so
@@ -237,6 +244,7 @@ function wantsPlay() {
 
 function syncPlayState() {
     const want = wantsPlay();
+    if (want && !gameStartTime) gameStartTime = performance.now();
     if (want === serverPlay) return;
     serverPlay = want;
     net.sendPlay(want);
@@ -375,11 +383,12 @@ function init() {
     };
 
     canvas.addEventListener('click', () => {
+        if (gameState !== 'playing') return;
         prompt.hidden = true;
         audio.resume();
     });
     document.addEventListener('pointerlockchange', () => {
-        prompt.hidden = document.pointerLockElement === canvas;
+        prompt.hidden = (document.pointerLockElement === canvas) || (gameState !== 'playing');
         syncPlayState();
     });
     window.addEventListener('blur', syncPlayState);
@@ -429,6 +438,7 @@ function frame(time) {
         }
 
         const sigilsHeld = snap.data.sigilsHeld !== undefined ? (snap.data.sigilsHeld | 0) : 0;
+        lastSigilsHeld = sigilsHeld;
         const gateLocked = snap.data.gateLocked !== undefined ? !!snap.data.gateLocked : (sigilsHeld < 3);
         hud.setSigils(sigilsHeld, 3);
 
@@ -1169,9 +1179,32 @@ Object.defineProperty(window, 'screenShakeTimer', {
     configurable: true,
 });
 
+function setupEndRestart() {
+    if (endRestartBound) return;
+    endRestartBound = true;
+    const canRestartAt = performance.now() + 800;
+    const restart = () => {
+        if (performance.now() < canRestartAt) return;
+        location.reload();
+    };
+    overlay.onclick = restart;
+    window.addEventListener('click', () => {
+        if (gameState === 'caught' || gameState === 'won') {
+            restart();
+        }
+    });
+    document.addEventListener('keydown', (e) => {
+        if (gameState === 'caught' || gameState === 'won') {
+            if (e.code === 'Enter' || e.code === 'KeyR') {
+                restart();
+            }
+        }
+    });
+}
+
 function handleEvent(evt) {
     switch (evt.type) {
-        case 'caught':
+        case 'caught': {
             if (serverPos) {
                 camera.pos[0] = serverPos[0];
                 camera.pos[2] = serverPos[2];
@@ -1181,12 +1214,54 @@ function handleEvent(evt) {
                 errorOffsetZ = 0;
             }
             gameState = 'caught';
+            camera.enabled = false;
+            if (document.exitPointerLock) {
+                try { document.exitPointerLock(); } catch (e) {}
+            }
+            prompt.hidden = true;
             syncPlayState();
+            net.sendPlay(false);
+            try { sessionStorage.setItem('ariadne-tutorial', '1'); } catch (e) {}
+
+            let killerStr = '';
+            const kd = evt.data || {};
+            const ktype = typeof kd.type === 'number' ? kd.type : null;
+            const kelem = typeof kd.element === 'number' ? kd.element : null;
+            if (ktype !== null && kelem !== null && TYPE_NAMES[ktype] && FACTION_NAMES[kelem]) {
+                killerStr = `Slain by ${FACTION_NAMES[kelem]} ${TYPE_NAMES[ktype]}`;
+            } else {
+                const attId = kd.id || lastHitAttacker || '';
+                if (attId.startsWith('B-')) killerStr = 'Slain by Ember Legion Brute';
+                else if (attId.startsWith('S-')) killerStr = 'Slain by Frost Covenant Swarm';
+                else if (attId.startsWith('C-')) killerStr = 'Slain by Storm Pact Caster';
+                else if (attId.startsWith('K-')) killerStr = 'Slain by Void Cult Stalker';
+                else killerStr = 'Slain by an enemy';
+            }
+
+            const elapsed = gameStartTime ? Math.max(0, (performance.now() - gameStartTime) / 1000) : 0;
+            const acc = shotsFired > 0 ? Math.round((shotsHit / shotsFired) * 100) : 0;
+            let bestTimeLine = '';
+            try {
+                const rawBest = localStorage.getItem('ariadne-best-time');
+                if (rawBest) {
+                    const pb = parseFloat(rawBest);
+                    if (!isNaN(pb)) bestTimeLine = `\nBest Escape: ${pb.toFixed(1)}s`;
+                }
+            } catch (e) {}
+
             overlay.hidden = false;
-            overlay.textContent = 'CAUGHT\nClick to restart';
-            overlay.onclick = () => location.reload();
+            overlay.textContent = [
+                'CAUGHT',
+                killerStr,
+                `Time: ${elapsed.toFixed(1)}s | Sigils: ${lastSigilsHeld}/3`,
+                `Kills: ${playerKills} | Damage Taken: ${playerDamageTaken} | Accuracy: ${acc}%` + bestTimeLine,
+                'Click to restart (or press Enter / R)'
+            ].join('\n');
+
+            setupEndRestart();
             break;
-        case 'win':
+        }
+        case 'win': {
             if (serverPos) {
                 camera.pos[0] = serverPos[0];
                 camera.pos[2] = serverPos[2];
@@ -1196,12 +1271,42 @@ function handleEvent(evt) {
                 errorOffsetZ = 0;
             }
             gameState = 'won';
+            camera.enabled = false;
+            if (document.exitPointerLock) {
+                try { document.exitPointerLock(); } catch (e) {}
+            }
+            prompt.hidden = true;
             syncPlayState();
+            net.sendPlay(false);
+            try { sessionStorage.setItem('ariadne-tutorial', '1'); } catch (e) {}
+
+            const elapsed = gameStartTime ? Math.max(0, (performance.now() - gameStartTime) / 1000) : 0;
+            const acc = shotsFired > 0 ? Math.round((shotsHit / shotsFired) * 100) : 0;
+            let bestTimeLine = '';
+            try {
+                const rawBest = localStorage.getItem('ariadne-best-time');
+                const pb = rawBest ? parseFloat(rawBest) : null;
+                if (pb === null || isNaN(pb) || elapsed < pb) {
+                    localStorage.setItem('ariadne-best-time', String(elapsed));
+                    bestTimeLine = `\nBest Time: ${elapsed.toFixed(1)}s (NEW RECORD!)`;
+                } else {
+                    bestTimeLine = `\nBest Time: ${pb.toFixed(1)}s`;
+                }
+            } catch (e) {}
+
             overlay.hidden = false;
-            overlay.textContent = 'ESCAPED\nClick to play again';
-            overlay.onclick = () => location.reload();
+            overlay.textContent = [
+                'ESCAPED',
+                `Time: ${elapsed.toFixed(1)}s` + bestTimeLine,
+                `Sigils: ${lastSigilsHeld}/3 | Kills: ${playerKills} | Damage Taken: ${playerDamageTaken} | Accuracy: ${acc}%`,
+                'Click to play again (or press Enter / R)'
+            ].join('\n');
+
+            setupEndRestart();
             break;
+        }
         case 'stunned': {
+            shotsHit++;
             audio.playStun();
             const sb = evt.data && evt.data.minotaur ? minotaurBuffers.get(evt.data.minotaur) : null;
             // Show the elemental outcome of the pulse.
@@ -1287,11 +1392,18 @@ function handleEvent(evt) {
             if (evt.data && evt.data.id) actorStore.markDead(evt.data.id, performance.now() / 1000);
             // R2: wire kill feed — show faction-named entry on death.
             if (evt.data) {
+                if (evt.data.source === 'player') playerKills++;
                 addKillEntry(evt.data.element, evt.data.type);
             }
             break;
         }
         case 'hit': {
+            if (evt.data && typeof evt.data.damage === 'number') {
+                playerDamageTaken += evt.data.damage;
+            }
+            if (evt.data && evt.data.attacker) {
+                lastHitAttacker = evt.data.attacker;
+            }
             damageFlashTimer = 10;
             errorOffsetX = 0;
             errorOffsetZ = 0;
