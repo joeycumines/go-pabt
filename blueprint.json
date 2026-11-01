@@ -22,7 +22,7 @@
       "tuning": "Gameplay constants (speeds, damage, ranges, cooldowns) may be tuned freely in T10 to meet the fun bands; earlier tasks use the starting values given in knowledgeStore.design."
    },
    "statusSection": {
-      "currentState": "T10 In Progress: Fun gate and balance pass (--gate fun, design band evaluation over 5 seeds, tuning)",
+      "currentState": "T10 In Progress: Fun gate and balance pass (fungate.mjs & test delivered; next: wire --gate fun to playtest-player.mjs, run 5-seed J6 evaluation, tune constants)",
       "goalState": "examples/labyrinth is a fun, readable first-person escape game: on 5 seeds the player-eye harness reports zero S1/S2 findings across journeys J1-J6, the pilot behaves like a human player with zero D19 behavioral-slop findings, the fun gate (--gate fun) passes its bands twice in a row, all Go/JS suites pass, and Hana has played it and signed off.",
       "standingDirectives": [
          "Root pabt library protected under zero diff; root go.mod/go.sum unchanged.",
@@ -119,13 +119,14 @@
          "traps": "Real pointer lock needs page.bringToFront() right before the click (lockPointer does it). | Playwright fakes focus; J5 disables Emulation focus emulation around alt-tab to get a real blur. | Screencast emits frames only on change: the screen at time t is the last frame at or before t (FrameStore.at). | Pixel-shift estimates need HUD masks and gestures whose expected shift fits +-120px. | Journey marks can share a millisecond: order by array index. | Presence metrics use the enemy's own displacement, not the closing distance."
       },
       "priorWork": "P1-P11 (2026-10-20..24): Go playtest engine + oracles O1-O10 (playtest/, cmd/playtest), bot SDK/runtime (client/js/bot-sdk.mjs, bot-runtime.mjs), inspector (inspector.mjs), botlab CLI with contact sheets (e2e/botlab.mjs), server event log (/api/playtest/events). Keep them passing as regression suites, not as acceptance.",
-      "workingMemory": "MATRIX: this codebase's perspective() puts clip-w in the fourth projection row; bot-sdk projectToScreen depends on it. | Shared world: one runner, last-writer-wins input. Do not add multiplayer; assume one player per server. | botlab must GET then POST ?reset=1 the telemetry/events endpoints per episode or data bleeds across episodes."
+      "workingMemory": "MATRIX: this codebase's perspective() puts clip-w in the fourth projection row; bot-sdk projectToScreen depends on it. | Shared world: one runner, last-writer-wins input. Do not add multiplayer; assume one player per server. | botlab must GET then POST ?reset=1 the telemetry/events endpoints per episode or data bleeds across episodes. | FUN GATE: fungate.mjs implements all 12 D11 bands; verified by fungate.test.mjs (3/3 pass). Next: wire --gate fun into playtest-player.mjs."
    },
    "sequentialTasks": [
       {
          "task": "T10: Fun gate and balance pass",
          "description": "Implements design.D11_fun_bands. Steps: (1) e2e/player: add --gate fun to playtest-player.mjs: runs J6 on the given seeds and computes every band in D11 from the timelines (reuse feelProfile, serverPresence, D13/D18/D19 numbers; add time-to-first-enemy, run length, archetypes engaged, nearby clashes); writes fun-gate.md with each band PASS/FAIL and exits 1 on any FAIL. Unit-test the band computation on synthetic timelines. (2) Tune constants (actorSpeed, damage tables, AttackRange, windup/cooldowns, sight range, TargetActorCount, power-up and regen timings, sigil placement distance) until the gate passes on seeds 12345,777,4242,31337,2024. Record each tuning step (constant, old -> new, which band moved) in this task's evidence. (3) The J6 pilot is the reference player: do not change its skill, aim, routing or timing to pass a band; only fix pilot bugs, each with a recorded reason. (4) Keep all other detectors (D1-D19) at zero S1/S2.",
          "acceptance": "cd examples/labyrinth && node e2e/player/playtest-player.mjs --seed 12345,777,4242,31337,2024 --gate fun --out <dir> exits 0 twice in a row on fresh runs, and fun-gate.md shows every band PASS with its number; the J6 diaries read as a coherent run (explore, fight, hunted, escape or die) when read cold.",
+         "evidence": "fungate.mjs and fungate.test.mjs implemented and verified (node --test: 3/3 pass; all 49 e2e/player tests pass). Next: wire --gate fun into playtest-player.mjs, run J6 on 5 seeds, tune constants.",
          "status": "In Progress"
       },
       {
