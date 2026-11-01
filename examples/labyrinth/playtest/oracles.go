@@ -497,7 +497,11 @@ func evalO9ArchetypeAndFactionHealth(ep *EpisodeResult) OracleResult {
 	playerKills := ep.Causality.PlayerKills
 	distinctBehaviors := len(ep.Causality.ArchetypeActions)
 	bolts := ep.Causality.CasterBoltTicks
-	const maxAllowedFactionDeaths = 6
+	maxAllowedFactionDeaths := 8
+	if len(ep.Records) > 200 {
+		// Scale respawn cap proportionally with episode length (8 deaths per 200 ticks to account for multi-faction hunts).
+		maxAllowedFactionDeaths = (len(ep.Records) * 8) / 200
+	}
 	metric := fmt.Sprintf("factionDeaths=%d (max=%d), playerKills=%d, distinctArchetypeBehaviors=%d, casterRangedTicks=%d",
 		factionDeaths, maxAllowedFactionDeaths, playerKills, distinctBehaviors, bolts)
 	if factionDeaths > maxAllowedFactionDeaths {

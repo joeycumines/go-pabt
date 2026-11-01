@@ -37,6 +37,17 @@ type SnapshotPayload struct {
 	TerritoryControl [4]int          `json:"territoryControl"`
 	Hazards          []HazardState   `json:"hazards"`
 	Bolts            []BoltState     `json:"bolts,omitempty"`
+	Sigils           []SigilState    `json:"sigils,omitempty"`
+	SigilsHeld       int             `json:"sigilsHeld"`
+	GateLocked       bool            `json:"gateLocked"`
+}
+
+// SigilState is one elemental objective shard in a snapshot.
+type SigilState struct {
+	X       float64 `json:"x"`
+	Y       float64 `json:"y"`
+	Element int     `json:"element"`
+	Taken   bool    `json:"taken"`
 }
 
 // BoltState is one ranged projectile's state in a snapshot.
@@ -159,6 +170,8 @@ const (
 	EventLose    = "lose"
 	EventReplan  = "replan"
 	EventSpawn   = "spawn"
+	EventHunt    = "hunt"
+	EventSigil   = "sigil"
 )
 
 // Event is a typed game event.

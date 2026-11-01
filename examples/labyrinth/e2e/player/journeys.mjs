@@ -317,6 +317,63 @@ export const JOURNEYS = {
         await act.hold('w', 800);
         await act.wait(1500);
     },
+
+    // J6: full run - visit elemental sigils nearest-first (defending and engaging
+    // enemies that block the path), survive faction hunts, unlock the gate, and escape.
+    async J6(s) {
+        const act = new Actuator(s);
+        await enterGame(s, act, { readMs: 1500 });
+        const grid = await waitGrid(s);
+        s.mark('segment', { name: 'sigil-quest' });
+        const t0 = Date.now();
+        const visited = new Map();
+
+        // 1. Collect sigils nearest-first until at least 3 sigils are held.
+        while (Date.now() - t0 < 180000) {
+            const p = await readPlayer(s.page);
+            if (!p || p.gs !== 'playing') break;
+            const held = p.sigilsHeld || 0;
+            if (held >= 3) break;
+
+            const untaken = (p.sigils || []).filter((sig) => !sig.taken);
+            if (!untaken.length) break;
+
+            // Pick nearest untaken sigil by path length.
+            const sorted = untaken.map((sig) => {
+                const pth = grid.path(p.pos[0], p.pos[2], sig.x, sig.y);
+                return { sig, len: pth ? pth.length : Math.hypot(sig.x - p.pos[0], sig.y - p.pos[2]) };
+            }).sort((a, b) => a.len - b.len);
+            const target = sorted[0].sig;
+
+            s.mark('navigate-sigil', { elem: target.element, x: target.x, y: target.y, held });
+            const startHeld = held;
+            await walkTo(act, s.page, grid, target.x, target.y, {
+                timeoutMs: 45000, arrive: 0.5, sprint: true, defend: true, defendRange: 3.8, visited,
+                stopWhen: (q) => (q.sigilsHeld || 0) > startHeld,
+            });
+
+            const q = await readPlayer(s.page);
+            if (q && (q.sigilsHeld || 0) > startHeld) {
+                s.mark('sigil-pickup', { held: q.sigilsHeld, total: 3 });
+                await act.wait(300);
+            }
+        }
+
+        // 2. Gate run: once 3 sigils are held, navigate to the gate and escape.
+        const pGate = await readPlayer(s.page);
+        if (pGate && pGate.gs === 'playing' && (pGate.sigilsHeld || 0) >= 3) {
+            s.mark('segment', { name: 'run-to-gate', held: pGate.sigilsHeld });
+            const rGate = await walkTo(act, s.page, grid, grid.gate[0], grid.gate[1], {
+                timeoutMs: 90000, arrive: 0.2, sprint: true, defend: true, defendRange: 3.8, visited,
+            });
+            s.mark('result', rGate);
+        }
+
+        // 3. End screen handling.
+        await act.wait(2500, 'reading the end screen');
+        s.mark('segment', { name: 'end-screen' });
+        await clickEndOverlay(s, act);
+    },
 };
 
 export { yawTo };

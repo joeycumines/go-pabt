@@ -20,7 +20,7 @@ cd examples/labyrinth
 node e2e/player/playtest-player.mjs --seed 12345,777,4242 --out <dir> --keep-frames
 ```
 
-- **Journeys:** `--journeys J1,...` picks a subset. J1 is cold start and controls, J2 runs to the gate and plays again, J3 is combat, J4 is dying and restarting, J5 is robustness (alt-tab with a key held, resize, Escape and re-lock, reload).
+- **Journeys:** `--journeys J1,...` picks a subset. J1 is cold start and controls, J2 runs to the gate and plays again, J3 is combat, J4 is dying and restarting, J5 is robustness (alt-tab with a key held, resize, Escape and re-lock, reload), J6 is a full run (collects sigils to unlock the gate, survives faction hunts, and escapes).
 - **Build and servers:** the CLI rebuilds the game binary, because `client/` is `go:embed`'ed. Each seed × journey gets its own server process, stopped by PID.
 - **Visible window:** a Chrome window opens, using real GPU and real pointer lock. Leave the physical mouse alone while it runs; under pointer lock a real mouse turns the camera and corrupts the look checks. `--headless` exists for machines without a display. It emulates pointer lock and may use software rendering, and the report says so.
 - **Exit code:** 0 means no S1/S2 findings. 1 means S1/S2 findings or an invalid run. 2 means the harness itself failed.

@@ -110,6 +110,8 @@ export function diary(tl, grid, findings) {
         else if (e.type === 'caught') push(e.t, 'YOU ARE CAUGHT (game over)');
         else if (e.type === 'win') push(e.t, 'YOU ESCAPE (win)');
         else if (e.type === 'powerup') push(e.t, 'you pick up a power-up');
+        else if (e.type === 'sigil') push(e.t, `you pick up a SIGIL (${e.data && e.data.held !== undefined ? e.data.held : 1}/3)`);
+        else if (e.type === 'hunt') push(e.t, `FACTION HUNT TRIGGERED: ${e.data && e.data.faction ? e.data.faction.toUpperCase() : 'FACTION'} HUNTS YOU (12s)`);
     }
     for (const m of tl.marks.filter((x) => x.kind === 'click')) {
         const hit = eventTimes(tl).some((e) => e.type === 'stunned' && e.t >= m.t - 50 && e.t <= m.t + 700);

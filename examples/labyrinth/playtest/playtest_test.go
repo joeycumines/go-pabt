@@ -24,7 +24,7 @@ func TestAllOraclesPassAcrossAllPersonas(t *testing.T) {
 		cfg := Config{
 			Seed:    defaultPlaytestSeed,
 			Persona: p,
-			Ticks:   450,
+			Ticks:   600,
 			Actors:  game.TargetActorCount,
 		}
 		ep := RunEpisode(cfg)
@@ -63,6 +63,7 @@ func TestExplorerRunnerWinsGameOrganicallyWithoutTeleports(t *testing.T) {
 		Ticks:   600,
 		Actors:  game.TargetActorCount,
 	})
+	t.Logf("explorer_runner finished: phase=%s, round=%d, teleports=%d", FormatPhase(ep.FinalPhase), ep.FinalRound, ep.TeleportsUsed)
 	if ep.TeleportsUsed != 0 {
 		t.Fatalf("expected 0 teleports, got %d", ep.TeleportsUsed)
 	}

@@ -47,9 +47,24 @@ func checkPowerUpPickup(w *world.World) *world.PowerUp {
 		dy := pu.Pos.Y - w.Runner.Pos.Y
 		if dx*dx+dy*dy < 0.5*0.5 {
 			pu.Active = false
+			pu.RespawnTicks = 45 * 30 // 45 seconds at 30Hz
 			w.Runner.Element = pu.Element
 			return pu
 		}
 	}
 	return nil
+}
+
+// tickPowerUps runs on the single-writer goroutine every tick. It decrements
+// respawn timers and restores picked-up power-ups after 45 seconds.
+func tickPowerUps(w *world.World) {
+	for _, pu := range w.PowerUps {
+		if !pu.Active {
+			pu.RespawnTicks--
+			if pu.RespawnTicks <= 0 {
+				pu.Active = true
+				pu.RespawnTicks = 0
+			}
+		}
+	}
 }

@@ -453,6 +453,16 @@ func snapshotToProto(snap *world.Snapshot) proto.SnapshotPayload {
 			Active:  pu.Active,
 		})
 	}
+	p.SigilsHeld = snap.SigilsHeld
+	p.GateLocked = snap.GateLocked
+	for _, s := range snap.Sigils {
+		p.Sigils = append(p.Sigils, proto.SigilState{
+			X:       s.Pos.X,
+			Y:       s.Pos.Y,
+			Element: s.Element,
+			Taken:   s.Taken,
+		})
+	}
 	return p
 }
 

@@ -475,6 +475,18 @@ export default [
             await ctx.page.waitForTimeout(200);
             const gsBeforeGate = await ctx.page.evaluate(() => window.__ariadne.gameState);
             if (gsBeforeGate !== 'playing') throw new Error(`gameState not playing before gate teleport: ${gsBeforeGate}`);
+            // Collect 3 sigils across server ticks so the gate unlocks before teleporting to the gate.
+            for (let i = 0; i < 3; i++) {
+                await ctx.page.evaluate((idx) => {
+                    const a = window.__ariadne;
+                    const sigs = a.sigils || [];
+                    if (sigs[idx]) a.teleport(sigs[idx].x, sigs[idx].y);
+                }, i);
+                await ctx.page.waitForFunction((count) => {
+                    const a = window.__ariadne;
+                    return a && a.sigilsHeld >= count;
+                }, i + 1, { timeout: 4000 }).catch(() => {});
+            }
             await ctx.page.evaluate(() => {
                 const a = window.__ariadne;
                 a.teleport(a.gate[0], a.gate[1]);
@@ -1094,7 +1106,7 @@ export default [
                 return chip ? chip.textContent : null;
             });
             if (!objectiveChip) throw new Error('chip-objective element missing');
-            if (!objectiveChip.includes('ESCAPE') && !objectiveChip.includes('ENTER')) {
+            if (!objectiveChip.includes('ESCAPE') && !objectiveChip.includes('ENTER') && !objectiveChip.includes('SIGILS')) {
                 throw new Error('objective chip text unexpected: ' + objectiveChip);
             }
 

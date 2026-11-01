@@ -81,6 +81,9 @@ export function installProbe(opts) {
                             runner: env.p.runner ? [env.p.runner.x, env.p.runner.y, env.p.runner.hp] : null,
                             m: (env.p.minotaurs || []).map((m) => [m.id, m.x, m.y, m.hp, m.stunned ? 1 : 0, m.atk || 0, m.atkType || 0]),
                             bolts: (env.p.bolts || []).map((b) => [b.id, b.x, b.y, b.vx || 0, b.vy || 0, b.element || 0]),
+                            sigils: (env.p.sigils || []).map((s) => [s.x, s.y, s.element, s.taken ? 1 : 0]),
+                            sigilsHeld: env.p.sigilsHeld || 0,
+                            gateLocked: !!env.p.gateLocked,
                         });
                     } else if (env.t === 'event' && env.p) {
                         pe.wire.push({ t, kind: 'event', type: env.p.type, data: env.p.data });
@@ -168,6 +171,9 @@ export function installProbe(opts) {
             gs: a.gameState, pos, yaw, hp: a.hp, round: a.round,
             locked: !!document.pointerLockElement,
             actors,
+            sigils: a.sigils || [],
+            sigilsHeld: a.sigilsHeld || 0,
+            gateLocked: a.gateLocked !== undefined ? a.gateLocked : true,
             grid: a.mazeGrid ? { w: a.mazeSize[0], h: a.mazeSize[1], cells: a.mazeGrid, gate: a.gate } : null,
         };
     };
@@ -180,6 +186,7 @@ export function installProbe(opts) {
                 s.gs = a.gameState; s.play = a.serverPlaying; s.pos = a.playerPos; s.spos = a.serverPlayerPos; s.yaw = a.playerYaw;
                 s.hp = a.hp; s.round = a.round; s.intensity = a.intensity; s.ws = a.wsOpen;
                 s.vel = a.playerVel; s.input = a.inputState; s.elem = a.playerElement; s.fov = a.cameraFov;
+                s.sigils = a.sigils || []; s.sigilsHeld = a.sigilsHeld || 0; s.gateLocked = a.gateLocked !== undefined ? a.gateLocked : true;
                 s.aspect = innerWidth / Math.max(1, innerHeight);
                 s.actors = a.actors.map((x) => ({ id: x.id, x: x.pos[0], y: x.pos[1], z: x.pos[2], hp: x.hp, type: x.type, el: x.element, st: x.stunned }));
                 if (!pe.grid && a.mazeGrid) { pe.grid = { w: a.mazeSize[0], h: a.mazeSize[1], cells: a.mazeGrid, gate: a.gate }; }

@@ -428,16 +428,31 @@ function frame(time) {
             hud.setElement(playerElement);
         }
 
-        // H4: Update objective chip based on gate proximity.
+        const sigilsHeld = snap.data.sigilsHeld !== undefined ? (snap.data.sigilsHeld | 0) : 0;
+        const gateLocked = snap.data.gateLocked !== undefined ? !!snap.data.gateLocked : (sigilsHeld < 3);
+        hud.setSigils(sigilsHeld, 3);
+
+        // H4: Update objective chip based on sigils held and gate proximity.
         const objectiveChip = document.getElementById('chip-objective');
         if (objectiveChip && maze) {
-            const gateDistChip = Math.hypot(sp.x - maze.gateX, sp.y - maze.gateY);
-            if (gateDistChip < 5) {
-                objectiveChip.textContent = 'ENTER THE GATE';
-                objectiveChip.style.animation = 'pulse-text 0.8s ease-in-out infinite';
-            } else {
-                objectiveChip.textContent = 'ESCAPE THE LABYRINTH';
+            if (gateLocked) {
+                objectiveChip.textContent = `SIGILS ${sigilsHeld}/3`;
+                objectiveChip.style.borderColor = '#ff3030';
+                objectiveChip.style.color = '#ff3030';
                 objectiveChip.style.animation = '';
+            } else {
+                const gateDistChip = Math.hypot(sp.x - maze.gateX, sp.y - maze.gateY);
+                if (gateDistChip < 5) {
+                    objectiveChip.textContent = 'ENTER THE GATE';
+                    objectiveChip.style.borderColor = '#00ff80';
+                    objectiveChip.style.color = '#00ff80';
+                    objectiveChip.style.animation = 'pulse-text 0.8s ease-in-out infinite';
+                } else {
+                    objectiveChip.textContent = 'GATE UNLOCKED — ESCAPE';
+                    objectiveChip.style.borderColor = '#00ff80';
+                    objectiveChip.style.color = '#00ff80';
+                    objectiveChip.style.animation = '';
+                }
             }
         }
     }
@@ -493,11 +508,40 @@ function syncBotWorld() {
     botWorld.serverPos = serverPos;
 }
 
-function resolveRunnerAgainstActors(pos, prevPos) {
-    if (!actorStore || !maze || !pos || isNaN(pos.x) || isNaN(pos.y)) return pos;
+function separateRunnerFromActors(runnerPos) {
+    if (!actorStore || !maze || !runnerPos) return;
+    const RADIUS = 0.3;
+    for (const a of actorStore.values()) {
+        if (!a || a.hp <= 0) continue;
+        const ax = a.pos ? a.pos[0] : a.x;
+        const az = a.pos ? a.pos[2] : (a.z !== undefined ? a.z : a.y);
+        if (typeof ax !== 'number' || typeof az !== 'number' || isNaN(ax) || isNaN(az)) continue;
+        const bodyRad = BODY_RADIUS[a.type] !== undefined ? BODY_RADIUS[a.type] : 0.4;
+        const minSep = RADIUS + bodyRad;
+        let dx = ax - runnerPos.x;
+        let dy = az - runnerPos.y;
+        let d2 = dx * dx + dy * dy;
+        if (d2 >= minSep * minSep) continue;
+        let d = Math.sqrt(d2);
+        if (d < 1e-6) { d = 1e-6; dx = 1e-6; dy = 0; }
+        const push = minSep - d;
+        const nx = dx / d, ny = dy / d;
+        if (a.pos) {
+            a.pos[0] += nx * push;
+            a.pos[2] += ny * push;
+            const res = resolve(maze, { x: a.pos[0], y: a.pos[2] }, RADIUS);
+            a.pos[0] = res.x;
+            a.pos[2] = res.y;
+        }
+    }
+}
+
+function resolveRunnerAgainstActors(pos, prevPos, actorsList = null) {
+    const list = actorsList || (actorStore ? actorStore.values() : null);
+    if (!list || !maze || !pos || isNaN(pos.x) || isNaN(pos.y)) return pos;
     const RADIUS = 0.3;
     let res = { x: pos.x, y: pos.y };
-    for (const a of actorStore.values()) {
+    for (const a of list) {
         if (!a || a.hp <= 0) continue;
         const ax = a.pos ? a.pos[0] : a.x;
         const az = a.pos ? a.pos[2] : (a.z !== undefined ? a.z : a.y);
@@ -508,21 +552,26 @@ function resolveRunnerAgainstActors(pos, prevPos) {
         const dy = res.y - az;
         const d2 = dx * dx + dy * dy;
         if (d2 >= minSep * minSep) continue;
+
         const pdx = prevPos ? prevPos.x - ax : dx;
         const pdy = prevPos ? prevPos.y - az : dy;
         const pd2 = pdx * pdx + pdy * pdy;
         let nx, ny;
         if (dx * pdx + dy * pdy < 0 && pd2 > 1e-9) {
             const pd = Math.sqrt(pd2);
-            nx = pdx / pd; ny = pdy / pd;
+            nx = pdx / pd;
+            ny = pdy / pd;
         } else if (d2 > 1e-9) {
             const d = Math.sqrt(d2);
-            nx = dx / d; ny = dy / d;
+            nx = dx / d;
+            ny = dy / d;
         } else if (pd2 > 1e-9) {
             const pd = Math.sqrt(pd2);
-            nx = pdx / pd; ny = pdy / pd;
+            nx = pdx / pd;
+            ny = pdy / pd;
         } else {
-            nx = 1; ny = 0;
+            nx = 1;
+            ny = 0;
         }
         res.x = ax + nx * minSep;
         res.y = az + ny * minSep;
@@ -546,6 +595,7 @@ function update(dt) {
             if (btHud) btHud.pruneToRoster(pausedSnap.data.minotaurs.map(m => m.id));
         }
         actorStore.step(dt, maze);
+    separateRunnerFromActors(predictedPos || { x: camera.pos[0], y: camera.pos[2] });
         return;
     }
     if (botRuntime && botRuntime.active) {
@@ -587,12 +637,12 @@ function update(dt) {
             for (const cmd of pendingInputs) {
                 const prevRecon = recon;
                 recon = move(maze, recon, cmd.yaw, cmd.forward, cmd.strafe, cmd.sprint, 1.0 / 30.0);
-                recon = resolveRunnerAgainstActors(recon, prevRecon);
+                recon = resolveRunnerAgainstActors(recon, prevRecon, snap.data.minotaurs);
             }
             const intraTick = Math.max(0, Math.min(1.0 / 30.0, (performance.now() - lastInputAt) / 1000));
             const prevRecon = recon;
             recon = move(maze, recon, camera.yaw, input.forward, input.strafe, input.sprint, intraTick);
-            recon = resolveRunnerAgainstActors(recon, prevRecon);
+            recon = resolveRunnerAgainstActors(recon, prevRecon, snap.data.minotaurs);
 
             const oldRenderX = camera.pos[0];
             const oldRenderZ = camera.pos[2];
@@ -765,6 +815,7 @@ function update(dt) {
         if (btHud) btHud.pruneToRoster(snap.data.minotaurs.map(m => m.id));
     }
     actorStore.step(dt, maze);
+    separateRunnerFromActors(predictedPos || { x: camera.pos[0], y: camera.pos[2] });
     for (const buf of minotaurBuffers.values()) {
         if (buf.justArrived) {
             buf.justArrived = false;
@@ -908,6 +959,18 @@ function installAriadne() {
         get mazeSize() { return maze ? [maze.w, maze.h] : null; },
         get mazeGrid() { return maze && maze.grid ? Array.from(maze.grid) : null; },
         get gate() { return maze ? [maze.gateX, maze.gateY] : null; },
+        get sigils() {
+            const s = net.getSnapshot();
+            return s && s.data.sigils ? s.data.sigils.map(sig => ({ x: sig.x, y: sig.y, element: sig.element, taken: !!sig.taken })) : [];
+        },
+        get sigilsHeld() {
+            const s = net.getSnapshot();
+            return s && s.data.sigilsHeld !== undefined ? (s.data.sigilsHeld | 0) : 0;
+        },
+        get gateLocked() {
+            const s = net.getSnapshot();
+            return s && s.data.gateLocked !== undefined ? !!s.data.gateLocked : true;
+        },
         get projectileCount() { return projectiles.length + bolts.size; },
         get particleCount() { return particles ? particles.count : 0; },
         get playerVel() { return [playerVelX, playerVelY, playerVelZ]; },
@@ -1263,6 +1326,24 @@ function handleEvent(evt) {
                 }
             }
             break;
+        case 'hunt': {
+            const banner = document.getElementById('wave-banner');
+            if (banner) {
+                const elem = evt.data && evt.data.element !== undefined ? (evt.data.element | 0) : 0;
+                const fname = (FACTION_NAMES[elem] || 'UNKNOWN').toUpperCase();
+                banner.textContent = `THE ${fname} HUNTS YOU`;
+                banner.hidden = false;
+                banner.style.animation = 'none';
+                banner.offsetHeight; // force reflow
+                banner.style.animation = '';
+                setTimeout(() => { banner.hidden = true; }, 3500);
+            }
+            break;
+        }
+        case 'sigil': {
+            hitFlashTimer = 6;
+            break;
+        }
     }
 }
 
@@ -1302,7 +1383,9 @@ function render() {
     const platformColor = [0.22, 0.24, 0.34, 1.0];
     const riftSlabColor = [0.02, 0.01, 0.04, 1.0];
     const riftCrackColor = [0.85, 0.22, 0.95, 1.0];
-    const gateColor = [0.0, 1.0, 0.5, 1.0];
+    const sigilsHeld = snap && snap.data && snap.data.sigilsHeld !== undefined ? (snap.data.sigilsHeld | 0) : 0;
+    const gateLocked = snap && snap.data && snap.data.gateLocked !== undefined ? !!snap.data.gateLocked : (sigilsHeld < 3);
+    const gateColor = gateLocked ? [0.95, 0.15, 0.15, 1.0] : [0.0, 1.0, 0.5, 1.0];
     const stunnedColor = [0.3, 0.3, 0.8, 1.0];
 
     // Maze geometry from server-provided grid. Floor tiles are tinted by
@@ -1376,10 +1459,12 @@ function render() {
 
     // H4: 3D gate compass — tall beacon visible from anywhere.
     const compassHeight = 3.0;
+    const beaconColor = gateLocked ? [0.95, 0.15, 0.15, 0.6] : [0, 1, 0.5, 0.6];
+    const arrowColor = gateLocked ? [0.95, 0.15, 0.15, 0.8] : [0, 1, 0.5, 0.8];
     instances.push({
         pos: [maze.gateX, compassHeight / 2, maze.gateY],
         scale: [0.15, compassHeight, 0.15],
-        color: [0, 1, 0.5, 0.6],
+        color: beaconColor,
     });
     // Compass arrow pointing toward gate from player.
     const gdx = maze.gateX - camera.pos[0];
@@ -1392,7 +1477,7 @@ function render() {
         instances.push({
             pos: [arrowX, 1.2, arrowZ],
             scale: [0.2, 0.2, 0.2],
-            color: [0, 1, 0.5, 0.8],
+            color: arrowColor,
         });
     }
 
@@ -1406,6 +1491,29 @@ function render() {
                 pos: [pu.x, 0.55 + bob, pu.y],
                 scale: [0.3, 0.3, 0.3],
                 color: [ec[0], ec[1], ec[2], 1.0],
+            });
+        }
+    }
+
+    // Elemental sigils (rotating element-coloured shards).
+    if (snap && snap.data.sigils) {
+        const nowSec = performance.now() / 1000;
+        const bob = Math.sin(nowSec * 2.5) * 0.1;
+        for (const s of snap.data.sigils) {
+            if (s.taken) continue;
+            const ec = ELEMENT_COLORS[s.element|0] || ELEMENT_COLORS[0];
+            const angle = nowSec * 2.0 + (s.element * 1.57);
+            const shardWidth = 0.35 + Math.sin(angle) * 0.08;
+            const shardDepth = 0.35 + Math.cos(angle) * 0.08;
+            instances.push({
+                pos: [s.x, 0.65 + bob, s.y],
+                scale: [shardWidth, 0.65, shardDepth],
+                color: [ec[0], ec[1], ec[2], 1.0],
+            });
+            instances.push({
+                pos: [s.x, 0.65 + bob, s.y],
+                scale: [0.15, 0.85, 0.15],
+                color: [1.0, 1.0, 1.0, 0.95],
             });
         }
     }
@@ -1640,9 +1748,9 @@ function render() {
     const weaponInstances = buildWeaponInstances(camera, playerElement);
     renderer.drawInstances(weaponInstances);
 
-    // Update minimap with actors and power-ups.
+    // Update minimap with actors, power-ups, and elemental sigils.
     if (maze) {
-        hud.drawMinimap(maze, camera.pos, camera.yaw, minotaurBuffers, snap && snap.data ? snap.data.powerUps : null, territoryControl, hazards);
+        hud.drawMinimap(maze, camera.pos, camera.yaw, minotaurBuffers, snap && snap.data ? snap.data.powerUps : null, territoryControl, hazards, snap && snap.data ? snap.data.sigils : null, gateLocked);
     }
 
     // H5: Off-screen threat arrows.

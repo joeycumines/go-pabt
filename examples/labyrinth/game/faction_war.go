@@ -99,8 +99,10 @@ func (g *Game) factionCombat(w *world.World) {
 				dx, dy, dist = 1.0, 0.0, 1.0
 			}
 			ux, uy := dx/dist, dy/dist
-			a.Pos = g.knockActor(a.Pos, ux, uy, 1.05)
-			b.Pos = g.knockActor(b.Pos, -ux, -uy, 1.05)
+			minSepA := maze.Radius + actorBodyRadius(ActorType(a.Type))
+			minSepB := maze.Radius + actorBodyRadius(ActorType(b.Type))
+			a.Pos = g.knockActorWithObstacle(a.Pos, ux, uy, 1.05, w.Runner.Pos, minSepA)
+			b.Pos = g.knockActorWithObstacle(b.Pos, -ux, -uy, 1.05, w.Runner.Pos, minSepB)
 			spawnClashHazard(w, a, b)
 			g.broadcastEvent(Event{
 				Type: "clash",
@@ -123,12 +125,21 @@ func (g *Game) factionCombat(w *world.World) {
 // knockActor displaces an actor along (ux, uy) by dist in small substeps,
 // resolving collision at each substep and stopping if a wall blocks progress.
 func (g *Game) knockActor(pos maze.Vec2, ux, uy, dist float64) maze.Vec2 {
+	return g.knockActorWithObstacle(pos, ux, uy, dist, maze.Vec2{}, 0)
+}
+
+// knockActorWithObstacle displaces an actor along (ux, uy) by dist in small substeps,
+// stopping if a solid wall or an obstacle cylinder (such as the runner) blocks progress.
+func (g *Game) knockActorWithObstacle(pos maze.Vec2, ux, uy, dist float64, obstacle maze.Vec2, obstacleRadius float64) maze.Vec2 {
 	moved := 0.0
 	for moved < dist-1e-9 {
 		step := math.Min(KnockbackStepSize, dist-moved)
 		next := maze.Vec2{X: pos.X + ux*step, Y: pos.Y + uy*step}
 		resolved := g.Maze.Resolve(next, maze.Radius)
 		if g.Maze.Solid(int(math.Floor(resolved.X)), int(math.Floor(resolved.Y))) {
+			break
+		}
+		if obstacleRadius > 0 && math.Hypot(resolved.X-obstacle.X, resolved.Y-obstacle.Y) < obstacleRadius {
 			break
 		}
 		if math.Hypot(resolved.X-pos.X, resolved.Y-pos.Y) < step*0.5 {

@@ -189,7 +189,26 @@ func (p *basePersona) Step(snap *world.Snapshot, m *maze.Maze) BotAction {
 func (p *basePersona) stepExplorerRunner(snap *world.Snapshot, m *maze.Maze) BotAction {
 	self := snap.Runner.Pos
 	nearest, dist := nearestLiveActor(snap)
-	wp := nextWaypoint(m, self, snap.Gate)
+	target := snap.Gate
+	if snap.SigilsHeld < 3 && len(snap.Sigils) > 0 {
+		var bestSig *world.Sigil
+		bestDist := math.MaxFloat64
+		for i := range snap.Sigils {
+			s := &snap.Sigils[i]
+			if s.Taken {
+				continue
+			}
+			d := math.Hypot(s.Pos.X-self.X, s.Pos.Y-self.Y)
+			if d < bestDist {
+				bestDist = d
+				bestSig = s
+			}
+		}
+		if bestSig != nil {
+			target = bestSig.Pos
+		}
+	}
+	wp := nextWaypoint(m, self, target)
 	wdx := wp.X - self.X
 	wdy := wp.Y - self.Y
 	wn := math.Hypot(wdx, wdy)

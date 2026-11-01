@@ -11,7 +11,20 @@ export class HUD {
         this.chipFps = document.getElementById('chip-fps');
         this.chipElement = document.getElementById('chip-element');
         this.chipWar = document.getElementById('chip-war');
+        this.chipSigils = document.getElementById('chip-sigils');
         this._fpsBuffer = [];
+    }
+
+    setSigils(held, total) {
+        if (!this.chipSigils) return;
+        this.chipSigils.textContent = `Sigils: ${held} / ${total}`;
+        if (held >= total) {
+            this.chipSigils.style.borderColor = '#00ff80';
+            this.chipSigils.style.color = '#00ff80';
+        } else {
+            this.chipSigils.style.borderColor = '#59bfff';
+            this.chipSigils.style.color = '#59bfff';
+        }
     }
 
     updateFps(dt) {
@@ -57,7 +70,7 @@ export class HUD {
         this.chipWar.textContent = 'War: ' + clashes + ' clashes';
     }
 
-    drawMinimap(mazeData, playerPos, playerYaw, minotaurBuffers, powerUps, territoryControl, hazards) {
+    drawMinimap(mazeData, playerPos, playerYaw, minotaurBuffers, powerUps, territoryControl, hazards, sigils, gateLocked = true) {
         const ctx = this.minimapCtx;
         const w = this.minimap.width;
         const h = this.minimap.height;
@@ -96,12 +109,33 @@ export class HUD {
             }
         }
 
-        // Draw gate
-        ctx.fillStyle = '#00ff80';
+        // Draw gate (red when locked, green when unlocked).
+        ctx.fillStyle = gateLocked ? '#ff3030' : '#00ff80';
         ctx.fillRect(
             mazeData.gateX * cellW - 2, mazeData.gateY * cellH - 2,
             cellW + 4, cellH + 4
         );
+
+        // Draw elemental sigils (diamonds).
+        if (sigils) {
+            const sigColors = ['#ff5920', '#59bfff', '#fff240', '#8c33d9'];
+            for (const s of sigils) {
+                if (s.taken) continue;
+                const sx = s.x * cellW;
+                const sy = s.y * cellH;
+                ctx.fillStyle = sigColors[s.element|0] || '#ffffff';
+                ctx.beginPath();
+                ctx.moveTo(sx, sy - 3);
+                ctx.lineTo(sx + 3, sy);
+                ctx.lineTo(sx, sy + 3);
+                ctx.lineTo(sx - 3, sy);
+                ctx.closePath();
+                ctx.fill();
+                ctx.strokeStyle = '#ffffff';
+                ctx.lineWidth = 1;
+                ctx.stroke();
+            }
+        }
 
         // Draw active power-ups
         if (powerUps) {

@@ -22,7 +22,7 @@ import { buildEvidence, encodeVideo, pruneFrames, findingsMarkdown } from './rep
 import { diary, plainVerdicts } from './narrative.mjs';
 
 export function parseArgs(argv) {
-    const cfg = { seeds: [12345], journeys: ['J1', 'J2', 'J3', 'J4', 'J5'], out: null, headless: false, keepFrames: false, analyze: null, rejudge: null };
+    const cfg = { seeds: [12345], journeys: ['J1', 'J2', 'J3', 'J4', 'J5', 'J6'], out: null, headless: false, keepFrames: false, analyze: null, rejudge: null };
     for (let i = 0; i < argv.length; i++) {
         const a = argv[i];
         const val = () => { if (i + 1 >= argv.length) throw new Error(`${a} needs a value`); return argv[++i]; };

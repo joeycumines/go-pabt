@@ -104,22 +104,26 @@ export async function walkTo(act, page, grid, gx, gz, {
             const dGoal = Math.hypot(gx - p.pos[0], gz - p.pos[2]);
             if (dGoal <= arrive) return { result: 'arrived', stuck, ms: Date.now() - t0 };
 
-            if (defend && Date.now() - lastDefenseT > 950) {
+            const defendCooldown = (p.actors || []).some((a) => a.hp > 0 && Math.hypot(a.x - p.pos[0], a.z - p.pos[2]) < 2.5) ? 250 : 600;
+            if (defend && Date.now() - lastDefenseT > defendCooldown) {
                 const blockers = visibleActors(grid, p, defendRange).filter((a) => {
                     if (a.st) return false;
                     const ang = Math.abs(wrapAngle(yawTo(p.pos[0], p.pos[2], a.x, a.z) - p.yaw));
-                    return ang < 0.65 || a.d < 2.2;
-                });
+                    return ang < 0.95 || a.d < 2.5;
+                }).sort((a, b) => a.d - b.d);
                 if (blockers.length) {
                     const b = blockers[0];
                     const strafeKey = bestStrafeKey(grid, p.pos, p.yaw, 'd');
-                    await act.down('w');
+                    if (b.d < 2.0) await act.down('s');
                     await act.down(strafeKey);
                     await faceYaw(act, page, yawTo(p.pos[0], p.pos[2], b.x, b.z), { tol: 0.05, passes: 3 });
                     await act.click();
-                    await act.wait(160);
+                    await act.wait(140);
                     await act.up(strafeKey);
+                    if (b.d < 2.0) await act.up('s');
                     lastDefenseT = Date.now();
+                    lastProgressT = Date.now();
+                    bestDist = Infinity;
                     path = null;
                     continue;
                 }
@@ -146,7 +150,7 @@ export async function walkTo(act, page, grid, gx, gz, {
             }
 
             if (dGoal < bestDist - 0.2) { bestDist = dGoal; lastProgressT = Date.now(); }
-            if (Date.now() - lastProgressT > 2200) {
+            if (Date.now() - lastProgressT > 3800) {
                 stuck.push({ t: Date.now(), pos: p.pos, cell, target: [tx, tz] });
                 act.s.mark('pilot-stuck', { pos: p.pos, target: [tx, tz] });
                 await act.releaseAll();

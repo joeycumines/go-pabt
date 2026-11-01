@@ -75,9 +75,18 @@ type Bolt struct {
 // PowerUp is an elemental pickup in the maze. Stepping on one changes the
 // runner's active element.
 type PowerUp struct {
+	Pos          maze.Vec2
+	Element      int
+	Active       bool // false once picked up
+	RespawnTicks int  // countdown until pickup becomes active again
+}
+
+// Sigil is an elemental objective shard placed in a faction quadrant.
+// The runner must collect 3 of 4 sigils to unlock the gate.
+type Sigil struct {
 	Pos     maze.Vec2
 	Element int
-	Active  bool // false once picked up
+	Taken   bool
 }
 
 // Hazard is a temporary elemental rift left by faction crossfire. It damages
@@ -95,14 +104,17 @@ type Hazard struct {
 // World is the authoritative, mutable simulation state. It is owned by the
 // single-writer loop goroutine; all other access goes through Snapshot.
 type World struct {
-	Maze      *maze.Maze
-	Runner    Runner
-	Minotaurs []*Minotaur
-	PowerUps  []*PowerUp
-	Hazards   []*Hazard
-	Bolts     []*Bolt
-	Round     int
-	Phase     Phase
+	Maze          *maze.Maze
+	Runner        Runner
+	Minotaurs     []*Minotaur
+	PowerUps      []*PowerUp
+	Hazards       []*Hazard
+	Bolts         []*Bolt
+	Sigils        []*Sigil
+	SigilsHeld    int
+	HuntRemaining [4]int // remaining ticks of faction hunt per element
+	Round         int
+	Phase         Phase
 	// TerritoryControl maps each quadrant (0=NE, 1=NW, 2=SE, 3=SW) to the
 	// element currently controlling it. Refreshed every tick by the game
 	// logic from faction presence.
@@ -147,15 +159,19 @@ func (w *World) Step(dt float64) {
 
 // Snapshot is an immutable, defensive copy of the world for readers.
 type Snapshot struct {
-	Round     int
-	Phase     Phase
-	Runner    Runner
-	Minotaurs []Minotaur
-	PowerUps  []PowerUp
-	Hazards   []Hazard
-	Bolts     []Bolt
-	Intensity int
-	Gate      maze.Vec2
+	Round         int
+	Phase         Phase
+	Runner        Runner
+	Minotaurs     []Minotaur
+	PowerUps      []PowerUp
+	Hazards       []Hazard
+	Bolts         []Bolt
+	Sigils        []Sigil
+	SigilsHeld    int
+	GateLocked    bool
+	HuntRemaining [4]int
+	Intensity     int
+	Gate          maze.Vec2
 	// TerritoryControl maps each quadrant (0=NE, 1=NW, 2=SE, 3=SW) to the
 	// element controlling it. Updated each tick based on faction presence.
 	TerritoryControl [4]int
@@ -172,6 +188,9 @@ func (w *World) Copy() *Snapshot {
 		Intensity:        w.Intensity,
 		Gate:             w.Maze.Gate,
 		TerritoryControl: w.TerritoryControl,
+		SigilsHeld:       w.SigilsHeld,
+		GateLocked:       w.SigilsHeld < 3,
+		HuntRemaining:    w.HuntRemaining,
 	}
 	s.Minotaurs = make([]Minotaur, len(w.Minotaurs))
 	for i, m := range w.Minotaurs {
@@ -188,6 +207,10 @@ func (w *World) Copy() *Snapshot {
 	s.Bolts = make([]Bolt, len(w.Bolts))
 	for i, b := range w.Bolts {
 		s.Bolts[i] = *b
+	}
+	s.Sigils = make([]Sigil, len(w.Sigils))
+	for i, sig := range w.Sigils {
+		s.Sigils[i] = *sig
 	}
 	return s
 }

@@ -201,7 +201,8 @@ type Game struct {
 	// goroutine (NewGame completes before the loop starts), so it needs no
 	// lock. Seeding it from the maze seed makes the whole world
 	// reproducible.
-	rng *mrand.Rand
+	rng  *mrand.Rand
+	seed uint64
 
 	// nextActorID is a monotonic actor ID counter. IDs are never reused,
 	// because clients may still hold interpolation buffers for a removed
@@ -250,6 +251,7 @@ func NewGame(m *maze.Maze, initialActors int, seed uint64) *Game {
 		treeSubs:         make(map[SessionID]treeSubEntry),
 		escalationRounds: []int{300, 600, 900},
 		rng:              mrand.New(mrand.NewSource(int64(seed))),
+		seed:             seed,
 		playing:          make(map[SessionID]bool),
 	}
 
@@ -257,9 +259,11 @@ func NewGame(m *maze.Maze, initialActors int, seed uint64) *Game {
 		g.spawnActor(ActorType(i % 4))
 	}
 
-	// Spawn elemental power-ups into the authoritative world. The runner
-	// starts as Fire (the zero value of Runner.Element).
+	// Spawn elemental power-ups and quadrant sigils into the authoritative world.
+	// The runner starts as Fire (the zero value of Runner.Element).
 	spawnPowerUps(w, g.rng)
+	sigilRng := mrand.New(mrand.NewSource(int64(seed)*10007 + 42))
+	spawnSigils(w, m, sigilRng)
 
 	// Register the tick hook so all game logic runs on the writer goroutine.
 	l.SetTickHook(func(w *world.World) {
@@ -510,16 +514,17 @@ func (g *Game) tickLogic(w *world.World) {
 		return
 	}
 
-	// Check win condition.
+	// Check win condition (requires collecting at least 3 elemental sigils).
 	dx := w.Runner.Pos.X - g.Maze.Gate.X
 	dy := w.Runner.Pos.Y - g.Maze.Gate.Y
-	if dx*dx+dy*dy < 0.5*0.5 {
+	if dx*dx+dy*dy < 0.5*0.5 && w.SigilsHeld >= 3 {
 		w.Phase = world.PhaseWon
 		g.broadcastEvent(Event{Type: "win"})
 		return
 	}
 
-	// Check power-up pickup.
+	// Check power-up pickup and respawn timers.
+	tickPowerUps(w)
 	if pu := checkPowerUpPickup(w); pu != nil {
 		g.broadcastEvent(Event{
 			Type: "powerup",
@@ -529,6 +534,10 @@ func (g *Game) tickLogic(w *world.World) {
 			},
 		})
 	}
+
+	// Check sigil pickup and active faction hunts.
+	checkSigilPickup(g, w)
+	tickHunts(g, w)
 
 	// Escalation schedule. Respawns hold the roster at TargetActorCount, so
 	// escalation must not add past the cap or a long session grows the field
@@ -708,11 +717,13 @@ func (g *Game) submitWorldResetIfTerminal(sess *PlayerSession) {
 		for i := 0; i < TargetActorCount; i++ {
 			g.spawnActor(ActorType(i % 4))
 		}
-		// Reset hazards, bolts, and re-spawn power-ups.
+		// Reset hazards, bolts, and re-spawn power-ups and sigils.
 		w.Hazards = nil
 		w.Bolts = nil
 		w.PowerUps = nil
 		spawnPowerUps(w, g.rng)
+		sigilRng := mrand.New(mrand.NewSource(int64(g.seed)*10007 + 42))
+		spawnSigils(w, g.Maze, sigilRng)
 		// Sync the session's authoritative position so the client's
 		// prediction reconciles to the spawn point.
 		if sess != nil && sess.Net != nil {
