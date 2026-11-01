@@ -632,3 +632,45 @@ test('D16: a world reset across a reload gap does not count as enemies vanishing
     });
     assert.ok(detectEngagement(midRunVanish, g).some((f) => f.id === 'D16'));
 });
+
+test('D16: an actor already alive on server that comes around a corner is not a pop-in; a mid-view spawn is', () => {
+    const g = new Grid(7, 7, grid().cells);
+    // Case 1: Wire tap shows B-1 was spawned at t=100. At t=2000, player turns and sees it for the first time.
+    const cornerReveal = tl({
+        wire: [
+            { kind: 'snap', t: 100, m: [['B-1', 1.5, 3.5, 40, 0, 0, 0]] },
+            { kind: 'snap', t: 2000, m: [['B-1', 1.5, 3.5, 40, 0, 0, 0]] },
+        ],
+        samples: [
+            S(1900, { round: 20, pos: [1.5, 0.5, 1.5], yaw: Math.PI, actors: [] }), // facing away
+            S(2000, { round: 23, pos: [1.5, 0.5, 1.5], yaw: 0, actors: [{ id: 'B-1', x: 1.5, z: 3.5, hp: 40 }] }), // turned to see it
+        ],
+    });
+    assert.equal(detectEngagement(cornerReveal, g).some((f) => f.id === 'D16'), false);
+
+    // Case 2: Wire tap shows B-2 spawned at t=1900 behind a wall (runner at [1.5, 1.5], actor at [5.5, 5.5]).
+    // At t=2000 (100ms later), runner reaches [5.5, 3.5] with clear view of [5.5, 5.5]. Spawn was hidden.
+    const spawnBehindWall = tl({
+        wire: [
+            { kind: 'snap', t: 1900, runner: [1.5, 1.5], m: [['B-2', 5.5, 5.5, 40, 0, 0, 0]] },
+            { kind: 'snap', t: 2000, runner: [5.5, 3.5], m: [['B-2', 5.5, 5.5, 40, 0, 0, 0]] },
+        ],
+        samples: [
+            S(1900, { round: 20, pos: [1.5, 0.5, 1.5], yaw: 0, actors: [] }),
+            S(2000, { round: 23, pos: [5.5, 0.5, 3.5], yaw: 0, actors: [{ id: 'B-2', x: 5.5, z: 5.5, hp: 40 }] }),
+        ],
+    });
+    assert.equal(detectEngagement(spawnBehindWall, g).some((f) => f.id === 'D16'), false);
+
+    // Case 3: Wire tap shows B-3 first appeared at t=2000 directly in view with clear line of sight.
+    const midViewSpawn = tl({
+        wire: [
+            { kind: 'snap', t: 2000, runner: [1.5, 1.5], m: [['B-3', 1.5, 3.5, 40, 0, 0, 0]] },
+        ],
+        samples: [
+            S(1900, { round: 20, pos: [1.5, 0.5, 1.5], yaw: 0, actors: [] }),
+            S(2000, { round: 23, pos: [1.5, 0.5, 1.5], yaw: 0, actors: [{ id: 'B-3', x: 1.5, z: 3.5, hp: 40 }] }),
+        ],
+    });
+    assert.ok(detectEngagement(midViewSpawn, g).some((f) => f.id === 'D16'));
+});

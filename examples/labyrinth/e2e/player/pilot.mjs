@@ -71,7 +71,7 @@ function pickTarget(grid, pos, path) {
 
 // bestStrafeKey picks the lateral direction ('a' or 'd') with more wall
 // clearance from the player's current position and heading.
-function bestStrafeKey(grid, pos, yaw, prefer = 'd') {
+export function bestStrafeKey(grid, pos, yaw, prefer = 'd') {
     const rx = -Math.cos(yaw), rz = Math.sin(yaw); // strafe-right vector
     const rightRoom = grid.castRay(pos[0], pos[2], rx, rz).dist;
     const leftRoom = grid.castRay(pos[0], pos[2], -rx, -rz).dist;
@@ -175,9 +175,11 @@ export function visibleActors(grid, p, range = 11) {
 }
 
 // engage turns onto a visible actor with the mouse and clicks to fire up to
-// `shots` times while actively strafing and kiting (maintaining standoff
-// distance and moving laterally between shots like a human FPS player).
-export async function engage(act, page, grid, actorId, { shots = 4 } = {}) {
+// `shots` times while actively strafing and moving laterally between shots.
+// When kite is true (default), it maintains standoff distance by backing up
+// when closer than 2.6u. When kite is false (e.g. J4 seeking danger to be
+// overwhelmed), it stands its ground laterally without backpedaling.
+export async function engage(act, page, grid, actorId, { shots = 4, kite = true } = {}) {
     const fired = [];
     let preferStrafe = 'd';
     let heldDepth = null;
@@ -190,10 +192,20 @@ export async function engage(act, page, grid, actorId, { shots = 4 } = {}) {
             const seg = grid.segment(p.pos[0], p.pos[2], a.x, a.z);
             if (seg.wall) break;
 
+            // Situational awareness: if another enemy has closed to point-blank range
+            // (< 2.2u) while our current target is further away (> 3.0u), break out so
+            // the pilot can react to the closer threat.
+            if (i > 0 && seg.dist > 3.0) {
+                const threat = (p.actors || []).find((x) => x.hp > 0 && x.id !== actorId && Math.hypot(x.x - p.pos[0], x.z - p.pos[2]) < 2.2);
+                if (threat) break;
+            }
+
             const aimYaw = yawTo(p.pos[0], p.pos[2], a.x, a.z);
             const strafeKey = bestStrafeKey(grid, p.pos, aimYaw, preferStrafe);
             preferStrafe = strafeKey === 'd' ? 'a' : 'd';
-            const depthKey = seg.dist < 2.6 ? 's' : seg.dist > 5.8 ? 'w' : null;
+            const depthKey = kite
+                ? (seg.dist < 2.6 ? 's' : seg.dist > 5.8 ? 'w' : null)
+                : (seg.dist > 5.5 ? 'w' : null);
             if (heldDepth && heldDepth !== depthKey) {
                 await act.up(heldDepth);
                 heldDepth = null;
@@ -239,7 +251,7 @@ export async function engage(act, page, grid, actorId, { shots = 4 } = {}) {
 // floor cell a few steps away and walks there, stopping early as soon as any
 // enemy comes into perception range.
 export async function exploreCorridors(act, page, grid, visited, {
-    timeoutMs = 5500, sprint = false, stopOnRadar = true,
+    timeoutMs = 5500, sprint = false, stopOnRadar = false,
 } = {}) {
     const p = await readPlayer(page);
     if (!p || p.gs !== 'playing') return { result: p ? p.gs : 'no-player' };

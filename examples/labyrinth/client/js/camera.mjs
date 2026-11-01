@@ -31,7 +31,8 @@ export class Camera {
             // old '+' turned the view the opposite way to the mouse.
             this.yaw   -= e.movementX * 0.002;
             this.pitch -= e.movementY * 0.002;
-            const limit = Math.PI * 0.49;
+            // Clamp pitch to a tight horizontal band so player never stares blindly at floor or ceiling.
+            const limit = Math.PI * 0.12;
             this.pitch = Math.max(-limit, Math.min(limit, this.pitch));
         });
     }
@@ -55,6 +56,11 @@ export class Camera {
         this.recoilPitch *= Math.pow(0.01, dt);
         if (Math.abs(this.recoilPitch) < 0.0001) {
             this.recoilPitch = 0;
+        }
+        // Auto-center player pitch toward 0 (horizontal eye level) with gentle decay.
+        this.pitch *= Math.pow(0.05, dt);
+        if (Math.abs(this.pitch) < 0.0001) {
+            this.pitch = 0;
         }
     }
 

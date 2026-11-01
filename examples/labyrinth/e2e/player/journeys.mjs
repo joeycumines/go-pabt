@@ -4,7 +4,7 @@
 // session.mark(); they never assert - judging is the detectors' job.
 
 import { Actuator } from './actuate.mjs';
-import { readPlayer, readGrid, faceYaw, walkTo, visibleActors, engage, exploreCorridors, yawTo, RAD_PER_PX } from './pilot.mjs';
+import { readPlayer, readGrid, faceYaw, walkTo, visibleActors, engage, exploreCorridors, yawTo, RAD_PER_PX, bestStrafeKey } from './pilot.mjs';
 
 // enterGame goes through the real onboarding: read the tutorial, press Enter,
 // click into the game to take pointer lock. Returns whether lock was taken.
@@ -160,9 +160,22 @@ export const JOURNEYS = {
             const radar = (p.actors || []).filter((a) => a.hp > 0);
             if (radar.length) {
                 const near = radar.map((a) => ({ a, n: (grid.path(p.pos[0], p.pos[2], a.x, a.z) || { length: 1e9 }).length })).sort((x, y) => x.n - y.n)[0].a;
+                const dNear = Math.hypot(near.x - p.pos[0], near.z - p.pos[2]);
+                if (dNear <= 3.5) {
+                    await faceYaw(act, s.page, yawTo(p.pos[0], p.pos[2], near.x, near.z), { tol: 0.08, passes: 2 });
+                    const q = await readPlayer(s.page);
+                    const visCheck = q ? visibleActors(grid, q, 9) : [];
+                    if (visCheck.length) {
+                        s.mark('engage', { id: visCheck[0].id, d: visCheck[0].d });
+                        fired.push(...await engage(act, s.page, grid, visCheck[0].id, { shots: 4 }));
+                    } else {
+                        await act.wait(200);
+                    }
+                    continue;
+                }
                 await walkTo(act, s.page, grid, near.x, near.z, {
-                    timeoutMs: 5000, arrive: 1.5, visited,
-                    stopWhen: (q) => visibleActors(grid, q, 9).length > 0,
+                    timeoutMs: 5000, arrive: 3.0, visited,
+                    stopWhen: (q) => visibleActors(grid, q, 8).length > 0,
                 });
                 const q = await readPlayer(s.page);
                 if (q && q.gs === 'playing' && !visibleActors(grid, q, 9).length) {
@@ -179,8 +192,7 @@ export const JOURNEYS = {
     },
 
     // J4: death - search corridors using local perception, press close into
-    // perceived enemies without firing until overwhelmed, read the death
-    // screen, restart.
+    // perceived enemies and fight until overwhelmed, read the death screen, restart.
     async J4(s) {
         const act = new Actuator(s);
         await enterGame(s, act, { readMs: 1500 });
@@ -191,32 +203,48 @@ export const JOURNEYS = {
         while (Date.now() - t0 < 120000) {
             const p = await readPlayer(s.page);
             if (!p || p.gs !== 'playing') break;
+            const vis = visibleActors(grid, p, 7.0);
+            if (vis.length) {
+                s.mark('press-danger', { id: vis[0].id, d: vis[0].d });
+                await engage(act, s.page, grid, vis[0].id, { shots: 2, kite: false });
+                continue;
+            }
             const live = (p.actors || []).filter((a) => a.hp > 0);
             if (live.length) {
                 const near = live.sort((x, y) => Math.hypot(x.x - p.pos[0], x.z - p.pos[2]) - Math.hypot(y.x - p.pos[0], y.z - p.pos[2]))[0];
-                await walkTo(act, s.page, grid, near.x, near.z, {
-                    timeoutMs: 3800, arrive: 1.1, visited,
-                });
-                const q = await readPlayer(s.page);
-                if (!q || q.gs !== 'playing') break;
-                const vis = visibleActors(grid, q, 9.0);
-                const tgt = vis.length ? vis[0] : (q.actors || []).filter((a) => a.hp > 0).sort((x, y) => Math.hypot(x.x - q.pos[0], x.z - q.pos[2]) - Math.hypot(y.x - q.pos[0], y.z - q.pos[2]))[0];
-                if (tgt) {
-                    await faceYaw(act, s.page, yawTo(q.pos[0], q.pos[2], tgt.x, tgt.z), { tol: 0.08, passes: 3 });
+                const dNear = Math.hypot(near.x - p.pos[0], near.z - p.pos[2]);
+                if (dNear <= 4.0) {
+                    await faceYaw(act, s.page, yawTo(p.pos[0], p.pos[2], near.x, near.z), { tol: 0.08, passes: 2 });
+                    const q = await readPlayer(s.page);
+                    const visCheck = q ? visibleActors(grid, q, 7.0) : [];
+                    if (visCheck.length) {
+                        s.mark('press-danger', { id: visCheck[0].id, d: visCheck[0].d });
+                        await engage(act, s.page, grid, visCheck[0].id, { shots: 2, kite: false });
+                    } else {
+                        await act.wait(200);
+                    }
+                    continue;
                 }
-                await act.wait(900, 'standing in harm\'s way');
+                await walkTo(act, s.page, grid, near.x, near.z, {
+                    timeoutMs: 4000, arrive: 2.5, visited,
+                    stopWhen: (q) => visibleActors(grid, q, 6.0).length > 0,
+                });
                 continue;
             }
             await exploreCorridors(act, s.page, grid, visited, { timeoutMs: 5000, sprint: true });
         }
-        await act.wait(2500, 'reading the death screen');
-        s.mark('segment', { name: 'restart' });
-        if (await clickEndOverlay(s, act)) {
-            await act.wait(1000, 'restart loading');
-            await enterGame(s, act, { readMs: 1500 });
-            s.mark('segment', { name: 'after-restart' });
-            await act.hold('w', 1000);
-            await act.wait(2000);
+        const finalP = await readPlayer(s.page);
+        if (finalP && finalP.gs !== 'playing') {
+            await act.wait(2500, 'reading the death screen');
+            s.mark('segment', { name: 'restart' });
+            if (await clickEndOverlay(s, act)) {
+                await act.wait(1000, 'restart loading');
+                await enterGame(s, act, { readMs: 1500 });
+                s.mark('segment', { name: 'after-restart' });
+                const postGrid = await waitGrid(s);
+                await exploreCorridors(act, s.page, postGrid, new Map(), { timeoutMs: 3000, sprint: false });
+                await act.wait(500);
+            }
         }
     },
 

@@ -11,7 +11,7 @@ import { DebugPanel } from './debug.mjs';
 import { BTHud } from './bt-hud.mjs';
 import { ParticleEngine } from './particles.mjs';
 import { ActorStore } from './actors.mjs';
-import { VISUAL_HEIGHT } from './archetypes.mjs';
+import { VISUAL_HEIGHT, BODY_RADIUS } from './archetypes.mjs';
 import { relativeBearing } from './compass.mjs';
 import { move, resolve } from './predict.mjs';
 import { BotRuntime } from './bot-runtime.mjs';
@@ -355,6 +355,8 @@ function init() {
         // Place camera at maze start, facing down the longest open corridor.
         camera.pos = [maze.startX, PLAYER_HEIGHT, maze.startY];
         camera.yaw = typeof maze.startYaw === 'number' ? maze.startYaw : 0;
+        camera.pitch = 0;
+        camera.recoilPitch = 0;
         predictedPos = { x: maze.startX, y: maze.startY };
         pendingInputs = [];
         lastSnapSeq = -1;
@@ -491,6 +493,44 @@ function syncBotWorld() {
     botWorld.serverPos = serverPos;
 }
 
+function resolveRunnerAgainstActors(pos, prevPos) {
+    if (!actorStore || !maze || !pos || isNaN(pos.x) || isNaN(pos.y)) return pos;
+    const RADIUS = 0.3;
+    let res = { x: pos.x, y: pos.y };
+    for (const a of actorStore.values()) {
+        if (!a || a.hp <= 0) continue;
+        const ax = a.pos ? a.pos[0] : a.x;
+        const az = a.pos ? a.pos[2] : (a.z !== undefined ? a.z : a.y);
+        if (typeof ax !== 'number' || typeof az !== 'number' || isNaN(ax) || isNaN(az)) continue;
+        const bodyRad = BODY_RADIUS[a.type] !== undefined ? BODY_RADIUS[a.type] : 0.4;
+        const minSep = RADIUS + bodyRad;
+        const dx = res.x - ax;
+        const dy = res.y - az;
+        const d2 = dx * dx + dy * dy;
+        if (d2 >= minSep * minSep) continue;
+        const pdx = prevPos ? prevPos.x - ax : dx;
+        const pdy = prevPos ? prevPos.y - az : dy;
+        const pd2 = pdx * pdx + pdy * pdy;
+        let nx, ny;
+        if (dx * pdx + dy * pdy < 0 && pd2 > 1e-9) {
+            const pd = Math.sqrt(pd2);
+            nx = pdx / pd; ny = pdy / pd;
+        } else if (d2 > 1e-9) {
+            const d = Math.sqrt(d2);
+            nx = dx / d; ny = dy / d;
+        } else if (pd2 > 1e-9) {
+            const pd = Math.sqrt(pd2);
+            nx = pdx / pd; ny = pdy / pd;
+        } else {
+            nx = 1; ny = 0;
+        }
+        res.x = ax + nx * minSep;
+        res.y = az + ny * minSep;
+        res = resolve(maze, res, RADIUS);
+    }
+    return res;
+}
+
 function update(dt) {
     syncPlayState();
     input.update();
@@ -516,7 +556,9 @@ function update(dt) {
     }
     // T5: Smooth per-frame client prediction using instant-speed model matching the server.
     if (predictedPos && maze) {
+        const prevPred = predictedPos;
         predictedPos = move(maze, predictedPos, camera.yaw, input.forward, input.strafe, input.sprint, dt);
+        predictedPos = resolveRunnerAgainstActors(predictedPos, prevPred);
     }
 
     // T5: Snapshot reconciliation on a NEW snapshot seq.
@@ -543,10 +585,14 @@ function update(dt) {
                 pendingInputs = [];
             }
             for (const cmd of pendingInputs) {
+                const prevRecon = recon;
                 recon = move(maze, recon, cmd.yaw, cmd.forward, cmd.strafe, cmd.sprint, 1.0 / 30.0);
+                recon = resolveRunnerAgainstActors(recon, prevRecon);
             }
             const intraTick = Math.max(0, Math.min(1.0 / 30.0, (performance.now() - lastInputAt) / 1000));
+            const prevRecon = recon;
             recon = move(maze, recon, camera.yaw, input.forward, input.strafe, input.sprint, intraTick);
+            recon = resolveRunnerAgainstActors(recon, prevRecon);
 
             const oldRenderX = camera.pos[0];
             const oldRenderZ = camera.pos[2];
@@ -1184,6 +1230,8 @@ function handleEvent(evt) {
         }
         case 'hit': {
             damageFlashTimer = 10;
+            errorOffsetX = 0;
+            errorOffsetZ = 0;
             // D5: point the damage arc at the source. x/y are the attacker's
             // world position (hazard, bolt origin or the mob that hit).
             if (evt.data && Number.isFinite(evt.data.x) && Number.isFinite(evt.data.y)) {

@@ -133,6 +133,7 @@ export class ActorStore {
 
     entries() { return this.buffers.entries(); }
     values() { return this.buffers.values(); }
+    getAll() { return [...this.buffers.values()]; }
     get(id) { return this.buffers.get(id); }
     get size() { return this.buffers.size; }
 }

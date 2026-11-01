@@ -173,6 +173,22 @@ export function feelProfile(tl, grid) {
     const lastPos = new Map();
     const popIns = [], vanishes = [], teleports = [];
     const prevVisible = new Map();
+    const wireFirstSeen = new Map();
+    for (const w of tl.wire || []) {
+        if (w.kind === 'snap' && Array.isArray(w.m)) {
+            for (const m of w.m) {
+                const id = m[0];
+                if (!wireFirstSeen.has(id)) {
+                    wireFirstSeen.set(id, {
+                        t: w.t,
+                        x: m[1],
+                        z: m[2],
+                        runner: w.runner,
+                    });
+                }
+            }
+        }
+    }
     for (let i = 0; i < ps.length; i++) {
         const s = ps[i];
         const dt = i ? Math.min(250, s.t - ps[i - 1].t) / 1000 : 0;
@@ -216,7 +232,29 @@ export function feelProfile(tl, grid) {
         const continuousPlay = i && s.t - ps[i - 1].t <= 1000 && !(typeof s.round === 'number' && typeof ps[i - 1].round === 'number' && s.round < ps[i - 1].round);
         if (continuousPlay) {
             for (const [id, a] of nowVisible) {
-                if (!prevVisible.has(id) && !(ps[i - 1].actors || []).some((x) => x.id === id)) popIns.push({ t: s.t, id, d: Math.hypot(a.x - s.pos[0], a.z - s.pos[2]) });
+                if (!prevVisible.has(id)) {
+                    const info = wireFirstSeen.get(id);
+                    let isNewSpawn = false;
+                    if (wireFirstSeen.size > 0) {
+                        if (!info) {
+                            isNewSpawn = true;
+                        } else if (s.t - info.t <= 600) {
+                            // If it first appeared on the wire within the last 600ms, check whether
+                            // it spawned in view of the runner at the moment of spawn.
+                            // If a wall was between the runner and the actor at spawn, it spawned
+                            // out of sight and did not pop into view.
+                            if (info.runner) {
+                                const wallAtSpawn = grid.segment(info.runner[0], info.runner[1], info.x, info.z).wall;
+                                isNewSpawn = !wallAtSpawn;
+                            } else {
+                                isNewSpawn = true;
+                            }
+                        }
+                    } else {
+                        isNewSpawn = !(ps[i - 1].actors || []).some((x) => x.id === id);
+                    }
+                    if (isNewSpawn) popIns.push({ t: s.t, id, d: Math.hypot(a.x - s.pos[0], a.z - s.pos[2]) });
+                }
             }
             for (const [id] of prevVisible) {
                 if (!ids.has(id)) {
