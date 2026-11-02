@@ -46,6 +46,7 @@ export function renderTruth(tl) {
         last = s.t;
         const snap = latestSnapBefore(sn, s.t);
         if (!snap || s.t - snap.t > 500) continue;
+        if (typeof s.round === 'number' && s.round < 0) continue;
         judged++;
         const server = new Map(snap.m.filter((m) => m[3] > 0).map((m) => [m[0], m]));
         const drawn = new Map((s.actors || []).map((a) => [a.id, a]));

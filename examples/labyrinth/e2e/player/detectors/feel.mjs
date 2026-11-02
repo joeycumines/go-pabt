@@ -45,7 +45,7 @@ function tenHz(tl) {
         // A covered/paused game is not play time: enemies frozen behind a
         // menu are not standing still at the player, and the dead-time clock
         // must not tick while the player cannot act.
-        if (s.gs !== 'playing' || s.play === false || s.t - last < 100) continue;
+        if (s.gs !== 'playing' || s.play === false || s.locked === false || s.t - last < 100) continue;
         last = s.t;
         out.push(s);
     }
@@ -274,6 +274,7 @@ export function feelProfile(tl, grid) {
         enemyOnScreenPct: Math.round((visibleT / Math.max(total, 1e-6)) * 100),
         longestDeadTimeS: +longestDead.toFixed(1), longestDeadAt,
         onScreenStillPct: Math.round((stillOnScreen / Math.max(stillOnScreen + movingOnScreen, 1e-6)) * 100),
+        onScreenTimeS: +(stillOnScreen + movingOnScreen).toFixed(1),
         mobSawPlayerSamples: canSee, mobClosedInPct: canSee ? Math.round((closing / canSee) * 100) : null,
         onScreenClashes: clashesWhileVisible, hitsOnPlayer,
         popIns, vanishes, teleports,
@@ -324,7 +325,10 @@ export function detectEngagement(tl, grid) {
     }
     // DESIGN BAND: mobs that spend most of their on-screen time standing
     // still, or that see the player and do not come for them, have no threat.
-    if (p.onScreenStillPct >= 50) {
+    // Under 4s of visible enemy time, an encounter that ends with a hit on the
+    // player is active combat, not an idle mob with no presence.
+    const onScreenS = p.onScreenTimeS !== undefined ? p.onScreenTimeS : 0;
+    if (p.onScreenStillPct >= 50 && (onScreenS >= 4.0 || p.hitsOnPlayer === 0)) {
         out.push(finding('D15', 'S2', `Enemies in view stand still ${p.onScreenStillPct}% of the time`, { evidence: { onScreenStillPct: p.onScreenStillPct, onScreenClashes: p.onScreenClashes } }));
     }
     if (p.mobSawPlayerSamples >= 5 && p.mobClosedInPct !== null && p.mobClosedInPct < 40) {

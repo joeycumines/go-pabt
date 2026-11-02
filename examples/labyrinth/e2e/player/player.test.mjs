@@ -213,6 +213,18 @@ test('D15: a paused game with frozen enemies is not reported as still enemies', 
     assert.ok(ids(detectEngagement(playing, g)).includes('D15:S2'));
 });
 
+test('D15: short contact-rush encounter ending on a hit is not flagged as idle enemies', () => {
+    const g = new Grid(7, 7, grid().cells);
+    // Enemy sprints 5u in 700ms, stays at contact range for 800ms and hits the player.
+    const samples = [];
+    for (let t = 0; t <= 1500; t += 100) {
+        const x = t <= 700 ? 6.5 - (t / 700) * 4.5 : 2.0;
+        samples.push(S(t, { pos: [1.5, 0.5, 1.5], actors: [{ id: 'S-1', x, z: 1.5, hp: 20 }] }));
+    }
+    const t = tl({ samples, wire: [{ kind: 'event', t: 800, type: 'hit' }] });
+    assert.deepEqual(ids(detectEngagement(t, g)), []);
+});
+
 test('D7: end screen covered by another element is S1; stacked menus are S2', () => {
     const samples = [S(0), S(100, { gs: 'caught' })];
     const covered = tl({ samples, dom: [dom(500, { modals: { overlay: { rect: [0, 0, 100, 100], text: 'CAUGHT' }, 'tutorial-overlay': { rect: [0, 0, 100, 100], text: '' } }, topOverlay: 'tutorial-overlay>li' })] });
@@ -379,6 +391,19 @@ test('D17: a model that circles and comes back is moving, not frozen', () => {
         const dx = i <= 10 ? 3 : i <= 20 ? 3 + (i - 10) * 0.14 : 4.4 - (i - 20) * 0.138;
         samples.push(S(t, { actors: [{ id: 'B-1', x: dx, z: 4.5, hp: 40 }] }));
     }
+    assert.deepEqual(detectRenderTruth(tl({ wire, samples })), []);
+});
+
+test('D17: transitional reset frame (round < 0) does not falsely flag missing actors', () => {
+    // When the round resets (e.g. on respawn), s.round is -1 and s.actors is empty
+    // before the first new snapshot arrives. Stale previous-round snapshots must not
+    // flag the old mobs as missing from the screen.
+    const wire = [{ kind: 'snap', t: 100, round: 10, runner: [1.5, 1.5, 100], m: [['B-1', 2.0, 2.0, 40, 0]] }];
+    const samples = [
+        S(100, { round: 10, actors: [{ id: 'B-1', x: 2.0, z: 2.0, hp: 40 }] }),
+        S(150, { round: -1, actors: [] }),
+        S(200, { round: 11, actors: [{ id: 'B-1', x: 2.0, z: 2.0, hp: 40 }] }),
+    ];
     assert.deepEqual(detectRenderTruth(tl({ wire, samples })), []);
 });
 

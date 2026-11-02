@@ -96,8 +96,34 @@ Severity: **S1** breaks the experience, **S2** is clearly wrong and visible to a
 | D15 | enemies with no presence: idle on screen, ignoring a visible player | drawn motion; distance trend while the enemy can see the player |
 | D16 | pop-in, teleports, killed enemies left standing as ghosts | drawn actor set vs. death events |
 | D17 | enemies drawn somewhere other than where the server has them, or frozen | WebSocket wire tap vs. drawn positions |
+| D18 | un-telegraphed melee attacks | server melee hit events vs prior attack windup state (Minotaur.Windup > 0) |
+| D19 | robotic pilot slop | rapid W toggling (>2.5/s), stationary turret combat (<20% moving), snap whip turns (>18 rad/s), omniscient targeting |
 
-D14 and D15 use **design bands**: thresholds for what reads as boring or threatless. They are judgement calls stated beside the raw numbers, so a reader can dispute the band without doubting the measurement.
+D14, D15, and the Fun Gate use **design bands**: thresholds for what reads as boring or threatless. They are judgement calls stated beside the raw numbers, so a reader can dispute the band without doubting the measurement.
+
+### The Fun Gate (`--gate fun`)
+
+Run with `--gate fun` (defaults to seeds `12345,777,4242,31337,2024` on journey `J6`):
+
+```bash
+cd examples/labyrinth
+node e2e/player/playtest-player.mjs --gate fun --out <dir>
+```
+
+Evaluates 12 empirical gameplay bands across all seeds, writing `fun-gate.md` and exiting with code 0 only if all bands pass:
+
+1. **Time to first enemy on screen** (`<= 25 s`): ensures swift initial engagement without protracted empty roaming.
+2. **Enemy on screen percentage** (`30 - 75%`): balances persistent threat against visual clutter and sensory overload.
+3. **Longest dead time** (`<= 15 s`): limits extended stretches without active visual or combat stimuli.
+4. **On-screen enemies standing still** (`<= 35%`): ensures visible enemies maintain active locomotion, pursuit, or evasion.
+5. **Server mobs closing in** (`>= 60%`): requires that mobs with player awareness actively close the distance rather than standoff kiting or orbiting.
+6. **HP lost to never-seen enemies** (`<= 10%`): protects against blind cheap shots from off-screen attackers.
+7. **Silent damage** (`0 occurrences`): every instance of damage taken must trigger an audio/visual cue (flash, shake, directional arc).
+8. **Melee hits telegraphed** (`100%`): all incoming melee attacks must display a distinct visual windup prior to damage.
+9. **Pilot wins** (`2 - 4 of 5 seeds`): establishes a balanced 40% - 80% survival rate under realistic player piloting.
+10. **Median run length** (`30 - 120 s`): matches the physical 21x21 corridor geometry for 3 sigil pickups and gate escape.
+11. **Archetypes engaged per run** (`>= 3 archetypes`): guarantees encounter variety across Brutes, Swarms, Casters, and Stalkers.
+12. **Visible faction clashes within 8u** (`>= 1 clash per run`): showcases autonomous faction warfare occurring in proximity to the player.
 
 ### Artifacts per journey
 
