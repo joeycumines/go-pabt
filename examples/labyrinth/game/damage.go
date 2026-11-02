@@ -24,10 +24,10 @@ const (
 	// KnockbackStepSize is the collision substep used by knockRunner.
 	KnockbackStepSize = 0.1
 	// RegenDelayTicks is the out-of-combat window before health returns:
-	// 6s at 30Hz.
-	RegenDelayTicks = 180
+	// 3s at 30Hz.
+	RegenDelayTicks = 90
 	// RegenIntervalTicks is how often one HP returns once regen starts.
-	RegenIntervalTicks = 15
+	RegenIntervalTicks = 10
 	// ContactCooldownTicks gates repeat melee attacks from one actor: 45 ticks (1.5s).
 	ContactCooldownTicks = 45
 	// MeleeWindupTicks is the telegraphed melee windup duration: 12 ticks (0.4s).

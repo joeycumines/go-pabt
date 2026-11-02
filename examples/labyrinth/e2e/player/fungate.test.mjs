@@ -79,10 +79,10 @@ test('computeRunMetrics extracts metrics accurately from synthetic timeline', ()
 });
 
 test('evaluateFunGate passes when all 12 bands are satisfied', () => {
-    // 5 seeds with 3 wins (target 2-4 wins out of 5), lengths [150, 180, 200, 220, 250] (median 200, target 120-360)
+    // 5 seeds with 3 wins (target 2-4 wins out of 5), lengths [45, 55, 65, 75, 85] (median 65, target 30-120)
     const seeds = [12345, 777, 4242, 31337, 2024];
     const wins = [true, true, true, false, false];
-    const lengths = [150, 180, 200, 220, 250];
+    const lengths = [45, 55, 65, 75, 85];
 
     const runs = seeds.map((seed, idx) => ({
         seed,
@@ -103,7 +103,7 @@ test('evaluateFunGate passes when all 12 bands are satisfied', () => {
     const result = evaluateFunGate(runs, new Map());
     assert.equal(result.pass, true);
     assert.equal(result.totalWins, 3);
-    assert.equal(result.medianRunLengthS, 200);
+    assert.equal(result.medianRunLengthS, 65);
     assert.equal(result.bands.length, 12);
     assert.ok(result.bands.every((b) => b.pass));
     assert.ok(result.markdown.includes('Verdict: PASS'));

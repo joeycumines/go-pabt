@@ -207,50 +207,7 @@ func (a *PursueAction) Node() bt.Node {
 			hasLOS := HasClearLOS(a.state.maze, *a.state.selfPos, target)
 			if hasLOS && dBefore <= 7.0 {
 				a.state.world.CastBoltThisTick = true
-			}
-			if dBefore < 1.8 && hasLOS {
-				// Player is at point-blank range: kite backward to maintain standoff distance.
-				a.state.world.ArchetypeAction = "CasterKiteBack"
-				dx := a.state.selfPos.X - target.X
-				dy := a.state.selfPos.Y - target.Y
-				dist := math.Hypot(dx, dy)
-				if dist < 1e-6 {
-					dist = 1e-6
-				}
-				step := moveSpeed
-				if a.state.MoveSpeed > 0 {
-					step = a.state.MoveSpeed
-				}
-				baseX, baseY := dx/dist, dy/dist
-				best, bestDist2 := maze.Vec2{}, -1.0
-				for _, eighth := range []int{0, 1, -1, 2, -2, 3, -3} {
-					angle := float64(eighth) * math.Pi / 4
-					dirX := baseX*math.Cos(angle) - baseY*math.Sin(angle)
-					dirY := baseX*math.Sin(angle) + baseY*math.Cos(angle)
-					resolved := a.state.maze.Resolve(maze.Vec2{
-						X: a.state.selfPos.X + dirX*step,
-						Y: a.state.selfPos.Y + dirY*step,
-					}, maze.Radius)
-					if resolved.X == a.state.selfPos.X && resolved.Y == a.state.selfPos.Y {
-						continue
-					}
-					gx, gy := resolved.X-target.X, resolved.Y-target.Y
-					if d2 := gx*gx + gy*gy; d2 > bestDist2 {
-						bestDist2, best = d2, resolved
-					}
-				}
-				if bestDist2 > 0 {
-					a.state.selfPos.X = best.X
-					a.state.selfPos.Y = best.Y
-					a.state.movedThisTick = true
-				}
-				return bt.Running, nil
-			} else if dBefore >= 1.8 && dBefore <= 2.3 && hasLOS {
-				// Sweet spot: hold standoff position and cast ranged elemental bolt.
 				a.state.world.ArchetypeAction = "CasterRangedBolt"
-				a.state.world.CastBoltThisTick = true
-				a.state.movedThisTick = true
-				return bt.Running, nil
 			} else {
 				a.state.world.ArchetypeAction = "CasterReposition"
 			}
@@ -267,13 +224,7 @@ func (a *PursueAction) Node() bt.Node {
 			}
 		}
 
-		var shifted *maze.Vec2
-		if a.state.world.SelfArchetype == 3 && dBefore > 2.2 {
-			s := flankOffset(target, *a.state.selfPos)
-			shifted = &s
-		}
-
-		if !a.ensurePath(target, shifted) {
+		if !a.ensurePath(target, nil) {
 			return bt.Failure, nil
 		}
 		status, err := a.advance()

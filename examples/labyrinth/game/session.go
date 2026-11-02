@@ -103,13 +103,13 @@ func actorHP(t ActorType) int {
 func actorDamage(t ActorType) int {
 	switch t {
 	case ActorBrute:
-		return 20
+		return 16
 	case ActorSwarm:
-		return 8
+		return 6
 	case ActorCaster:
-		return 12
+		return 8
 	case ActorStalker:
-		return 15
+		return 12
 	default:
 		return 10
 	}

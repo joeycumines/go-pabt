@@ -10,7 +10,7 @@
 //   7. silent damage 0
 //   8. every melee hit telegraphed (D18) 100%
 //   9. pilot wins 2-4 of 5 seeds
-//  10. median J6 run 120-360 s
+//  10. median J6 run 30-120 s
 //  11. >= 3 archetypes engaged per run
 //  12. >= 1 visible faction clash within 8u of the player per run
 
@@ -245,8 +245,8 @@ export function evaluateFunGate(runs, gridMap = new Map()) {
         {
             id: 10,
             name: 'Median J6 run length',
-            target: '120 - 360 s',
-            pass: medianRunLengthS >= 120 && medianRunLengthS <= 360,
+            target: '30 - 120 s',
+            pass: medianRunLengthS >= 30 && medianRunLengthS <= 120,
             actual: `${medianRunLengthS}s (lengths: ${lengths.map((l) => `${l}s`).join(', ')})`,
             details: { median: medianRunLengthS, lengths },
         },

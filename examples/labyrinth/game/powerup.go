@@ -49,6 +49,10 @@ func checkPowerUpPickup(w *world.World) *world.PowerUp {
 			pu.Active = false
 			pu.RespawnTicks = 45 * 30 // 45 seconds at 30Hz
 			w.Runner.Element = pu.Element
+			w.Runner.HP += 25
+			if w.Runner.HP > world.MaxHP {
+				w.Runner.HP = world.MaxHP
+			}
 			return pu
 		}
 	}
